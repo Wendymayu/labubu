@@ -55,7 +55,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getTrace, type TraceDetailResponse, type SpanDetail } from '../api/client'
+import { getTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType } from '../api/client'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 
@@ -65,7 +65,7 @@ const traceIdHex = route.params.id as string
 const trace = ref<TraceDetailResponse['trace'] | null>(null)
 const loading = ref(true)
 const error = ref('')
-const selectedSpan = ref<SpanDetail | null>(null)
+const selectedSpan = ref<SpanDetailType | null>(null)
 
 const rootSpanName = computed(() => {
   if (!trace.value) return 'Trace Detail'
@@ -90,7 +90,7 @@ async function fetchTrace() {
   }
 }
 
-function selectSpan(span: SpanDetail) {
+function selectSpan(span: SpanDetailType) {
   selectedSpan.value = span
 }
 
