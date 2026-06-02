@@ -84,7 +84,7 @@ func TestGetTraceBadID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/short", nil)
 	rec := httptest.NewRecorder()
 
-	handler.GetTrace(rec, req)
+	handler.GetTrace(rec, req, "short")
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for short id, got %d", rec.Code)

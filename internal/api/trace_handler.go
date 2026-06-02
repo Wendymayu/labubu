@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/labubu/labubu/internal/storage"
 )
@@ -61,11 +60,7 @@ func (h *TraceHandler) ListTraces(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetTrace handles GET /api/v1/traces/{traceIdHex}.
-func (h *TraceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
-	// Extract traceIdHex from path: /api/v1/traces/{traceIdHex}
-	// Go 1.22+ could use r.PathValue("traceIdHex"); for Go 1.19 we parse the path.
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/traces/")
-	traceIDHex := strings.TrimSuffix(path, "/")
+func (h *TraceHandler) GetTrace(w http.ResponseWriter, r *http.Request, traceIDHex string) {
 	if len(traceIDHex) != 32 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "trace_id must be a 32-character hex string"})
 		return
