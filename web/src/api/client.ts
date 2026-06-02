@@ -1,0 +1,112 @@
+const BASE_URL = '/api/v1'
+
+export interface TraceListItem {
+  trace_id_hex: string
+  root_span_id: string
+  root_name: string
+  root_service: string
+  start_time_ms: number
+  duration_ms: number
+  span_count: number
+  status: string
+  total_tokens?: number
+}
+
+export interface Pagination {
+  page: number
+  page_size: number
+  total: number
+}
+
+export interface TraceListResponse {
+  traces: TraceListItem[]
+  pagination: Pagination
+}
+
+export interface SpanDetail {
+  span_id: string
+  parent_span_id: string
+  name: string
+  kind: string
+  start_time_ms: number
+  duration_ms: number
+  attributes: Record<string, string>
+  events: Array<{ time_ms: number; name: string; attributes: Record<string, string> }>
+  links: Array<{ trace_id: string; span_id: string; attributes: Record<string, string> }>
+  status: string
+  status_message?: string
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  gen_ai_request_model?: string
+}
+
+export interface ScopeDetail {
+  name: string
+  version: string
+  attributes: Record<string, string>
+}
+
+export interface TraceDetailResponse {
+  trace: {
+    trace_id_hex: string
+    root_span_id: string
+    span_count: number
+    start_time_ms: number
+    duration_ms: number
+    resource_attributes: Record<string, string>
+    scope: ScopeDetail
+    spans: SpanDetail[]
+  }
+}
+
+export interface TraceQuery {
+  page?: number
+  page_size?: number
+  service?: string
+  status?: string
+  q?: string
+  start?: number
+  end?: number
+  min_duration?: number
+  max_duration?: number
+}
+
+async function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
+  const url = new URL(path, window.location.origin)
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') {
+        url.searchParams.set(k, String(v))
+      }
+    })
+  }
+  const res = await fetch(url.toString())
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+export async function listTraces(query: TraceQuery): Promise<TraceListResponse> {
+  return get<TraceListResponse>(`${BASE_URL}/traces`, {
+    page: query.page,
+    page_size: query.page_size,
+    service: query.service,
+    status: query.status,
+    q: query.q,
+    start: query.start,
+    end: query.end,
+    min_duration: query.min_duration,
+    max_duration: query.max_duration,
+  })
+}
+
+export async function getTrace(traceIdHex: string): Promise<TraceDetailResponse> {
+  return get<TraceDetailResponse>(`${BASE_URL}/traces/${traceIdHex}`)
+}
+
+export async function getServices(): Promise<string[]> {
+  const data = await get<{ services: string[] }>(`${BASE_URL}/services`)
+  return data.services
+}
