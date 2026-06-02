@@ -208,65 +208,6 @@ func (s *chDBStore) Close() error {
 	return nil
 }
 
-// aggregateTraces groups spans by trace_id and produces Trace aggregates.
-func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[16]byte]Trace {
-	traces := make(map[[16]byte]Trace)
-	for _, span := range spans {
-		t, exists := traces[span.TraceID]
-		if !exists {
-			t = Trace{
-				TraceID:           span.TraceID,
-				TraceIDHex:        TraceIDToHex(span.TraceID),
-				RootSpanID:        span.SpanID,
-				RootName:          span.Name,
-				StartTimeMS:       span.StartTimeMS,
-				EndTimeMS:         span.EndTimeMS,
-				DurationMS:        span.DurationMS,
-				ResourceAttrs:     resource.Attributes,
-				ResourceSchemaURL: resource.SchemaURL,
-				ScopeName:         scope.Name,
-				ScopeVersion:      scope.Version,
-				ScopeAttrs:        scope.Attributes,
-				ScopeSchemaURL:    scope.SchemaURL,
-				StatusCode:        span.StatusCode,
-				StatusMessage:     span.StatusMessage,
-				TotalTokens:       span.TotalTokens,
-			}
-		}
-		if isRootSpan(span.ParentSpanID) {
-			t.RootSpanID = span.SpanID
-			t.RootName = span.Name
-		}
-		t.SpanCount++
-		if span.StartTimeMS < t.StartTimeMS {
-			t.StartTimeMS = span.StartTimeMS
-		}
-		if span.EndTimeMS > t.EndTimeMS {
-			t.EndTimeMS = span.EndTimeMS
-			t.DurationMS = t.EndTimeMS - t.StartTimeMS
-		}
-		if span.TotalTokens != nil {
-			if t.TotalTokens == nil {
-				v := *span.TotalTokens
-				t.TotalTokens = &v
-			} else {
-				sum := *t.TotalTokens + *span.TotalTokens
-				t.TotalTokens = &sum
-			}
-		}
-		if isRootSpan(span.ParentSpanID) {
-			t.StatusCode = span.StatusCode
-			t.StatusMessage = span.StatusMessage
-		}
-		traces[span.TraceID] = t
-	}
-	return traces
-}
-
-func isRootSpan(parentSpanID [8]byte) bool {
-	return parentSpanID == [8]byte{}
-}
-
 // JSON parsing helpers
 
 func parseCount(result string) int {
