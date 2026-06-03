@@ -72,6 +72,12 @@ func (s *TStorageStore) Insert(ctx context.Context, points []MetricPoint) error 
 	// Update label index.
 	s.mu.Lock()
 	for _, p := range points {
+		// Track metric name as __name__ label.
+		if s.labelIdx["__name__"] == nil {
+			s.labelIdx["__name__"] = make(map[string]struct{})
+		}
+		s.labelIdx["__name__"][p.Name] = struct{}{}
+
 		for k, v := range p.Labels {
 			if s.labelIdx[k] == nil {
 				s.labelIdx[k] = make(map[string]struct{})
