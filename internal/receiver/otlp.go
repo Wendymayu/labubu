@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/labubu/labubu/internal/metrics"
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
+	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
@@ -22,15 +24,17 @@ import (
 
 // Receiver listens for OTLP trace data on gRPC and HTTP endpoints.
 type Receiver struct {
-	pipeline *pipeline.Pipeline
-	grpcSrv  *grpc.Server
-	httpSrv  *http.Server
+	pipeline    *pipeline.Pipeline
+	metricStore metrics.Store
+	grpcSrv     *grpc.Server
+	httpSrv     *http.Server
 }
 
 // New creates a new Receiver.
-func New(p *pipeline.Pipeline) *Receiver {
+func New(p *pipeline.Pipeline, ms metrics.Store) *Receiver {
 	return &Receiver{
-		pipeline: p,
+		pipeline:    p,
+		metricStore: ms,
 	}
 }
 
@@ -39,10 +43,16 @@ func (r *Receiver) Start() error {
 	// gRPC server.
 	r.grpcSrv = grpc.NewServer()
 	coltracepb.RegisterTraceServiceServer(r.grpcSrv, &traceService{pipeline: r.pipeline})
+	if r.metricStore != nil {
+		colmetricspb.RegisterMetricsServiceServer(r.grpcSrv, &metricsService{metricStore: r.metricStore})
+	}
 
 	// HTTP server for OTLP HTTP (/v1/traces).
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", r.handleHTTPTraces)
+	if r.metricStore != nil {
+		mux.HandleFunc("/v1/metrics", r.handleHTTPMetrics)
+	}
 	r.httpSrv = &http.Server{Handler: mux}
 
 	// Start gRPC on :4317.
@@ -128,6 +138,29 @@ func (s *traceService) Export(ctx context.Context, req *coltracepb.ExportTraceSe
 	return &coltracepb.ExportTraceServiceResponse{}, nil
 }
 
+// metricsService implements the OTLP gRPC MetricsService.
+type metricsService struct {
+	colmetricspb.UnimplementedMetricsServiceServer
+	metricStore metrics.Store
+}
+
+// Export receives metrics data via gRPC.
+func (s *metricsService) Export(ctx context.Context, req *colmetricspb.ExportMetricsServiceRequest) (*colmetricspb.ExportMetricsServiceResponse, error) {
+	points := TranslateMetrics(req)
+	if len(points) == 0 {
+		return &colmetricspb.ExportMetricsServiceResponse{}, nil
+	}
+	if err := s.metricStore.Insert(ctx, points); err != nil {
+		return &colmetricspb.ExportMetricsServiceResponse{
+			PartialSuccess: &colmetricspb.ExportMetricsPartialSuccess{
+				RejectedDataPoints: int64(len(points)),
+				ErrorMessage:       "store insert failed",
+			},
+		}, nil
+	}
+	return &colmetricspb.ExportMetricsServiceResponse{}, nil
+}
+
 // handleHTTPTraces handles OTLP HTTP POST /v1/traces.
 func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
@@ -190,6 +223,45 @@ func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"partialSuccess": map[string]interface{}{},
+	})
+}
+
+// handleHTTPMetrics handles OTLP HTTP POST /v1/metrics.
+func (r *Receiver) handleHTTPMetrics(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer req.Body.Close()
+
+	var exportReq colmetricspb.ExportMetricsServiceRequest
+	if err := proto.Unmarshal(body, &exportReq); err != nil {
+		http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	points := TranslateMetrics(&exportReq)
+	if len(points) == 0 {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{"partialSuccess": map[string]interface{}{}})
+		return
+	}
+
+	if err := r.metricStore.Insert(req.Context(), points); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "store insert failed"})
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)

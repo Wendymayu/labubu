@@ -48,7 +48,7 @@ func main() {
 	log.Printf("Pipeline started (buffer: %d, flush: %v)", *bufferSize, *flushInterval)
 
 	// Initialize OTLP receiver.
-	recv := receiver.New(pipe)
+	recv := receiver.New(pipe, nil) // metricStore = nil until Task 8
 	if err := recv.Start(); err != nil {
 		log.Fatalf("Failed to start OTLP receiver: %v", err)
 	}
