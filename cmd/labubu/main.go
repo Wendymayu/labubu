@@ -30,6 +30,8 @@ func main() {
 		metricsRetention      = flag.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
 		metricsPrometheusAddr = flag.String("metrics-prometheus-addr", "", "production Prometheus address (empty = use embedded tstorage)")
 
+		dashboardsDir = flag.String("dashboards-dir", "./data/dashboards", "dashboard panel configs directory")
+
 		logLevel = flag.String("log-level", "info", "log level: debug, info, warn, error")
 	)
 	flag.Parse()
@@ -102,7 +104,8 @@ func main() {
 	if metricStore != nil {
 		metricsHandler = api.NewMetricsHandler(metricStore)
 	}
-	router := api.NewRouter(traceHandler, metricsHandler)
+	dashboardHandler := api.NewDashboardHandler(*dashboardsDir)
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler)
 
 	httpSrv := &http.Server{
 		Addr:         *apiAddr,
