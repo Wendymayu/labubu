@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labubu/labubu/internal/api"
+	"github.com/labubu/labubu/internal/metrics"
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/receiver"
 	"github.com/labubu/labubu/internal/storage"
@@ -22,6 +23,11 @@ func main() {
 		dataDir       = flag.String("data-dir", "./data", "chDB data directory (empty for in-memory)")
 		bufferSize    = flag.Int("buffer-size", 1000, "pipeline buffer capacity")
 		flushInterval = flag.Duration("flush-interval", 200*time.Millisecond, "pipeline flush interval")
+
+		metricsEnabled        = flag.Bool("metrics-enabled", true, "enable/disable metrics ingestion")
+		metricsDataDir        = flag.String("metrics-data-dir", "./data/metrics", "tstorage data directory (empty = pure memory)")
+		metricsRetention      = flag.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
+		metricsPrometheusAddr = flag.String("metrics-prometheus-addr", "", "production Prometheus address (empty = use embedded tstorage)")
 	)
 	flag.Parse()
 
@@ -36,6 +42,26 @@ func main() {
 	defer store.Close()
 	log.Printf("chDB initialized (data dir: %q)", *dataDir)
 
+	// Initialize metrics store (if enabled).
+	var metricStore metrics.Store
+	if *metricsEnabled {
+		if *metricsPrometheusAddr != "" {
+			log.Printf("metrics: prometheus remote mode not yet implemented, falling back to tstorage")
+		}
+		ms, err := metrics.NewTStorageStore(metrics.TStorageConfig{
+			DataDir:   *metricsDataDir,
+			Retention: *metricsRetention,
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize metrics store: %v", err)
+		}
+		defer ms.Close()
+		metricStore = ms
+		log.Printf("metrics: tstorage initialized (data dir: %q, retention: %v)", *metricsDataDir, *metricsRetention)
+	} else {
+		log.Println("metrics: disabled")
+	}
+
 	// Initialize pipeline.
 	pipe := pipeline.New(store, *bufferSize, *flushInterval)
 	defer func() {
@@ -48,7 +74,7 @@ func main() {
 	log.Printf("Pipeline started (buffer: %d, flush: %v)", *bufferSize, *flushInterval)
 
 	// Initialize OTLP receiver.
-	recv := receiver.New(pipe, nil) // metricStore = nil until Task 8
+	recv := receiver.New(pipe, metricStore)
 	if err := recv.Start(); err != nil {
 		log.Fatalf("Failed to start OTLP receiver: %v", err)
 	}
@@ -62,7 +88,11 @@ func main() {
 
 	// Initialize API router.
 	traceHandler := api.NewTraceHandler(store)
-	router := api.NewRouter(traceHandler, nil) // metricsHandler = nil until Task 8
+	var metricsHandler *api.MetricsHandler
+	if metricStore != nil {
+		metricsHandler = api.NewMetricsHandler(metricStore)
+	}
+	router := api.NewRouter(traceHandler, metricsHandler)
 
 	httpSrv := &http.Server{
 		Addr:         *apiAddr,
