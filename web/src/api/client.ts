@@ -110,3 +110,78 @@ export async function getServices(): Promise<string[]> {
   const data = await get<{ services: string[] }>(`${BASE_URL}/services`)
   return data.services
 }
+
+// --- Dashboard types and API ---
+
+export interface PanelConfig {
+  id: string
+  title: string
+  metric: string
+  labels: Record<string, string>
+  chartType: 'line' | 'bar' | 'stat'
+  step?: number
+}
+
+export async function listDashboards(): Promise<{ panels: PanelConfig[] }> {
+  return get<{ panels: PanelConfig[] }>(`${BASE_URL}/dashboards`)
+}
+
+export async function createDashboard(panel: Omit<PanelConfig, 'id'>): Promise<PanelConfig> {
+  const res = await fetch(`${BASE_URL}/dashboards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(panel),
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+export async function updateDashboard(panel: PanelConfig): Promise<PanelConfig> {
+  const res = await fetch(`${BASE_URL}/dashboards/${panel.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(panel),
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+export async function deleteDashboard(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/dashboards/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+}
+
+export async function getMetricNames(): Promise<string[]> {
+  const data = await get<{ status: string; data: string[] }>(`${BASE_URL}/metric-names`)
+  return data.data || []
+}
+
+export async function getLabels(): Promise<string[]> {
+  const data = await get<{ status: string; data: string[] }>(`${BASE_URL}/labels`)
+  return data.data || []
+}
+
+export async function getLabelValues(name: string): Promise<string[]> {
+  const data = await get<{ status: string; data: string[] }>(`${BASE_URL}/label/${name}/values`)
+  return data.data || []
+}
+
+// Prometheus API response types for query results.
+export interface QueryResult {
+  status: string
+  data: {
+    resultType: 'vector' | 'matrix'
+    result: Array<{
+      metric: Record<string, string>
+      value?: [number, string]
+      values?: Array<[number, string]>
+    }>
+  }
+  error?: string
+}
