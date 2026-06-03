@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labubu/labubu/internal/api"
+	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/receiver"
@@ -28,8 +29,17 @@ func main() {
 		metricsDataDir        = flag.String("metrics-data-dir", "./data/metrics", "tstorage data directory (empty = pure memory)")
 		metricsRetention      = flag.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
 		metricsPrometheusAddr = flag.String("metrics-prometheus-addr", "", "production Prometheus address (empty = use embedded tstorage)")
+
+		logLevel = flag.String("log-level", "info", "log level: debug, info, warn, error")
 	)
 	flag.Parse()
+
+	// Set log level.
+	lvl, err := ilog.ParseLevel(*logLevel)
+	if err != nil {
+		log.Fatalf("Invalid log level: %v", err)
+	}
+	ilog.SetLevel(lvl)
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Labubu starting...")

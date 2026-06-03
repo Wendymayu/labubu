@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 
+	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/storage"
@@ -147,6 +148,14 @@ type metricsService struct {
 // Export receives metrics data via gRPC.
 func (s *metricsService) Export(ctx context.Context, req *colmetricspb.ExportMetricsServiceRequest) (*colmetricspb.ExportMetricsServiceResponse, error) {
 	points := TranslateMetrics(req)
+	ilog.Debug("metrics gRPC: received %d metric points", len(points))
+	for i, p := range points {
+		if i >= 10 {
+			ilog.Debug("metrics gRPC: ... (%d more points omitted)", len(points)-10)
+			break
+		}
+		ilog.Debug("metrics gRPC:   %s{%v} = %f @ %d", p.Name, p.Labels, p.Value, p.Timestamp)
+	}
 	if len(points) == 0 {
 		return &colmetricspb.ExportMetricsServiceResponse{}, nil
 	}
@@ -252,6 +261,14 @@ func (r *Receiver) handleHTTPMetrics(w http.ResponseWriter, req *http.Request) {
 	}
 
 	points := TranslateMetrics(&exportReq)
+	ilog.Debug("metrics HTTP: received %d metric points", len(points))
+	for i, p := range points {
+		if i >= 10 {
+			ilog.Debug("metrics HTTP: ... (%d more points omitted)", len(points)-10)
+			break
+		}
+		ilog.Debug("metrics HTTP:   %s{%v} = %f @ %d", p.Name, p.Labels, p.Value, p.Timestamp)
+	}
 	if len(points) == 0 {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{"partialSuccess": map[string]interface{}{}})
