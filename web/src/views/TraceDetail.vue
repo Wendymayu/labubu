@@ -45,6 +45,12 @@
           />
         </div>
         <div class="detail-panel">
+          <TokenPieChart
+            v-if="selectedSpanTokenSlices.length > 0"
+            :items="selectedSpanTokenSlices"
+            :input-tokens="selectedSpanInputTokens"
+            :output-tokens="selectedSpanOutputTokens"
+          />
           <SpanDetail :span="selectedSpan" />
         </div>
       </div>
@@ -58,6 +64,8 @@ import { useRoute } from 'vue-router'
 import { getTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType } from '../api/client'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
+import TokenPieChart from '../components/TokenPieChart.vue'
+import type { PieSlice } from '../components/TokenPieChart.vue'
 
 const route = useRoute()
 const traceIdHex = route.params.id as string
@@ -66,6 +74,45 @@ const trace = ref<TraceDetailResponse['trace'] | null>(null)
 const loading = ref(true)
 const error = ref('')
 const selectedSpan = ref<SpanDetailType | null>(null)
+
+/** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
+const CTX_PATTERNS: { key: string; label: string }[] = [
+  { key: 'gen_ai.context.system_tokens',           label: 'System' },
+  { key: 'gen_ai.context.assistant_tokens',        label: 'Assistant History' },
+  { key: 'gen_ai.context.user_tokens',             label: 'User' },
+  { key: 'gen_ai.context.tool_tokens',             label: 'Tool Results' },
+  { key: 'gen_ai.context.tool_definitions_tokens', label: 'Tool Definitions' },
+  { key: 'gen_ai.context.skill_tokens',            label: 'Skill' },
+]
+
+const selectedSpanTokenSlices = computed<PieSlice[]>(() => {
+  const span = selectedSpan.value
+  if (!span) return []
+  const attrs = span.attributes || {}
+  const slices: PieSlice[] = []
+
+  for (const { key, label } of CTX_PATTERNS) {
+    const raw = attrs[key]
+    if (!raw) continue
+    const n = parseInt(raw, 10)
+    if (isNaN(n) || n <= 0) continue
+    slices.push({ name: label, tokens: n })
+  }
+
+  return slices
+})
+
+const selectedSpanInputTokens = computed(() => {
+  const span = selectedSpan.value
+  if (!span) return 0
+  return span.input_tokens ?? 0
+})
+
+const selectedSpanOutputTokens = computed(() => {
+  const span = selectedSpan.value
+  if (!span) return 0
+  return span.output_tokens ?? 0
+})
 
 const rootSpanName = computed(() => {
   if (!trace.value) return 'Trace Detail'

@@ -60,7 +60,7 @@ go run ./cmd/labubu --data-dir="" --api-addr=0.0.0.0:8080
 cd web && npm run dev
 ```
 
-Visit http://localhost:5173 for the Vite dev server (proxies API to :8080).
+Visit http://localhost:3001 for the Vite dev server (proxies API to :8080).
 
 ## Architecture
 

@@ -1,11 +1,11 @@
 <template>
   <div class="app">
-    <header class="app-header">
-      <h1 class="app-title">Labubu</h1>
+    <aside class="sidebar">
+      <router-link to="/" class="app-title">Labubu</router-link>
       <nav class="app-nav">
-        <router-link to="/traces">Traces</router-link>
+        <router-link to="/traces">Trace</router-link>
       </nav>
-    </header>
+    </aside>
     <main class="app-main">
       <router-view />
     </main>
@@ -16,10 +16,20 @@
 </script>
 
 <style scoped>
-.app { min-height: 100vh; display: flex; flex-direction: column; }
-.app-header { display: flex; align-items: center; gap: 24px; padding: 12px 24px; background: #1e293b; border-bottom: 1px solid #334155; }
-.app-title { font-size: 18px; font-weight: 700; color: #38bdf8; }
-.app-nav a { color: #94a3b8; text-decoration: none; font-size: 14px; }
+.app { min-height: 100vh; display: flex; }
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: #000;
+  border-right: 1px solid #334155;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.app-title { font-size: 18px; font-weight: 700; color: #38bdf8; text-decoration: none; }
+.app-nav { display: flex; flex-direction: column; gap: 8px; }
+.app-nav a { color: #94a3b8; text-decoration: none; font-size: 14px; padding: 6px 0; }
 .app-nav a:hover { color: #e2e8f0; }
 .app-nav a.router-link-active { color: #38bdf8; }
 .app-main { flex: 1; padding: 24px; }

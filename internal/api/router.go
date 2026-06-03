@@ -12,7 +12,7 @@ func NewRouter(handler *TraceHandler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes.
-	mux.HandleFunc("/api/v1/traces", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/traces/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/traces")
 		if path == "" || path == "/" {
 			handler.ListTraces(w, r)
@@ -83,6 +83,6 @@ const devFallbackHTML = `<!DOCTYPE html>
   <h1>Labubu</h1>
   <p>Frontend not built. In development, run the Vite dev server separately:</p>
   <pre>cd web && npm run dev</pre>
-  <p>Then visit <a href="http://localhost:5173">http://localhost:5173</a></p>
+  <p>Then visit <a href="http://localhost:3001">http://localhost:3001</a></p>
 </body>
 </html>`

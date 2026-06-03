@@ -215,8 +215,6 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 			t = Trace{
 				TraceID:           span.TraceID,
 				TraceIDHex:        TraceIDToHex(span.TraceID),
-				RootSpanID:        span.SpanID,
-				RootName:          span.Name,
 				StartTimeMS:       span.StartTimeMS,
 				EndTimeMS:         span.EndTimeMS,
 				DurationMS:        span.DurationMS,
@@ -234,6 +232,8 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 		if isRootSpan(span.ParentSpanID) {
 			t.RootSpanID = span.SpanID
 			t.RootName = span.Name
+			t.StatusCode = span.StatusCode
+			t.StatusMessage = span.StatusMessage
 		}
 		t.SpanCount++
 		if span.StartTimeMS < t.StartTimeMS {
@@ -251,10 +251,6 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 				sum := *t.TotalTokens + *span.TotalTokens
 				t.TotalTokens = &sum
 			}
-		}
-		if isRootSpan(span.ParentSpanID) {
-			t.StatusCode = span.StatusCode
-			t.StatusMessage = span.StatusMessage
 		}
 		traces[span.TraceID] = t
 	}

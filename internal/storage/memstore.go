@@ -60,8 +60,9 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 					existing.TotalTokens = &sum
 				}
 			}
-			// Root span: keep the one with zero parent (first or updated).
-			if isRootSpan(trace.RootSpanID) {
+			// Root span: update when the new batch found a root span
+			// (RootName is only set by aggregateTraces when a root span is found).
+			if trace.RootName != "" {
 				existing.RootSpanID = trace.RootSpanID
 				existing.RootName = trace.RootName
 				existing.StatusCode = trace.StatusCode
