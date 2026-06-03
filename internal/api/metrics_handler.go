@@ -328,6 +328,23 @@ func (h *MetricsHandler) Metadata(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// MetricNames handles GET /api/v1/metric-names
+func (h *MetricsHandler) MetricNames(w http.ResponseWriter, r *http.Request) {
+	values, err := h.store.LabelValues(r.Context(), "__name__")
+	if err != nil {
+		log.Printf("metrics: metric-names error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, prometheusResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("metric names failed: %v", err),
+		})
+		return
+	}
+	if values == nil {
+		values = []string{}
+	}
+	writeLabelsJSON(w, http.StatusOK, values)
+}
+
 // IngestOTLP handles POST /api/v1/otlp/v1/metrics — Prometheus-compatible OTLP metrics ingestion.
 func (h *MetricsHandler) IngestOTLP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

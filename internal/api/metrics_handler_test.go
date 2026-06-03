@@ -194,6 +194,37 @@ func TestMetricsHandler_MissingQueryParam(t *testing.T) {
 	}
 }
 
+func TestMetricsHandler_MetricNames(t *testing.T) {
+	store := &metricsMockStore{
+		labelValues: []string{"cpu_usage", "memory_usage"},
+	}
+
+	handler := NewMetricsHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/metric-names", nil)
+	rec := httptest.NewRecorder()
+
+	handler.MetricNames(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp["status"] != "success" {
+		t.Errorf("expected status 'success', got %v", resp["status"])
+	}
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		t.Fatalf("expected data to be array, got %T", resp["data"])
+	}
+	if len(data) != 2 {
+		t.Errorf("expected 2 metric names, got %d", len(data))
+	}
+}
+
 func TestParsePromQL(t *testing.T) {
 	tests := []struct {
 		input         string
