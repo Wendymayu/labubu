@@ -4,6 +4,7 @@
       <router-link to="/" class="app-title">Labubu</router-link>
       <nav class="app-nav">
         <router-link to="/traces">Trace</router-link>
+        <router-link to="/dashboards">Metrics</router-link>
       </nav>
     </aside>
     <main class="app-main">
