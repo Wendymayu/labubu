@@ -62,7 +62,7 @@ func main() {
 
 	// Initialize API router.
 	traceHandler := api.NewTraceHandler(store)
-	router := api.NewRouter(traceHandler)
+	router := api.NewRouter(traceHandler, nil) // metricsHandler = nil until Task 8
 
 	httpSrv := &http.Server{
 		Addr:         *apiAddr,

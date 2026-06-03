@@ -8,20 +8,34 @@ import (
 )
 
 // NewRouter creates the HTTP handler with API routes and static file serving.
-func NewRouter(handler *TraceHandler) http.Handler {
+func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes.
 	mux.HandleFunc("/api/v1/traces/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/traces")
 		if path == "" || path == "/" {
-			handler.ListTraces(w, r)
+			traceHandler.ListTraces(w, r)
 			return
 		}
 		traceIDHex := strings.TrimPrefix(path, "/")
-		handler.GetTrace(w, r, traceIDHex)
+		traceHandler.GetTrace(w, r, traceIDHex)
 	})
-	mux.HandleFunc("/api/v1/services", handler.GetServices)
+	mux.HandleFunc("/api/v1/services", traceHandler.GetServices)
+
+	// API routes — metrics (Prometheus API).
+	if metricsHandler != nil {
+		mux.HandleFunc("/api/v1/query", metricsHandler.InstantQuery)
+		mux.HandleFunc("/api/v1/query_range", metricsHandler.RangeQuery)
+		mux.HandleFunc("/api/v1/labels", metricsHandler.Labels)
+		mux.HandleFunc("/api/v1/label/", func(w http.ResponseWriter, r *http.Request) {
+			// Path: /api/v1/label/{name}/values
+			path := strings.TrimPrefix(r.URL.Path, "/api/v1/label/")
+			name := strings.TrimSuffix(path, "/values")
+			metricsHandler.LabelValues(w, r, name)
+		})
+		mux.HandleFunc("/api/v1/metadata", metricsHandler.Metadata)
+	}
 
 	// Health check.
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
