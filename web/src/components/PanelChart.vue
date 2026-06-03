@@ -99,8 +99,11 @@ async function fetchData() {
         noData.value = true
         return
       }
+      // Must set loading false first so canvas renders in DOM before Chart.js targets it.
+      loading.value = false
       await nextTick()
       renderChart(results[0].values)
+      return // skip the finally block's loading=false
     }
   } catch (e: any) {
     error.value = e.message || 'Failed to fetch data'
