@@ -3,13 +3,18 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
+	"github.com/labubu/labubu/internal/receiver"
+	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // Prometheus-compatible API response types.
@@ -321,4 +326,48 @@ func (h *MetricsHandler) Metadata(w http.ResponseWriter, r *http.Request) {
 		"status": "success",
 		"data":   map[string]interface{}{},
 	})
+}
+
+// IngestOTLP handles POST /api/v1/otlp/v1/metrics — Prometheus-compatible OTLP metrics ingestion.
+func (h *MetricsHandler) IngestOTLP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var req colmetricspb.ExportMetricsServiceRequest
+	if err := proto.Unmarshal(body, &req); err != nil {
+		http.Error(w, fmt.Sprintf("failed to unmarshal: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	points := receiver.TranslateMetrics(&req)
+	ilog.Debug("metrics OTLP API: received %d metric points", len(points))
+	for i, p := range points {
+		if i >= 10 {
+			ilog.Debug("metrics OTLP API: ... (%d more points omitted)", len(points)-10)
+			break
+		}
+		ilog.Debug("metrics OTLP API:   %s{%v} = %f @ %d", p.Name, p.Labels, p.Value, p.Timestamp)
+	}
+
+	if len(points) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{})
+		return
+	}
+
+	if err := h.store.Insert(r.Context(), points); err != nil {
+		log.Printf("metrics: otlp ingest error: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "store insert failed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{})
 }

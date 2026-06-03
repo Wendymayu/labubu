@@ -35,6 +35,7 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler) http.
 			metricsHandler.LabelValues(w, r, name)
 		})
 		mux.HandleFunc("/api/v1/metadata", metricsHandler.Metadata)
+		mux.HandleFunc("/api/v1/otlp/v1/metrics", metricsHandler.IngestOTLP)
 	}
 
 	// Health check.
