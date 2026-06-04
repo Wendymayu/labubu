@@ -86,7 +86,7 @@
           </div>
           <div v-if="Object.keys(evt.attributes || {}).length > 0" class="tl-attrs">
             <template v-for="(v, k) in evt.attributes" :key="k">
-              <div class="tl-attr-row" v-if="isToolIO(k, evt.name)">
+              <div class="tl-attr-row" v-if="isToolIO(k)">
                 <div class="tl-code-toggle" @click="toggleCodeBlock(evt, k)">
                   {{ codeBlockState(evt, k).expanded ? '▾' : '▸' }} {{ k }}
                   <span class="tl-copy-inline" @click.stop="copyText(v)">📋</span>
@@ -230,11 +230,10 @@ function toggleCodeBlock(evt: any, k: string) {
 
 // --- tool I/O detection ---
 
-function isToolIO(attrKey: string, _eventName?: string): boolean {
+function isToolIO(attrKey: string): boolean {
   const lower = attrKey.toLowerCase()
   return lower === 'input' || lower === 'output' || lower === 'result' ||
-    lower.endsWith('.input') || lower.endsWith('.output') ||
-    lower.includes('tool.call') || lower.includes('tool.result')
+    lower.endsWith('.input') || lower.endsWith('.output') || lower.endsWith('.result')
 }
 
 function highlightJSON(raw: string): string {
