@@ -118,7 +118,10 @@ func (h *MetricsHandler) InstantQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	start := ts - 5000
+	// Look back up to 1 hour to find the most recent data point.
+	// A narrow window (e.g. 5 s) would miss data ingested more than
+	// a few seconds ago and cause stat cards to show "No data".
+	start := ts - 3600_000
 	end := ts + 1000
 
 	series, err := h.store.Select(r.Context(), metricName, labels, start, end)
@@ -254,12 +257,14 @@ func downsamplePoints(points []metrics.MetricPoint, start, end, step int64) [][]
 	var values [][]interface{}
 	for t := start; t <= end; t += step {
 		best := pickClosestPoint(points, t)
-		if best == nil {
-			continue
+		var val float64
+		if best != nil && abs64(best.Timestamp-t) <= step {
+			val = best.Value
 		}
+		// Always emit a point for each step; 0 when no data nearby.
 		values = append(values, []interface{}{
-			float64(best.Timestamp) / 1000.0,
-			strconv.FormatFloat(best.Value, 'f', -1, 64),
+			float64(t) / 1000.0,
+			strconv.FormatFloat(val, 'f', -1, 64),
 		})
 	}
 	return values

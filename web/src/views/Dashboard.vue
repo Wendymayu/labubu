@@ -13,6 +13,7 @@
           <span>to</span>
           <input type="datetime-local" v-model="customEnd" />
         </div>
+        <button class="btn-preset btn-refresh" @click="refreshAll">&#8635;</button>
       </div>
       <button class="btn btn-primary" @click="openCreate">+ New Panel</button>
     </div>
@@ -29,6 +30,7 @@
         :key="panel.id"
         :panel="panel"
         :timeRange="computedTimeRange"
+        :refreshKey="refreshKey"
         @edit="openEdit"
         @delete="confirmDelete"
       />
@@ -79,6 +81,12 @@ const computedTimeRange = computed(() => {
   const start = end - (preset?.duration || 3600000)
   return { start, end }
 })
+
+const refreshKey = ref(0)
+
+function refreshAll() {
+  refreshKey.value++
+}
 
 function setPreset(label: string, duration: number) {
   activePreset.value = label
@@ -144,14 +152,14 @@ onMounted(loadPanels)
 }
 .time-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .btn-preset {
-  padding: 6px 16px; border: 1px solid #334155; background: #1e293b;
+  padding: 6px 16px; border: 1px solid #333; background: #111;
   color: #94a3b8; border-radius: 6px; cursor: pointer; font-size: 13px;
 }
 .btn-preset.active { background: #38bdf8; color: #000; border-color: #38bdf8; }
 .btn-preset:hover:not(.active) { border-color: #38bdf8; color: #38bdf8; }
 .custom-range { display: flex; align-items: center; gap: 8px; }
 .custom-range input {
-  background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+  background: #000; border: 1px solid #333; border-radius: 6px;
   color: #e2e8f0; padding: 6px 10px; font-size: 13px;
 }
 .custom-range span { color: #94a3b8; font-size: 13px; }
@@ -161,6 +169,10 @@ onMounted(loadPanels)
 }
 .btn-primary { background: #38bdf8; color: #000; }
 .btn-primary:hover { background: #7dd3fc; }
+.btn-refresh {
+  background: #111; border: 1px solid #333; color: #e2e8f0;
+}
+.btn-refresh:hover { background: #222; border-color: #38bdf8; }
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

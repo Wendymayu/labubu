@@ -16,6 +16,7 @@
         <span class="stat-metric">{{ panel.metric }}</span>
       </div>
       <canvas v-else ref="canvasRef"></canvas>
+      <div ref="tooltipRef" class="chart-tooltip"></div>
     </div>
   </div>
 </template>
@@ -37,6 +38,7 @@ Chart.register(
 const props = defineProps<{
   panel: PanelConfig
   timeRange: { start: number; end: number }
+  refreshKey?: number
 }>()
 
 defineEmits<{
@@ -45,11 +47,13 @@ defineEmits<{
 }>()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const tooltipRef = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
 const error = ref('')
 const noData = ref(false)
 const statValue = ref(0)
 let chart: Chart | null = null
+let tooltipHovering = false
 
 function buildPromQL(): string {
   const labels = props.panel.labels || {}
@@ -95,14 +99,15 @@ async function fetchData() {
         return
       }
       const results = data.data?.result || []
-      if (results.length === 0 || !results[0].values || results[0].values.length === 0) {
+      const hasData = results.some(r => r.values && r.values.length > 0)
+      if (!hasData) {
         noData.value = true
         return
       }
       // Must set loading false first so canvas renders in DOM before Chart.js targets it.
       loading.value = false
       await nextTick()
-      renderChart(results[0].values)
+      renderChart(results)
       return // skip the finally block's loading=false
     }
   } catch (e: any) {
@@ -112,7 +117,88 @@ async function fetchData() {
   }
 }
 
-function renderChart(values: Array<[number, string]>) {
+const COLORS = [
+  '#38bdf8', '#f472b6', '#a78bfa', '#fb923c', '#4ade80',
+  '#facc15', '#fb7185', '#2dd4bf', '#e2e8f0', '#94a3b8',
+]
+
+function seriesLabel(result: any): string {
+  const metric = result.metric || {}
+  const pairs = Object.entries(metric)
+    .filter(([k]) => k !== '__name__')
+    .map(([k, v]) => `${k}=${v}`)
+  return pairs.length > 0 ? pairs.join(',') : (metric.__name__ || 'value')
+}
+
+function externalTooltipHandler(context: any) {
+  const { chart, tooltip } = context
+  const el = tooltipRef.value
+  if (!el) return
+
+  if (tooltip.opacity === 0) {
+    if (!tooltipHovering) {
+      el.style.opacity = '0'
+    }
+    return
+  }
+
+  // Don't reposition the tooltip while the user is interacting with it.
+  if (tooltipHovering) return
+
+  const dataPoints = tooltip.dataPoints || []
+  if (dataPoints.length === 0) {
+    el.style.opacity = '0'
+    return
+  }
+
+  // Build tooltip HTML.
+  let html = ''
+  html += `<div class="tt-time">${dataPoints[0].label}</div>`
+  html += '<div class="tt-body">'
+  for (const dp of dataPoints) {
+    const ds = chart.data.datasets[dp.datasetIndex]
+    html += '<div class="tt-item">'
+    html += `<span class="tt-color" style="background:${ds.borderColor}"></span>`
+    html += '<div class="tt-labels">'
+    // Show each label key=value pair on its own line.
+    const rawLabel = (ds.label || '') as string
+    const parts = rawLabel.split(',').map((s: string) => s.trim()).filter(Boolean)
+    for (const line of parts) {
+      html += `<div class="tt-label">${line}</div>`
+    }
+    html += '</div>'
+    html += `<span class="tt-value">${parseFloat(dp.formattedValue).toFixed(2)}</span>`
+    html += '</div>'
+  }
+  html += '</div>'
+
+  el.innerHTML = html
+  el.style.opacity = '1'
+
+  // Position tooltip relative to the chart canvas.
+  const rect = chart.canvas.getBoundingClientRect()
+  const caretX = tooltip.caretX
+  const caretY = tooltip.caretY
+
+  // Default: place above caret, centered horizontally.
+  let left = rect.left + window.scrollX + caretX - el.offsetWidth / 2
+  let top = rect.top + window.scrollY + caretY - el.offsetHeight - 12
+
+  // Clamp horizontally.
+  if (left < 0) left = 4
+  const maxLeft = window.innerWidth - el.offsetWidth - 4
+  if (left > maxLeft) left = maxLeft
+
+  // If too high, flip below.
+  if (top < 0) {
+    top = rect.top + window.scrollY + caretY + 16
+  }
+
+  el.style.left = left + 'px'
+  el.style.top = top + 'px'
+}
+
+function renderChart(results: any[]) {
   if (!canvasRef.value) return
 
   if (chart) {
@@ -120,46 +206,60 @@ function renderChart(values: Array<[number, string]>) {
     chart = null
   }
 
-  const labels = values.map(v => {
+  // Use the first series' timestamps as shared labels for the x-axis.
+  const firstValues = results[0]?.values || []
+  const labels = firstValues.map((v: any) => {
     const d = new Date(v[0] * 1000)
     return d.toLocaleTimeString()
   })
-  const data = values.map(v => parseFloat(v[1]))
+
+  const datasets = results.map((r, idx) => {
+    const data = (r.values || []).map((v: any) => parseFloat(v[1]))
+    const color = COLORS[idx % COLORS.length]
+    return {
+      label: seriesLabel(r),
+      data,
+      borderColor: color,
+      backgroundColor: props.panel.chartType === 'bar' ? color + '88' : color + '22',
+      borderWidth: 2,
+      fill: props.panel.chartType === 'line',
+      tension: 0.3,
+      pointRadius: 0,
+    }
+  })
 
   chart = new Chart(canvasRef.value, {
     type: props.panel.chartType === 'bar' ? 'bar' : 'line',
     data: {
       labels,
-      datasets: [{
-        label: props.panel.title,
-        data,
-        borderColor: '#38bdf8',
-        backgroundColor: props.panel.chartType === 'bar' ? '#38bdf888' : '#38bdf822',
-        borderWidth: 2,
-        fill: props.panel.chartType === 'line',
-        tension: 0.3,
-        pointRadius: 0,
-      }],
+      datasets,
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
       plugins: {
-        legend: { display: false },
+        legend: {
+          display: datasets.length > 1,
+          position: 'bottom',
+          labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 12, padding: 8 },
+        },
         tooltip: {
+          enabled: false,
           mode: 'index',
           intersect: false,
+          position: 'nearest',
+          external: externalTooltipHandler,
         },
       },
       scales: {
         x: {
           ticks: { color: '#94a3b8', maxTicksLimit: 8, font: { size: 10 } },
-          grid: { color: '#1e293b' },
+          grid: { color: '#1a1a1a' },
         },
         y: {
           ticks: { color: '#94a3b8', font: { size: 10 } },
-          grid: { color: '#1e293b' },
+          grid: { color: '#1a1a1a' },
         },
       },
     },
@@ -173,8 +273,31 @@ function formatValue(v: number): string {
   return v.toFixed(2)
 }
 
-onMounted(fetchData)
-watch(() => [props.timeRange, props.panel], fetchData, { deep: true })
+function setupTooltipListeners() {
+  const el = tooltipRef.value
+  if (!el || !canvasRef.value) return
+
+  el.addEventListener('mouseenter', () => {
+    tooltipHovering = true
+  })
+  el.addEventListener('mouseleave', () => {
+    tooltipHovering = false
+    el.style.opacity = '0'
+  })
+
+  // Also hide tooltip when mouse leaves the chart canvas entirely.
+  canvasRef.value.addEventListener('mouseleave', () => {
+    if (!tooltipHovering) {
+      el.style.opacity = '0'
+    }
+  })
+}
+
+onMounted(() => {
+  fetchData()
+  setupTooltipListeners()
+})
+watch(() => [props.timeRange, props.panel, props.refreshKey], fetchData, { deep: true })
 
 onUnmounted(() => {
   if (chart) {
@@ -186,8 +309,8 @@ onUnmounted(() => {
 
 <style scoped>
 .panel-chart {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #000;
+  border: 1px solid #444;
   border-radius: 8px;
   overflow: hidden;
 }
@@ -196,7 +319,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid #444;
 }
 .panel-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin: 0; }
 .panel-actions { display: flex; gap: 4px; }
@@ -204,7 +327,7 @@ onUnmounted(() => {
   background: none; border: none; color: #64748b; cursor: pointer;
   font-size: 14px; padding: 4px; border-radius: 4px; line-height: 1;
 }
-.btn-icon:hover { color: #e2e8f0; background: #334155; }
+.btn-icon:hover { color: #e2e8f0; background: #222; }
 .panel-body { padding: 16px; height: 280px; position: relative; }
 .panel-body canvas { width: 100% !important; height: 100% !important; }
 .panel-state {
@@ -218,4 +341,65 @@ onUnmounted(() => {
 }
 .stat-number { font-size: 48px; font-weight: 700; color: #38bdf8; line-height: 1.2; }
 .stat-metric { font-size: 12px; color: #94a3b8; margin-top: 8px; }
+
+.chart-tooltip {
+  position: fixed;
+  pointer-events: auto;
+  opacity: 0;
+  z-index: 9999;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 160px;
+  max-width: 280px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  transition: opacity 0.15s;
+}
+.chart-tooltip::-webkit-scrollbar { width: 4px; }
+.chart-tooltip::-webkit-scrollbar-track { background: transparent; }
+.chart-tooltip::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+
+.tt-time {
+  color: #94a3b8;
+  font-size: 11px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #222;
+}
+.tt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.tt-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.tt-labels {
+  flex: 1;
+  min-width: 0;
+}
+.tt-label {
+  color: #e2e8f0;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.tt-value {
+  color: #38bdf8;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-left: auto;
+}
 </style>
