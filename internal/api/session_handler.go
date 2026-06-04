@@ -1,0 +1,73 @@
+package api
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+
+	"github.com/labubu/labubu/internal/storage"
+)
+
+// SessionHandler holds HTTP handlers for session endpoints.
+type SessionHandler struct {
+	store storage.Store
+}
+
+// NewSessionHandler creates a new SessionHandler.
+func NewSessionHandler(store storage.Store) *SessionHandler {
+	return &SessionHandler{store: store}
+}
+
+// ListSessions handles GET /api/v1/sessions.
+func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	page, _ := strconv.Atoi(q.Get("page"))
+	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	startMS, _ := strconv.ParseUint(q.Get("start"), 10, 64)
+	endMS, _ := strconv.ParseUint(q.Get("end"), 10, 64)
+
+	query := storage.SessionQuery{
+		Page:        page,
+		PageSize:    pageSize,
+		Service:     q.Get("service"),
+		Query:       q.Get("q"),
+		StartTimeMS: startMS,
+		EndTimeMS:   endMS,
+	}
+
+	result, err := h.store.ListSessions(r.Context(), query)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("list sessions: %v", err)})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// GetSession handles GET /api/v1/sessions/:sessionId.
+func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session_id is required"})
+		return
+	}
+
+	detail, err := h.store.GetSession(r.Context(), sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get session: %v", err)})
+		return
+	}
+	if detail == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, detail)
+}

@@ -105,7 +105,8 @@ func main() {
 		metricsHandler = api.NewMetricsHandler(metricStore)
 	}
 	dashboardHandler := api.NewDashboardHandler(*dashboardsDir)
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler)
+	sessionHandler := api.NewSessionHandler(store)
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler)
 
 	httpSrv := &http.Server{
 		Addr:         *apiAddr,

@@ -8,7 +8,7 @@ import (
 )
 
 // NewRouter creates the HTTP handler with API routes and static file serving.
-func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler) http.Handler {
+func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler, sessionHandler *SessionHandler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes.
@@ -43,6 +43,20 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 	if dashboardHandler != nil {
 		mux.HandleFunc("/api/v1/dashboards/", dashboardHandler.ServeHTTP)
 		mux.HandleFunc("/api/v1/dashboards", dashboardHandler.ServeHTTP)
+	}
+
+	// API routes — sessions.
+	if sessionHandler != nil {
+		mux.HandleFunc("/api/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
+			path := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions")
+			if path == "" || path == "/" {
+				sessionHandler.ListSessions(w, r)
+				return
+			}
+			sessionID := strings.TrimPrefix(path, "/")
+			sessionHandler.GetSession(w, r, sessionID)
+		})
+		mux.HandleFunc("/api/v1/sessions", sessionHandler.ListSessions)
 	}
 
 	// Health check.
