@@ -28,7 +28,7 @@
             <th>Avg Latency</th>
             <th>Max Latency</th>
             <th>Error Rate</th>
-            <th>Last Active</th>
+            <th>最近活跃</th>
           </tr>
         </thead>
         <tbody>
@@ -48,7 +48,7 @@
                 {{ (session.error_rate * 100).toFixed(0) }}%
               </span>
             </td>
-            <td class="cell-time">{{ formatRelativeTime(session.last_active_ms) }}</td>
+            <td class="cell-time">{{ formatTime(session.last_active_ms) }}</td>
           </tr>
         </tbody>
       </table>
@@ -153,13 +153,9 @@ function formatTokens(tokens?: number): string {
   return String(tokens)
 }
 
-function formatRelativeTime(ms: number): string {
-  const now = Date.now()
-  const diff = now - ms
-  if (diff < 60000) return 'just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)} min ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  return new Date(ms).toLocaleDateString()
+function formatTime(ms: number): string {
+  const d = new Date(ms)
+  return d.toLocaleString()
 }
 
 function errorRateClass(rate: number): string {
