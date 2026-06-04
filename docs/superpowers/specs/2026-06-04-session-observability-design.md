@@ -142,8 +142,8 @@ type SessionListResult struct {
 | `page_size` | int | 20 | Items per page, max 100 |
 | `service` | string | "" | Filter by service.name |
 | `q` | string | "" | Fuzzy search on session_id |
-| `start` | uint64 | 0 | Start time filter (ms), based on last_active_ms |
-| `end` | uint64 | 0 | End time filter (ms) |
+| `start` | uint64 | 0 | Start time filter (ms): only sessions where `last_active_ms >= start` |
+| `end` | uint64 | 0 | End time filter (ms): only sessions where `last_active_ms <= end` |
 
 Response:
 
