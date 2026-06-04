@@ -39,6 +39,14 @@ func (m *mockStore) GetServices(ctx context.Context) ([]string, error) {
 	return m.services, nil
 }
 
+func (m *mockStore) ListSessions(ctx context.Context, q storage.SessionQuery) (*storage.SessionListResult, error) {
+	return &storage.SessionListResult{}, nil
+}
+
+func (m *mockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
+	return nil, nil
+}
+
 func (m *mockStore) Close() error { return nil }
 
 func TestPipelineIngestAndFlush(t *testing.T) {
