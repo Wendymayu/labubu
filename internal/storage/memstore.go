@@ -67,6 +67,9 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 				existing.RootName = trace.RootName
 				existing.StatusCode = trace.StatusCode
 				existing.StatusMessage = trace.StatusMessage
+				if trace.SessionID != "" {
+					existing.SessionID = trace.SessionID
+				}
 			}
 			m.traces[traceID] = existing
 		} else {
@@ -236,6 +239,213 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 		DurationMS:    detailSpans[rootIdx].DurationMS,
 		ResourceAttrs: resourceAttrs,
 		Spans:         detailSpans,
+	}, nil
+}
+
+func (m *memStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionListResult, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Group traces by session_id.
+	type agg struct {
+		traceCount      int
+		totalTokens     uint32
+		hasTokens       bool
+		totalDurationMS uint64
+		maxDurationMS   uint64
+		errorCount      int
+		firstActiveMS   uint64
+		lastActiveMS    uint64
+	}
+	groups := make(map[string]*agg)
+
+	for _, t := range m.traces {
+		if t.SessionID == "" {
+			continue
+		}
+		if q.Service != "" {
+			if t.ResourceAttrs["service.name"] != q.Service {
+				continue
+			}
+		}
+		if q.Query != "" {
+			if !containsSubstring(t.SessionID, q.Query) {
+				continue
+			}
+		}
+		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
+			continue
+		}
+		if q.EndTimeMS > 0 && t.StartTimeMS > q.EndTimeMS {
+			continue
+		}
+
+		g, ok := groups[t.SessionID]
+		if !ok {
+			g = &agg{firstActiveMS: t.StartTimeMS, lastActiveMS: t.StartTimeMS}
+			groups[t.SessionID] = g
+		}
+		g.traceCount++
+		if t.TotalTokens != nil {
+			g.totalTokens += *t.TotalTokens
+			g.hasTokens = true
+		}
+		g.totalDurationMS += t.DurationMS
+		if t.DurationMS > g.maxDurationMS {
+			g.maxDurationMS = t.DurationMS
+		}
+		if t.StatusCode == 2 { // ERROR
+			g.errorCount++
+		}
+		if t.StartTimeMS < g.firstActiveMS {
+			g.firstActiveMS = t.StartTimeMS
+		}
+		if t.StartTimeMS > g.lastActiveMS {
+			g.lastActiveMS = t.StartTimeMS
+		}
+	}
+
+	// Convert to slice and sort by last_active_ms descending.
+	type sessionEntry struct {
+		id  string
+		agg *agg
+	}
+	entries := make([]sessionEntry, 0, len(groups))
+	for id, g := range groups {
+		entries = append(entries, sessionEntry{id, g})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].agg.lastActiveMS > entries[j].agg.lastActiveMS
+	})
+
+	total := len(entries)
+
+	// Paginate.
+	start := (q.Page - 1) * q.PageSize
+	if start > total {
+		start = total
+	}
+	end := start + q.PageSize
+	if end > total {
+		end = total
+	}
+	page := entries[start:end]
+
+	items := make([]SessionListItem, len(page))
+	for i, e := range page {
+		item := SessionListItem{
+			SessionID:       e.id,
+			TraceCount:      e.agg.traceCount,
+			TotalDurationMS: e.agg.totalDurationMS,
+			MaxDurationMS:   e.agg.maxDurationMS,
+			ErrorCount:      e.agg.errorCount,
+			FirstActiveMS:   e.agg.firstActiveMS,
+			LastActiveMS:    e.agg.lastActiveMS,
+		}
+		if e.agg.hasTokens {
+			tok := e.agg.totalTokens
+			item.TotalTokens = &tok
+		}
+		if e.agg.traceCount > 0 {
+			item.AvgDurationMS = float64(e.agg.totalDurationMS) / float64(e.agg.traceCount)
+			item.ErrorRate = float64(e.agg.errorCount) / float64(e.agg.traceCount)
+		}
+		items[i] = item
+	}
+
+	return &SessionListResult{
+		Sessions: items,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+func (m *memStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Collect traces for this session.
+	var sessionTraces []Trace
+	for _, t := range m.traces {
+		if t.SessionID == sessionID {
+			sessionTraces = append(sessionTraces, t)
+		}
+	}
+
+	if len(sessionTraces) == 0 {
+		return nil, nil
+	}
+
+	// Sort by start_time_ms ascending.
+	sort.Slice(sessionTraces, func(i, j int) bool {
+		return sessionTraces[i].StartTimeMS < sessionTraces[j].StartTimeMS
+	})
+
+	// Build session summary.
+	var totalTokens uint32
+	var hasTokens bool
+	var totalDurationMS, maxDurationMS uint64
+	var errorCount int
+	firstActiveMS := sessionTraces[0].StartTimeMS
+	lastActiveMS := sessionTraces[0].StartTimeMS
+
+	traces := make([]TraceListItem, len(sessionTraces))
+	for i, t := range sessionTraces {
+		traces[i] = TraceListItem{
+			TraceIDHex:  TraceIDToHex(t.TraceID),
+			RootSpanID:  SpanIDToHex(t.RootSpanID),
+			RootName:    t.RootName,
+			RootService: t.ResourceAttrs["service.name"],
+			StartTimeMS: t.StartTimeMS,
+			DurationMS:  t.DurationMS,
+			SpanCount:   t.SpanCount,
+			Status:      StatusCodeToString(t.StatusCode),
+			TotalTokens: t.TotalTokens,
+		}
+		if t.TotalTokens != nil {
+			totalTokens += *t.TotalTokens
+			hasTokens = true
+		}
+		totalDurationMS += t.DurationMS
+		if t.DurationMS > maxDurationMS {
+			maxDurationMS = t.DurationMS
+		}
+		if t.StatusCode == 2 {
+			errorCount++
+		}
+		if t.StartTimeMS < firstActiveMS {
+			firstActiveMS = t.StartTimeMS
+		}
+		if t.StartTimeMS > lastActiveMS {
+			lastActiveMS = t.StartTimeMS
+		}
+	}
+
+	summary := SessionListItem{
+		SessionID:       sessionID,
+		TraceCount:      len(sessionTraces),
+		TotalDurationMS: totalDurationMS,
+		MaxDurationMS:   maxDurationMS,
+		ErrorCount:      errorCount,
+		FirstActiveMS:   firstActiveMS,
+		LastActiveMS:    lastActiveMS,
+	}
+	if hasTokens {
+		summary.TotalTokens = &totalTokens
+	}
+	if len(sessionTraces) > 0 {
+		summary.AvgDurationMS = float64(totalDurationMS) / float64(len(sessionTraces))
+		summary.ErrorRate = float64(errorCount) / float64(len(sessionTraces))
+	}
+
+	return &SessionDetail{
+		Session: summary,
+		Traces:  traces,
 	}, nil
 }
 
