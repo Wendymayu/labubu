@@ -62,6 +62,7 @@ type Trace struct {
 	StatusCode        int32
 	StatusMessage     string
 	TotalTokens       *uint32
+	SessionID         string
 }
 
 // TraceQuery defines filters for listing traces.
@@ -101,6 +102,42 @@ type Pagination struct {
 	Page     int `json:"page"`
 	PageSize int `json:"page_size"`
 	Total    int `json:"total"`
+}
+
+// SessionQuery defines filters for listing sessions.
+type SessionQuery struct {
+	Page        int
+	PageSize    int
+	Service     string
+	Query       string // session_id fuzzy search
+	StartTimeMS uint64
+	EndTimeMS   uint64
+}
+
+// SessionListItem is a session summary for the list view.
+type SessionListItem struct {
+	SessionID       string  `json:"session_id"`
+	TraceCount      int     `json:"trace_count"`
+	TotalTokens     *uint32 `json:"total_tokens"`
+	TotalDurationMS uint64  `json:"total_duration_ms"`
+	MaxDurationMS   uint64  `json:"max_duration_ms"`
+	AvgDurationMS   float64 `json:"avg_duration_ms"`
+	ErrorCount      int     `json:"error_count"`
+	ErrorRate       float64 `json:"error_rate"`
+	FirstActiveMS   uint64  `json:"first_active_ms"`
+	LastActiveMS    uint64  `json:"last_active_ms"`
+}
+
+// SessionDetail is a session with all its traces.
+type SessionDetail struct {
+	Session SessionListItem `json:"session"`
+	Traces  []TraceListItem `json:"traces"`
+}
+
+// SessionListResult holds a page of session summaries.
+type SessionListResult struct {
+	Sessions   []SessionListItem `json:"sessions"`
+	Pagination Pagination        `json:"pagination"`
 }
 
 // TraceDetail is the full trace with all spans for the detail view.
@@ -157,6 +194,12 @@ type Store interface {
 
 	// GetServices returns distinct service.name values for the filter dropdown.
 	GetServices(ctx context.Context) ([]string, error)
+
+	// ListSessions returns a paginated list of session summaries.
+	ListSessions(ctx context.Context, q SessionQuery) (*SessionListResult, error)
+
+	// GetSession returns a session summary and all its traces.
+	GetSession(ctx context.Context, sessionID string) (*SessionDetail, error)
 
 	// Close releases resources (e.g., chDB session).
 	Close() error
