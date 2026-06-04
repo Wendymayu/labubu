@@ -28,7 +28,7 @@
             <th>Avg Latency</th>
             <th>Max Latency</th>
             <th>Error Rate</th>
-            <th>最近活跃</th>
+            <th>Last Active</th>
           </tr>
         </thead>
         <tbody>
