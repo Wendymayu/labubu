@@ -35,6 +35,14 @@ func (m *handlerMockStore) GetServices(ctx context.Context) ([]string, error) {
 	return m.services, nil
 }
 
+func (m *handlerMockStore) ListSessions(ctx context.Context, q storage.SessionQuery) (*storage.SessionListResult, error) {
+	return nil, nil
+}
+
+func (m *handlerMockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
+	return nil, nil
+}
+
 func (m *handlerMockStore) Close() error { return nil }
 
 func TestListTraces(t *testing.T) {
