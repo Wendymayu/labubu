@@ -1,78 +1,323 @@
 <template>
   <div class="span-detail" v-if="span">
-    <h3 class="detail-title">Span Detail</h3>
+    <!-- Quick Info Grid -->
+    <div class="quick-info">
+      <div class="qi-item">
+        <div class="qi-label">Kind</div>
+        <div :class="['qi-value', kindClass(span.kind)]">{{ span.kind }}</div>
+      </div>
+      <div class="qi-item">
+        <div class="qi-label">Status</div>
+        <div :class="['qi-value', statusClass(span.status)]">{{ span.status }}</div>
+      </div>
+      <div class="qi-item">
+        <div class="qi-label">Duration</div>
+        <div class="qi-value">{{ formatDuration(span.duration_ms) }}</div>
+      </div>
+      <div class="qi-item">
+        <div class="qi-label">Model</div>
+        <div class="qi-value qi-model">{{ span.gen_ai_request_model || '-' }}</div>
+      </div>
+    </div>
 
-    <table class="detail-table">
-      <tr><td class="label">Name</td><td>{{ span.name }}</td></tr>
-      <tr><td class="label">Kind</td><td>{{ span.kind }}</td></tr>
-      <tr><td class="label">Status</td><td><span :class="['status-badge', statusClass(span.status)]">{{ span.status }}</span></td></tr>
-      <tr v-if="span.status_message"><td class="label">Status Message</td><td class="error-text">{{ span.status_message }}</td></tr>
-      <tr><td class="label">Duration</td><td>{{ formatDuration(span.duration_ms) }}</td></tr>
-      <tr v-if="span.gen_ai_request_model"><td class="label">Model</td><td>{{ span.gen_ai_request_model }}</td></tr>
-    </table>
+    <!-- Status message (error) -->
+    <div v-if="span.status_message" class="status-msg">{{ span.status_message }}</div>
 
-    <!-- Token breakdown for LLM spans -->
-    <div v-if="span.total_tokens" class="token-section">
-      <h4>Token Usage</h4>
-      <div class="token-grid">
-        <div class="token-item">
-          <div class="token-value">{{ span.input_tokens ?? '-' }}</div>
-          <div class="token-label">Input</div>
+    <!-- Token summary line (compact) -->
+    <div v-if="span.total_tokens" class="token-summary">
+      <div class="ts-item">
+        <span class="ts-label">Input</span>
+        <span class="ts-val">{{ formatTokens(span.input_tokens) }}</span>
+      </div>
+      <div class="ts-item">
+        <span class="ts-label">Output</span>
+        <span class="ts-val">{{ formatTokens(span.output_tokens) }}</span>
+      </div>
+      <div class="ts-item">
+        <span class="ts-label">Total</span>
+        <span class="ts-val ts-highlight">{{ formatTokens(span.total_tokens) }}</span>
+      </div>
+    </div>
+
+    <!-- Attributes (grouped + search) -->
+    <div class="detail-section">
+      <div class="section-header">
+        <h4>Attributes ({{ totalAttrCount }})</h4>
+        <input
+          v-model="attrFilter"
+          class="attr-search"
+          placeholder="Filter attributes..."
+        />
+      </div>
+
+      <div v-if="groupedAttributes.length === 0" class="attr-empty">
+        {{ totalAttrCount === 0 ? 'No attributes' : 'No matching attributes' }}
+      </div>
+
+      <div v-for="(group, gi) in groupedAttributes" :key="gi" class="attr-group">
+        <div class="attr-group-header" @click="group.expanded = !group.expanded">
+          <span>{{ group.expanded ? '▾' : '▸' }} <b>{{ group.name }}</b></span>
+          <span class="attr-group-count">{{ group.items.length }}</span>
         </div>
-        <div class="token-item">
-          <div class="token-value">{{ span.output_tokens ?? '-' }}</div>
-          <div class="token-label">Output</div>
-        </div>
-        <div class="token-item">
-          <div class="token-value">{{ span.total_tokens }}</div>
-          <div class="token-label">Total</div>
+        <div v-if="group.expanded" class="attr-group-body">
+          <div v-for="item in group.items" :key="item.key" class="attr-row">
+            <span class="attr-key">{{ item.key }}</span>
+            <span class="attr-value" :class="{ 'attr-empty-val': !item.value }">{{ item.value || '(empty)' }}</span>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Attributes -->
-    <div v-if="Object.keys(span.attributes || {}).length > 0" class="detail-section">
-      <h4>Attributes</h4>
-      <table class="kv-table">
-        <tr v-for="(v, k) in span.attributes" :key="k">
-          <td class="kv-key">{{ k }}</td>
-          <td class="kv-value">{{ v }}</td>
-        </tr>
-      </table>
-    </div>
-
-    <!-- Events -->
+    <!-- Events Timeline -->
     <div v-if="span.events && span.events.length > 0" class="detail-section">
       <h4>Events ({{ span.events.length }})</h4>
-      <div v-for="(evt, i) in span.events" :key="i" class="event-item">
-        <div class="event-name">{{ evt.name }}</div>
-        <div class="event-time">at {{ formatDurationFromStart(evt.time_ms) }}</div>
-        <table class="kv-table" v-if="Object.keys(evt.attributes || {}).length > 0">
-          <tr v-for="(v, k) in evt.attributes" :key="k">
-            <td class="kv-key">{{ k }}</td>
-            <td class="kv-value">{{ v }}</td>
-          </tr>
-        </table>
+
+      <div class="events-timeline">
+        <div class="tl-line"></div>
+        <div
+          v-for="(evt, i) in span.events"
+          :key="i"
+          :class="['tl-card', eventBorderClass(evt)]"
+        >
+          <div :class="['tl-dot', eventDotClass(evt)]"></div>
+          <div class="tl-header">
+            <b :class="eventNameClass(evt)">{{ evt.name }}</b>
+            <span class="tl-time">{{ formatTimeOffset(evt.time_ms, span.start_time_ms) }}</span>
+          </div>
+          <div v-if="Object.keys(evt.attributes || {}).length > 0" class="tl-attrs">
+            <template v-for="(v, k) in evt.attributes" :key="k">
+              <div class="tl-attr-row" v-if="isToolIO(k, evt.name)">
+                <div class="tl-code-toggle" @click="toggleCodeBlock(evt, k)">
+                  {{ codeBlockState(evt, k).expanded ? '▾' : '▸' }} {{ k }}
+                  <span class="tl-copy-inline" @click.stop="copyText(v)">📋</span>
+                </div>
+                <pre v-if="codeBlockState(evt, k).expanded" class="tl-code"><code v-html="highlightJSON(v)"></code></pre>
+              </div>
+              <div v-else class="tl-attr-row">
+                <span class="tl-attr-key">{{ k }}</span>
+                <span class="tl-attr-value">{{ v }}</span>
+              </div>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, computed, reactive, watch } from 'vue'
 import type { SpanDetail } from '../api/client'
 
-defineProps<{
+const props = defineProps<{
   span: SpanDetail | null
 }>()
+
+// --- grouping rules ---
+
+interface AttrGroup {
+  name: string
+  prefixes: string[]
+  defaultExpanded: boolean
+  expanded: boolean
+  items: { key: string; value: string }[]
+}
+
+const GROUP_RULES: Omit<AttrGroup, 'expanded' | 'items'>[] = [
+  { name: 'Gen AI', prefixes: ['gen_ai.'], defaultExpanded: true },
+  { name: 'HTTP', prefixes: ['http.', 'url.', 'net.'], defaultExpanded: false },
+  { name: 'Service', prefixes: ['service.', 'telemetry.'], defaultExpanded: false },
+]
+
+// --- attribute search ---
+
+const attrFilter = ref('')
+
+const totalAttrCount = computed(() => {
+  if (!props.span?.attributes) return 0
+  return Object.keys(props.span.attributes).length
+})
+
+const groupedAttributes = computed<AttrGroup[]>(() => {
+  const attrs = props.span?.attributes || {}
+  const filter = attrFilter.value.toLowerCase()
+
+  // Initialize groups
+  const groups: AttrGroup[] = GROUP_RULES.map(r => ({
+    ...r,
+    expanded: r.defaultExpanded,
+    items: [],
+  }))
+  const otherGroup: AttrGroup = {
+    name: 'Other',
+    prefixes: [],
+    defaultExpanded: false,
+    expanded: false,
+    items: [],
+  }
+
+  for (const [key, value] of Object.entries(attrs)) {
+    // Filter
+    if (filter && !key.toLowerCase().includes(filter) && !String(value).toLowerCase().includes(filter)) {
+      continue
+    }
+
+    let assigned = false
+    for (const g of groups) {
+      if (g.prefixes.some(pfx => key.startsWith(pfx))) {
+        g.items.push({ key, value: String(value) })
+        assigned = true
+        break
+      }
+    }
+    if (!assigned) {
+      otherGroup.items.push({ key, value: String(value) })
+    }
+  }
+
+  // When filtering, auto-expand all groups that have matches
+  if (filter) {
+    for (const g of groups) {
+      if (g.items.length > 0) g.expanded = true
+    }
+    if (otherGroup.items.length > 0) otherGroup.expanded = true
+  }
+
+  // Return non-empty groups; if filter is active include all (even empty) to show "no matching"
+  if (filter) {
+    // When filtering, only show groups that have items
+    const nonEmpty = groups.filter(g => g.items.length > 0)
+    if (otherGroup.items.length > 0) nonEmpty.push(otherGroup)
+    return nonEmpty
+  }
+
+  const result = groups.filter(g => g.items.length > 0)
+  if (otherGroup.items.length > 0) result.push(otherGroup)
+  return result
+})
+
+// --- code block expand/collapse state ---
+
+const codeBlocks = reactive<Record<string, Record<string, boolean>>>({})
+
+// Reset code block expand state when span changes
+watch(() => props.span, () => {
+  Object.keys(codeBlocks).forEach(k => delete codeBlocks[k])
+})
+
+function getBlockKey(evt: any, k: string): string {
+  return `${evt.name || ''}_${k}`
+}
+
+function codeBlockState(evt: any, k: string): { expanded: boolean } {
+  const evtKey = getBlockKey(evt, k)
+  if (!codeBlocks[evtKey]) {
+    // Default: collapse after 3 lines
+    const raw = String(evt.attributes[k] || '')
+    const lines = raw.split('\n')
+    codeBlocks[evtKey] = { expanded: lines.length <= 3 }
+  }
+  return { expanded: !!codeBlocks[evtKey]?.expanded }
+}
+
+function toggleCodeBlock(evt: any, k: string) {
+  const evtKey = getBlockKey(evt, k)
+  if (!codeBlocks[evtKey]) {
+    codeBlocks[evtKey] = { expanded: false }
+  }
+  codeBlocks[evtKey].expanded = !codeBlocks[evtKey].expanded
+}
+
+// --- tool I/O detection ---
+
+function isToolIO(attrKey: string, _eventName?: string): boolean {
+  const lower = attrKey.toLowerCase()
+  return lower === 'input' || lower === 'output' || lower === 'result' ||
+    lower.endsWith('.input') || lower.endsWith('.output') ||
+    lower.includes('tool.call') || lower.includes('tool.result')
+}
+
+function highlightJSON(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw)
+    const pretty = JSON.stringify(parsed, null, 2)
+    // Basic syntax highlighting
+    return pretty
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"([^"]+)":/g, '<span class="j-key">"$1"</span>:')
+      .replace(/: "([^"]*)"/g, ': <span class="j-str">"$1"</span>')
+      .replace(/: (\d+\.?\d*)/g, ': <span class="j-num">$1</span>')
+      .replace(/: (true|false|null)/g, ': <span class="j-bool">$1</span>')
+  } catch {
+    return raw
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+  }
+}
+
+function copyText(text: string) {
+  navigator.clipboard?.writeText(text).catch(() => {})
+}
+
+// --- event helpers ---
+
+function eventBorderClass(evt: any): string {
+  const name = (evt.name || '').toLowerCase()
+  if (name.includes('tool.call') && !name.includes('tool.call.')) return 'tl-card-toolcall'
+  if (name.includes('tool.result')) return 'tl-card-toolresult'
+  if (name.includes('exception') || name.includes('error')) return 'tl-card-error'
+  return 'tl-card-default'
+}
+
+function eventDotClass(evt: any): string {
+  const name = (evt.name || '').toLowerCase()
+  if (name.includes('tool.call') && !name.includes('tool.call.')) return 'tl-dot-toolcall'
+  if (name.includes('tool.result')) return 'tl-dot-toolresult'
+  if (name.includes('exception') || name.includes('error')) return 'tl-dot-error'
+  return 'tl-dot-default'
+}
+
+function eventNameClass(evt: any): string {
+  const name = (evt.name || '').toLowerCase()
+  if (name.includes('tool.call') && !name.includes('tool.call.')) return 'evt-name-toolcall'
+  if (name.includes('tool.result')) return 'evt-name-toolresult'
+  if (name.includes('exception') || name.includes('error')) return 'evt-name-error'
+  return ''
+}
+
+function formatTimeOffset(eventTimeMs: number, spanStartMs?: number): string {
+  if (eventTimeMs == null) return '-'
+  const base = spanStartMs ?? 0
+  const offset = eventTimeMs - base
+  if (offset < 0) return `+0ms`
+  if (offset < 1000) return `+${offset}ms`
+  return `+${(offset / 1000).toFixed(1)}s`
+}
+
+// --- general helpers ---
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms.toFixed(1)}ms`
   return `${(ms / 1000).toFixed(2)}s`
 }
 
-function formatDurationFromStart(ms: number): string {
-  if (ms < 1000) return `+${ms}ms`
-  return `+${(ms / 1000).toFixed(2)}s`
+function formatTokens(tokens: number | undefined | null): string {
+  if (tokens == null) return '-'
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
+  return String(tokens)
+}
+
+function kindClass(kind: string): string {
+  switch (kind) {
+    case 'SERVER': return 'kind-server'
+    case 'CLIENT': return 'kind-client'
+    case 'PRODUCER': return 'kind-producer'
+    case 'CONSUMER': return 'kind-consumer'
+    default: return 'kind-internal'
+  }
 }
 
 function statusClass(status: string): string {
@@ -85,28 +330,285 @@ function statusClass(status: string): string {
 </script>
 
 <style scoped>
-.span-detail { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; }
-.detail-title { font-size: 16px; margin-bottom: 12px; color: #e2e8f0; }
-.detail-table { width: 100%; border-collapse: collapse; }
-.detail-table td { padding: 4px 8px; font-size: 13px; }
-.label { color: #94a3b8; width: 120px; white-space: nowrap; }
-.status-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 12px; font-weight: 600; }
-.status-ok { background: #065f46; color: #6ee7b7; }
-.status-error { background: #7f1d1d; color: #fca5a5; }
-.error-text { color: #fca5a5; }
-.detail-section { margin-top: 16px; }
-.detail-section h4 { font-size: 13px; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase; }
-.kv-table { width: 100%; border-collapse: collapse; }
-.kv-table td { padding: 3px 6px; font-size: 12px; border-bottom: 1px solid #0f172a; }
-.kv-key { color: #94a3b8; width: 180px; word-break: break-all; }
-.kv-value { color: #e2e8f0; word-break: break-all; }
-.token-section { margin-top: 16px; }
-.token-section h4 { font-size: 13px; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase; }
-.token-grid { display: flex; gap: 16px; }
-.token-item { text-align: center; }
-.token-value { font-size: 20px; font-weight: 700; color: #c4b5fd; }
-.token-label { font-size: 11px; color: #94a3b8; }
-.event-item { margin-top: 8px; padding: 8px; background: #0f172a; border-radius: 4px; }
-.event-name { font-weight: 600; font-size: 13px; }
-.event-time { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+.span-detail {
+  background: #000;
+  padding: 0;
+}
+
+/* --- Quick Info Grid --- */
+.quick-info {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.qi-item {
+  background: #0f172a;
+  border-radius: 6px;
+  padding: 10px 8px;
+  text-align: center;
+}
+.qi-label {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.qi-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.qi-model {
+  font-size: 11px;
+  color: #38bdf8;
+  word-break: break-all;
+}
+.kind-server { color: #3b82f6; }
+.kind-client { color: #22c55e; }
+.kind-producer { color: #f59e0b; }
+.kind-consumer { color: #a855f7; }
+.kind-internal { color: #94a3b8; }
+.status-ok { color: #6ee7b7; }
+.status-error { color: #fca5a5; }
+
+.status-msg {
+  background: #7f1d1d;
+  color: #fca5a5;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+/* --- Token Summary --- */
+.token-summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #222;
+}
+.ts-item {
+  text-align: center;
+  flex: 1;
+}
+.ts-label {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  text-transform: uppercase;
+}
+.ts-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.ts-highlight {
+  color: #c4b5fd;
+}
+
+/* --- Attributes --- */
+.detail-section {
+  margin-bottom: 16px;
+}
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.section-header h4 {
+  font-size: 11px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  margin: 0;
+}
+.attr-search {
+  background: #0f172a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #e2e8f0;
+  width: 170px;
+}
+.attr-search::placeholder {
+  color: #64748b;
+}
+.attr-search:focus {
+  outline: none;
+  border-color: #38bdf8;
+}
+.attr-empty {
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+  padding: 12px 0;
+}
+
+.attr-group {
+  border: 1px solid #222;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.attr-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: #111;
+  cursor: pointer;
+  font-size: 12px;
+  color: #e2e8f0;
+  user-select: none;
+}
+.attr-group-header:hover {
+  background: #1a1a1a;
+}
+.attr-group-count {
+  font-size: 10px;
+  color: #64748b;
+}
+.attr-group-body {
+  padding: 2px 0;
+}
+.attr-row {
+  display: flex;
+  padding: 3px 10px;
+  border-bottom: 1px solid #0f172a;
+  font-size: 11px;
+}
+.attr-row:last-child {
+  border-bottom: none;
+}
+.attr-key {
+  color: #64748b;
+  width: 170px;
+  flex-shrink: 0;
+  word-break: break-all;
+}
+.attr-value {
+  color: #e2e8f0;
+  word-break: break-all;
+  flex: 1;
+}
+.attr-empty-val {
+  color: #64748b;
+  font-style: italic;
+}
+
+/* --- Events Timeline --- */
+.events-timeline {
+  position: relative;
+  padding-left: 18px;
+}
+.tl-line {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: #222;
+}
+
+.tl-card {
+  position: relative;
+  background: #0f172a;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-left: 3px solid #6b7280;
+}
+.tl-card-toolcall { border-left-color: #22c55e; }
+.tl-card-toolresult { border-left-color: #f59e0b; }
+.tl-card-error { border-left-color: #ef4444; }
+.tl-card-default { border-left-color: #6b7280; }
+
+.tl-dot {
+  position: absolute;
+  left: -15px;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.tl-dot-toolcall { background: #22c55e; }
+.tl-dot-toolresult { background: #f59e0b; }
+.tl-dot-error { background: #ef4444; }
+.tl-dot-default { background: #6b7280; }
+
+.tl-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.tl-time {
+  font-size: 10px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+.evt-name-toolcall { color: #22c55e; }
+.evt-name-toolresult { color: #f59e0b; }
+.evt-name-error { color: #fca5a5; }
+
+.tl-attrs {
+  margin-top: 6px;
+}
+.tl-attr-row {
+  margin-bottom: 4px;
+}
+.tl-attr-key {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  margin-bottom: 2px;
+}
+.tl-attr-value {
+  font-size: 11px;
+  color: #e2e8f0;
+  word-break: break-all;
+}
+
+.tl-code-toggle {
+  font-size: 10px;
+  color: #94a3b8;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+.tl-code-toggle:hover {
+  color: #e2e8f0;
+}
+.tl-copy-inline {
+  margin-left: 8px;
+  cursor: pointer;
+  font-size: 10px;
+}
+.tl-code {
+  background: #000;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 10px;
+  overflow-x: auto;
+  max-height: 250px;
+  overflow-y: auto;
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  color: #e2e8f0;
+  line-height: 1.5;
+}
+.tl-code code {
+  font-family: inherit;
+}
+.tl-code :deep(.j-key) { color: #94a3b8; }
+.tl-code :deep(.j-str) { color: #6ee7b7; }
+.tl-code :deep(.j-num) { color: #facc15; }
+.tl-code :deep(.j-bool) { color: #f472b6; }
+
+/* --- Scrollbar --- */
+.tl-code::-webkit-scrollbar { width: 3px; height: 3px; }
+.tl-code::-webkit-scrollbar-track { background: transparent; }
+.tl-code::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
 </style>
