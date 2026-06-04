@@ -185,3 +185,52 @@ export interface QueryResult {
   }
   error?: string
 }
+
+// --- Session types and API ---
+
+export interface SessionListItem {
+  session_id: string
+  trace_count: number
+  total_tokens?: number
+  total_duration_ms: number
+  max_duration_ms: number
+  avg_duration_ms: number
+  error_count: number
+  error_rate: number
+  first_active_ms: number
+  last_active_ms: number
+}
+
+export interface SessionDetail {
+  session: SessionListItem
+  traces: TraceListItem[]
+}
+
+export interface SessionQuery {
+  page?: number
+  page_size?: number
+  service?: string
+  q?: string
+  start?: number
+  end?: number
+}
+
+export interface SessionListResponse {
+  sessions: SessionListItem[]
+  pagination: Pagination
+}
+
+export async function listSessions(query: SessionQuery): Promise<SessionListResponse> {
+  return get<SessionListResponse>(`${BASE_URL}/sessions`, {
+    page: query.page,
+    page_size: query.page_size,
+    service: query.service,
+    q: query.q,
+    start: query.start,
+    end: query.end,
+  })
+}
+
+export async function getSession(sessionId: string): Promise<SessionDetail> {
+  return get<SessionDetail>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}`)
+}
