@@ -199,6 +199,76 @@ func (s *chDBStore) GetServices(ctx context.Context) ([]string, error) {
 	return parseServices(result)
 }
 
+// ListSessions returns a paginated list of session summaries.
+func (s *chDBStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionListResult, error) {
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 || q.PageSize > 100 {
+		q.PageSize = 20
+	}
+
+	countSQL := buildSessionCountSQL(q)
+	countResult, err := s.querySQL(countSQL + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("count sessions: %w", err)
+	}
+	total := parseCount(countResult)
+
+	dataSQL := buildSessionListSQL(q)
+	dataResult, err := s.querySQL(dataSQL + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+
+	sessions, err := parseSessionListItems(dataResult)
+	if err != nil {
+		return nil, fmt.Errorf("parse session list: %w", err)
+	}
+
+	return &SessionListResult{
+		Sessions: sessions,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+// GetSession returns the session summary and all traces for a session.
+func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+	// Get the aggregated session summary using exact-match query.
+	summarySQL := buildSessionSummarySQL(sessionID) + " FORMAT JSONEachRow"
+	summaryResult, err := s.querySQL(summarySQL)
+	if err != nil {
+		return nil, fmt.Errorf("get session summary: %w", err)
+	}
+	sessions, err := parseSessionListItems(summaryResult)
+	if err != nil {
+		return nil, fmt.Errorf("parse session summary: %w", err)
+	}
+	if len(sessions) == 0 {
+		return nil, nil
+	}
+
+	// Get all traces for this session.
+	tracesSQL := buildSessionTracesSQL(sessionID) + " FORMAT JSONEachRow"
+	tracesResult, err := s.querySQL(tracesSQL)
+	if err != nil {
+		return nil, fmt.Errorf("get session traces: %w", err)
+	}
+	traces, err := parseTraceListItems(tracesResult)
+	if err != nil {
+		return nil, fmt.Errorf("parse session traces: %w", err)
+	}
+
+	return &SessionDetail{
+		Session: sessions[0],
+		Traces:  traces,
+	}, nil
+}
+
 // Close releases the chDB connection.
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
@@ -296,6 +366,44 @@ func parseServices(result string) ([]string, error) {
 		}
 	}
 	return services, nil
+}
+
+func parseSessionListItems(result string) ([]SessionListItem, error) {
+	var items []SessionListItem
+	lines := splitLines(result)
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			SessionID       string  `json:"session_id"`
+			TraceCount      int     `json:"trace_count"`
+			TotalTokens     *uint32 `json:"total_tokens"`
+			TotalDurationMS uint64  `json:"total_duration_ms"`
+			MaxDurationMS   uint64  `json:"max_duration_ms"`
+			AvgDurationMS   float64 `json:"avg_duration_ms"`
+			ErrorCount      int     `json:"error_count"`
+			ErrorRate       float64 `json:"error_rate"`
+			FirstActiveMS   uint64  `json:"first_active_ms"`
+			LastActiveMS    uint64  `json:"last_active_ms"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			return nil, fmt.Errorf("parse session item: %w (line: %s)", err, line)
+		}
+		items = append(items, SessionListItem{
+			SessionID:       raw.SessionID,
+			TraceCount:      raw.TraceCount,
+			TotalTokens:     raw.TotalTokens,
+			TotalDurationMS: raw.TotalDurationMS,
+			MaxDurationMS:   raw.MaxDurationMS,
+			AvgDurationMS:   raw.AvgDurationMS,
+			ErrorCount:      raw.ErrorCount,
+			ErrorRate:       raw.ErrorRate,
+			FirstActiveMS:   raw.FirstActiveMS,
+			LastActiveMS:    raw.LastActiveMS,
+		})
+	}
+	return items, nil
 }
 
 func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
