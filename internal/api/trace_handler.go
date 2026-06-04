@@ -85,6 +85,10 @@ func (h *TraceHandler) GetTrace(w http.ResponseWriter, r *http.Request, traceIDH
 		return
 	}
 
+	if r.URL.Query().Get("format") == "otlp" {
+		writeOTLPResponse(w, detail)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"trace": detail})
 }
 
