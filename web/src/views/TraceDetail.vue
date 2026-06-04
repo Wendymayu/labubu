@@ -31,7 +31,10 @@
             <span class="summary-label">Total Tokens</span>
             <span class="summary-value token-highlight">{{ formatTokens(computeTotalTokens()) }}</span>
           </div>
-          <button class="btn-download" @click="downloadTrace" title="Download trace as JSON">Download</button>
+          <div class="download-group">
+            <button class="btn-download" @click="downloadTraceJSON" title="Download as internal JSON">JSON</button>
+            <button class="btn-download" @click="downloadTraceOTLP" title="Download as OTLP JSON (importable to Jaeger/Grafana)">OTLP</button>
+          </div>
         </div>
       </div>
 
@@ -156,14 +159,28 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
-function downloadTrace() {
+function downloadTraceJSON() {
   if (!trace.value) return
-  const json = JSON.stringify(trace.value, null, 2)
-  const blob = new Blob([json], { type: 'application/json' })
+  downloadBlob(JSON.stringify(trace.value, null, 2), `trace-${traceIdHex}.json`)
+}
+
+async function downloadTraceOTLP() {
+  try {
+    const res = await fetch(`/api/v1/traces/${traceIdHex}?format=otlp`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json = await res.json()
+    downloadBlob(JSON.stringify(json, null, 2), `trace-${traceIdHex}-otlp.json`)
+  } catch (e: any) {
+    alert(`OTLP download failed: ${e.message}`)
+  }
+}
+
+function downloadBlob(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `trace-${traceIdHex}.json`
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -229,15 +246,24 @@ onUnmounted(() => {
 .mono { font-family: 'Courier New', monospace; font-size: 12px; word-break: break-all; }
 .token-highlight { color: #c4b5fd; font-weight: 600; }
 
+.download-group {
+  display: flex;
+  gap: 0;
+  align-self: center;
+}
 .btn-download {
-  padding: 6px 16px;
+  padding: 6px 12px;
   border: 1px solid #333;
   background: #111;
   color: #94a3b8;
-  border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
-  align-self: center;
+  font-size: 12px;
+}
+.btn-download:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.btn-download:last-child {
+  border-radius: 0 6px 6px 0;
 }
 .btn-download:hover {
   border-color: #38bdf8;
