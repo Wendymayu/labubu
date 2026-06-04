@@ -21,6 +21,7 @@
         >{{ span._expanded ? '▼' : '▶' }}</span>
         <span :class="['kind-dot', kindDotClass(span.kind)]"></span>
         {{ span.name }}
+        <span v-if="selectedSpanId === span.span_id" class="selected-marker">◀</span>
       </span>
 
       <span class="col-timeline">
@@ -143,7 +144,11 @@ function formatTokens(tokens: number): string {
 .waterfall-header { display: flex; padding: 8px; font-size: 11px; color: #94a3b8; text-transform: uppercase; border-bottom: 1px solid #334155; }
 .waterfall-row { display: flex; align-items: center; padding: 4px 0; cursor: pointer; border-bottom: 1px solid #0f172a; }
 .waterfall-row:hover { background: #1e293b; }
-.waterfall-row.selected { background: #1e3a5f; }
+.waterfall-row.selected {
+  background: #1e3a5f;
+  outline: 1px solid #38bdf8;
+  outline-offset: -1px;
+}
 .col-name { flex: 0 0 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-timeline { flex: 1; position: relative; height: 20px; }
 .col-duration { flex: 0 0 80px; text-align: right; font-variant-numeric: tabular-nums; color: #94a3b8; }
@@ -163,4 +168,9 @@ function formatTokens(tokens: number): string {
 .bar-internal { background: #6b7280; }
 .bar-llm { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
 .token-badge { font-size: 11px; color: #c4b5fd; }
+.selected-marker {
+  color: #38bdf8;
+  margin-left: 6px;
+  font-size: 10px;
+}
 </style>
