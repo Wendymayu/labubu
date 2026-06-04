@@ -31,6 +31,7 @@
             <span class="summary-label">Total Tokens</span>
             <span class="summary-value token-highlight">{{ formatTokens(computeTotalTokens()) }}</span>
           </div>
+          <button class="btn-download" @click="downloadTrace" title="Download trace as JSON">Download</button>
         </div>
       </div>
 
@@ -155,6 +156,20 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
+function downloadTrace() {
+  if (!trace.value) return
+  const json = JSON.stringify(trace.value, null, 2)
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `trace-${traceIdHex}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 function computeTotalTokens(): number | null {
   if (!trace.value) return null
   let total = 0
@@ -213,6 +228,21 @@ onUnmounted(() => {
 .summary-value { font-size: 14px; }
 .mono { font-family: 'Courier New', monospace; font-size: 12px; word-break: break-all; }
 .token-highlight { color: #c4b5fd; font-weight: 600; }
+
+.btn-download {
+  padding: 6px 16px;
+  border: 1px solid #333;
+  background: #111;
+  color: #94a3b8;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  align-self: center;
+}
+.btn-download:hover {
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
 
 /* === New drawer layout === */
 .detail-layout {
