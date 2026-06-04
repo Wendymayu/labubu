@@ -34,24 +34,36 @@
         </div>
       </div>
 
-      <div class="detail-layout">
+      <div class="detail-layout" :class="{ 'drawer-open': drawerOpen }">
         <div class="waterfall-panel">
           <WaterfallChart
             :spans="trace.spans"
             :trace-start-ms="trace.start_time_ms"
             :trace-duration-ms="trace.duration_ms"
             :selected-span-id="selectedSpan?.span_id"
-            @select-span="selectSpan"
+            @select-span="openDrawer"
           />
+          <div v-if="!drawerOpen" class="hint-click">Click any span to view details</div>
         </div>
-        <div class="detail-panel">
-          <TokenPieChart
-            v-if="selectedSpanTokenSlices.length > 0"
-            :items="selectedSpanTokenSlices"
-            :input-tokens="selectedSpanInputTokens"
-            :output-tokens="selectedSpanOutputTokens"
-          />
-          <SpanDetail :span="selectedSpan" />
+
+        <div v-if="drawerOpen" class="detail-drawer">
+          <div class="drawer-header">
+            <div class="drawer-title">
+              <span class="drawer-span-name">{{ selectedSpan?.name }}</span>
+              <span class="drawer-span-id">{{ selectedSpan?.span_id }}</span>
+            </div>
+            <button class="drawer-close" @click="closeDrawer" title="Close (Esc)">✕</button>
+          </div>
+
+          <div class="drawer-body">
+            <TokenPieChart
+              v-if="selectedSpanTokenSlices.length > 0"
+              :items="selectedSpanTokenSlices"
+              :input-tokens="selectedSpanInputTokens"
+              :output-tokens="selectedSpanOutputTokens"
+            />
+            <SpanDetail :span="selectedSpan" />
+          </div>
         </div>
       </div>
     </template>
@@ -59,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType } from '../api/client'
 import WaterfallChart from '../components/WaterfallChart.vue'
@@ -74,6 +86,7 @@ const trace = ref<TraceDetailResponse['trace'] | null>(null)
 const loading = ref(true)
 const error = ref('')
 const selectedSpan = ref<SpanDetailType | null>(null)
+const drawerOpen = ref(false)
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
 const CTX_PATTERNS: { key: string; label: string }[] = [
@@ -126,10 +139,6 @@ async function fetchTrace() {
   try {
     const result = await getTrace(traceIdHex)
     trace.value = result.trace
-    if (result.trace.spans.length > 0) {
-      const root = result.trace.spans.find(s => s.parent_span_id === '') || result.trace.spans[0]
-      selectedSpan.value = root
-    }
   } catch (e: any) {
     error.value = e.message || 'Failed to load trace'
   } finally {
@@ -137,8 +146,13 @@ async function fetchTrace() {
   }
 }
 
-function selectSpan(span: SpanDetailType) {
+function openDrawer(span: SpanDetailType) {
   selectedSpan.value = span
+  drawerOpen.value = true
+}
+
+function closeDrawer() {
+  drawerOpen.value = false
 }
 
 function computeTotalTokens(): number | null {
@@ -168,7 +182,20 @@ function formatTokens(tokens: number | null): string {
   return String(tokens)
 }
 
-onMounted(fetchTrace)
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && drawerOpen.value) {
+    closeDrawer()
+  }
+}
+
+onMounted(() => {
+  fetchTrace()
+  window.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <style scoped>
@@ -186,7 +213,123 @@ onMounted(fetchTrace)
 .summary-value { font-size: 14px; }
 .mono { font-family: 'Courier New', monospace; font-size: 12px; word-break: break-all; }
 .token-highlight { color: #c4b5fd; font-weight: 600; }
-.detail-layout { display: flex; gap: 16px; }
-.waterfall-panel { flex: 1; min-width: 0; overflow-x: auto; }
-.detail-panel { flex: 0 0 400px; max-height: calc(100vh - 280px); overflow-y: auto; position: sticky; top: 0; }
+
+/* === New drawer layout === */
+.detail-layout {
+  display: flex;
+  gap: 0;
+}
+.detail-layout.drawer-open .waterfall-panel {
+  flex: 1;
+  min-width: 0;
+}
+.detail-layout:not(.drawer-open) .waterfall-panel {
+  flex: 1;
+  width: 100%;
+}
+
+.waterfall-panel {
+  position: relative;
+  overflow-x: auto;
+  transition: flex 0.3s ease;
+}
+
+.hint-click {
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+  padding: 24px 0;
+}
+
+/* === Drawer === */
+.detail-drawer {
+  width: 480px;
+  flex-shrink: 0;
+  border-left: 1px solid #444;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 240px);
+  overflow: hidden;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid #444;
+  flex-shrink: 0;
+}
+.drawer-title {
+  min-width: 0;
+}
+.drawer-span-name {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drawer-span-id {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  font-family: 'Courier New', monospace;
+  margin-top: 2px;
+}
+.drawer-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.drawer-close:hover {
+  color: #e2e8f0;
+  background: #222;
+}
+
+.drawer-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Scrollbar for drawer body */
+.drawer-body::-webkit-scrollbar { width: 4px; }
+.drawer-body::-webkit-scrollbar-track { background: transparent; }
+.drawer-body::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+
+/* Responsive: on narrow screens overlay instead of split */
+@media (max-width: 900px) {
+  .detail-drawer {
+    position: fixed;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 90vw;
+    max-width: 480px;
+    z-index: 100;
+    max-height: 100vh;
+  }
+  .detail-layout.drawer-open::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 99;
+  }
+}
 </style>
