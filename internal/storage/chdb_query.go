@@ -54,14 +54,14 @@ func buildUpsertTraceSQL(trace Trace) string {
 			resource_attributes, resource_schema_url,
 			scope_name, scope_version, scope_attributes, scope_schema_url,
 			trace_state, dropped_span_count,
-			status_code, status_message, total_tokens
+			status_code, status_message, total_tokens, session_id
 		) VALUES (
 			unhex('%s'), '%s', unhex('%s'), '%s', %d,
 			%d, %d, %d,
 			%s, '%s',
 			'%s', '%s', %s, '%s',
 			'%s', 0,
-			%d, '%s', %s
+			%d, '%s', %s, '%s'
 		)`,
 		trace.TraceIDHex, trace.TraceIDHex,
 		trace.RootSpanID,
@@ -72,7 +72,7 @@ func buildUpsertTraceSQL(trace Trace) string {
 		mapToSQL(trace.ScopeAttrs), escapeSQL(trace.ScopeSchemaURL),
 		"",
 		trace.StatusCode, escapeSQL(trace.StatusMessage),
-		totalTokens,
+		totalTokens, escapeSQL(trace.SessionID),
 	)
 }
 
@@ -171,6 +171,99 @@ func buildGetTraceSQL(traceID [16]byte) string {
 	)
 }
 
+// buildSessionListWhereClause builds the WHERE clause for session queries.
+func buildSessionListWhereClause(q SessionQuery) string {
+	clauses := []string{"session_id != ''"}
+
+	if q.Service != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"resource_attributes['service.name'] = '%s'", escapeSQL(q.Service),
+		))
+	}
+	if q.Query != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"session_id LIKE '%%%s%%'", escapeSQL(q.Query),
+		))
+	}
+	if q.StartTimeMS > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"start_time_ms >= %d", q.StartTimeMS,
+		))
+	}
+	if q.EndTimeMS > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"start_time_ms <= %d", q.EndTimeMS,
+		))
+	}
+
+	return " WHERE " + strings.Join(clauses, " AND ")
+}
+
+// buildSessionCountSQL builds a count query for distinct sessions.
+func buildSessionCountSQL(q SessionQuery) string {
+	return "SELECT count() AS count FROM (SELECT DISTINCT session_id FROM traces" + buildSessionListWhereClause(q) + ")"
+}
+
+// buildSessionListSQL builds a query that aggregates session metrics.
+func buildSessionListSQL(q SessionQuery) string {
+	offset := (q.Page - 1) * q.PageSize
+	return fmt.Sprintf(
+		`SELECT
+			session_id,
+			count() AS trace_count,
+			sum(total_tokens) AS total_tokens,
+			sum(duration_ms) AS total_duration_ms,
+			max(duration_ms) AS max_duration_ms,
+			round(avg(duration_ms), 1) AS avg_duration_ms,
+			sum(if(status_code = 'ERROR', 1, 0)) AS error_count,
+			round(sum(if(status_code = 'ERROR', 1, 0)) / count(), 4) AS error_rate,
+			min(start_time_ms) AS first_active_ms,
+			max(start_time_ms) AS last_active_ms
+		FROM traces%s
+		GROUP BY session_id
+		ORDER BY last_active_ms DESC
+		LIMIT %d OFFSET %d`,
+		buildSessionListWhereClause(q), q.PageSize, offset,
+	)
+}
+
+// buildSessionSummarySQL builds a query for a single session's aggregated summary.
+func buildSessionSummarySQL(sessionID string) string {
+	return fmt.Sprintf(
+		`SELECT
+			session_id,
+			count() AS trace_count,
+			sum(total_tokens) AS total_tokens,
+			sum(duration_ms) AS total_duration_ms,
+			max(duration_ms) AS max_duration_ms,
+			round(avg(duration_ms), 1) AS avg_duration_ms,
+			sum(if(status_code = 'ERROR', 1, 0)) AS error_count,
+			round(sum(if(status_code = 'ERROR', 1, 0)) / count(), 4) AS error_rate,
+			min(start_time_ms) AS first_active_ms,
+			max(start_time_ms) AS last_active_ms
+		FROM traces
+		WHERE session_id = '%s'
+		GROUP BY session_id`,
+		escapeSQL(sessionID),
+	)
+}
+
+// buildSessionTracesSQL builds a query to fetch all traces for a session.
+func buildSessionTracesSQL(sessionID string) string {
+	return fmt.Sprintf(
+		`SELECT
+			trace_id_hex, root_name, root_span_id,
+			resource_attributes['service.name'] AS root_service,
+			start_time_ms, duration_ms, span_count,
+			toString(status_code) AS status,
+			total_tokens
+		FROM traces
+		WHERE session_id = '%s'
+		ORDER BY start_time_ms ASC`,
+		escapeSQL(sessionID),
+	)
+}
+
 // --- SQL helpers ---
 
 // escapeSQL escapes single quotes for SQL string literals.
@@ -234,6 +327,9 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 			t.RootName = span.Name
 			t.StatusCode = span.StatusCode
 			t.StatusMessage = span.StatusMessage
+			if sid, ok := span.Attributes["jiuwenclaw.session.id"]; ok {
+				t.SessionID = sid
+			}
 		}
 		t.SpanCount++
 		if span.StartTimeMS < t.StartTimeMS {

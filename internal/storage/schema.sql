@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS traces (
     dropped_span_count     UInt32,
     status_code            Enum8('UNSET'=0, 'OK'=1, 'ERROR'=2),
     status_message         String,
-    total_tokens           Nullable(UInt32)
+    total_tokens           Nullable(UInt32),
+    session_id             String DEFAULT ''
 )
 ENGINE = MergeTree
 ORDER BY (start_time_ms);
