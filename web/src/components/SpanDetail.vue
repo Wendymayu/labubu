@@ -55,11 +55,11 @@
       </div>
 
       <div v-for="(group, gi) in groupedAttributes" :key="gi" class="attr-group">
-        <div class="attr-group-header" @click="group.expanded = !group.expanded">
-          <span>{{ group.expanded ? '▾' : '▸' }} <b>{{ group.name }}</b></span>
+        <div class="attr-group-header" @click="toggleGroupExpand(group.name)">
+          <span>{{ isGroupExpanded(group.name) ? '▾' : '▸' }} <b>{{ group.name }}</b></span>
           <span class="attr-group-count">{{ group.items.length }}</span>
         </div>
-        <div v-if="group.expanded" class="attr-group-body">
+        <div v-if="isGroupExpanded(group.name)" class="attr-group-body">
           <div v-for="item in group.items" :key="item.key" class="attr-row">
             <span class="attr-key">{{ item.key }}</span>
             <span class="attr-value" :class="{ 'attr-empty-val': !item.value }">{{ item.value || '(empty)' }}</span>
@@ -87,11 +87,11 @@
           <div v-if="Object.keys(evt.attributes || {}).length > 0" class="tl-attrs">
             <template v-for="(v, k) in evt.attributes" :key="k">
               <div class="tl-attr-row" v-if="isToolIO(k)">
-                <div class="tl-code-toggle" @click="toggleCodeBlock(evt, k)">
-                  {{ codeBlockState(evt, k).expanded ? '▾' : '▸' }} {{ k }}
+                <div class="tl-code-toggle" @click="toggleCodeBlock(evt, k, i)">
+                  {{ codeBlockState(evt, k, i).expanded ? '▾' : '▸' }} {{ k }}
                   <span class="tl-copy-inline" @click.stop="copyText(v)">📋</span>
                 </div>
-                <pre v-if="codeBlockState(evt, k).expanded" class="tl-code"><code v-html="highlightJSON(v)"></code></pre>
+                <pre v-if="codeBlockState(evt, k, i).expanded" class="tl-code"><code v-html="highlightJSON(v)"></code></pre>
               </div>
               <div v-else class="tl-attr-row">
                 <span class="tl-attr-key">{{ k }}</span>
@@ -119,11 +119,10 @@ interface AttrGroup {
   name: string
   prefixes: string[]
   defaultExpanded: boolean
-  expanded: boolean
   items: { key: string; value: string }[]
 }
 
-const GROUP_RULES: Omit<AttrGroup, 'expanded' | 'items'>[] = [
+const GROUP_RULES: Omit<AttrGroup, 'items'>[] = [
   { name: 'Gen AI', prefixes: ['gen_ai.'], defaultExpanded: true },
   { name: 'HTTP', prefixes: ['http.', 'url.', 'net.'], defaultExpanded: false },
   { name: 'Service', prefixes: ['service.', 'telemetry.'], defaultExpanded: false },
@@ -132,6 +131,9 @@ const GROUP_RULES: Omit<AttrGroup, 'expanded' | 'items'>[] = [
 // --- attribute search ---
 
 const attrFilter = ref('')
+const groupExpanded = reactive<Record<string, boolean>>({
+  'Gen AI': true,  // expanded by default per spec
+})
 
 const totalAttrCount = computed(() => {
   if (!props.span?.attributes) return 0
@@ -145,14 +147,12 @@ const groupedAttributes = computed<AttrGroup[]>(() => {
   // Initialize groups
   const groups: AttrGroup[] = GROUP_RULES.map(r => ({
     ...r,
-    expanded: r.defaultExpanded,
     items: [],
   }))
   const otherGroup: AttrGroup = {
     name: 'Other',
     prefixes: [],
     defaultExpanded: false,
-    expanded: false,
     items: [],
   }
 
@@ -178,9 +178,9 @@ const groupedAttributes = computed<AttrGroup[]>(() => {
   // When filtering, auto-expand all groups that have matches
   if (filter) {
     for (const g of groups) {
-      if (g.items.length > 0) g.expanded = true
+      if (g.items.length > 0) groupExpanded[g.name] = true
     }
-    if (otherGroup.items.length > 0) otherGroup.expanded = true
+    if (otherGroup.items.length > 0) groupExpanded[otherGroup.name] = true
   }
 
   // Return non-empty groups; if filter is active include all (even empty) to show "no matching"
@@ -196,6 +196,15 @@ const groupedAttributes = computed<AttrGroup[]>(() => {
   return result
 })
 
+function isGroupExpanded(name: string): boolean {
+  if (name in groupExpanded) return groupExpanded[name]
+  // Other group defaults to collapsed
+  return name === 'Gen AI'
+}
+function toggleGroupExpand(name: string) {
+  groupExpanded[name] = !isGroupExpanded(name)
+}
+
 // --- code block expand/collapse state ---
 
 const codeBlocks = reactive<Record<string, Record<string, boolean>>>({})
@@ -205,25 +214,27 @@ watch(() => props.span, () => {
   Object.keys(codeBlocks).forEach(k => delete codeBlocks[k])
 })
 
-function getBlockKey(evt: any, k: string): string {
-  return `${evt.name || ''}_${k}`
+function getBlockKey(evt: any, k: string, idx: number): string {
+  return `${idx}_${evt.name || ''}_${k}`
 }
 
-function codeBlockState(evt: any, k: string): { expanded: boolean } {
-  const evtKey = getBlockKey(evt, k)
+function codeBlockState(evt: any, k: string, idx: number): { expanded: boolean } {
+  const evtKey = getBlockKey(evt, k, idx)
+  if (codeBlocks[evtKey]) {
+    return { expanded: codeBlocks[evtKey].expanded }
+  }
+  // Return default (expanded for short content) without mutating during render
+  const raw = String(evt.attributes[k] || '')
+  const lines = raw.split('\n')
+  return { expanded: lines.length <= 3 }
+}
+
+function toggleCodeBlock(evt: any, k: string, idx: number) {
+  const evtKey = getBlockKey(evt, k, idx)
   if (!codeBlocks[evtKey]) {
-    // Default: collapse after 3 lines
     const raw = String(evt.attributes[k] || '')
     const lines = raw.split('\n')
     codeBlocks[evtKey] = { expanded: lines.length <= 3 }
-  }
-  return { expanded: !!codeBlocks[evtKey]?.expanded }
-}
-
-function toggleCodeBlock(evt: any, k: string) {
-  const evtKey = getBlockKey(evt, k)
-  if (!codeBlocks[evtKey]) {
-    codeBlocks[evtKey] = { expanded: false }
   }
   codeBlocks[evtKey].expanded = !codeBlocks[evtKey].expanded
 }
@@ -263,34 +274,34 @@ function copyText(text: string) {
 
 // --- event helpers ---
 
+type EventType = 'toolcall' | 'toolresult' | 'error' | 'default'
+
+function getEventType(name: string): EventType {
+  const lower = (name || '').toLowerCase()
+  if (lower.includes('tool.call') && !lower.includes('tool.call.')) return 'toolcall'
+  if (lower.includes('tool.result')) return 'toolresult'
+  if (lower.includes('exception') || lower.includes('error')) return 'error'
+  return 'default'
+}
+
 function eventBorderClass(evt: any): string {
-  const name = (evt.name || '').toLowerCase()
-  if (name.includes('tool.call') && !name.includes('tool.call.')) return 'tl-card-toolcall'
-  if (name.includes('tool.result')) return 'tl-card-toolresult'
-  if (name.includes('exception') || name.includes('error')) return 'tl-card-error'
-  return 'tl-card-default'
+  const t = getEventType(evt.name)
+  return t === 'default' ? 'tl-card-default' : `tl-card-${t}`
 }
-
 function eventDotClass(evt: any): string {
-  const name = (evt.name || '').toLowerCase()
-  if (name.includes('tool.call') && !name.includes('tool.call.')) return 'tl-dot-toolcall'
-  if (name.includes('tool.result')) return 'tl-dot-toolresult'
-  if (name.includes('exception') || name.includes('error')) return 'tl-dot-error'
-  return 'tl-dot-default'
+  const t = getEventType(evt.name)
+  return t === 'default' ? 'tl-dot-default' : `tl-dot-${t}`
 }
-
 function eventNameClass(evt: any): string {
-  const name = (evt.name || '').toLowerCase()
-  if (name.includes('tool.call') && !name.includes('tool.call.')) return 'evt-name-toolcall'
-  if (name.includes('tool.result')) return 'evt-name-toolresult'
-  if (name.includes('exception') || name.includes('error')) return 'evt-name-error'
-  return ''
+  const t = getEventType(evt.name)
+  if (t === 'default') return ''
+  return `evt-name-${t}`
 }
 
 function formatTimeOffset(eventTimeMs: number, spanStartMs?: number): string {
   if (eventTimeMs == null) return '-'
-  const base = spanStartMs ?? 0
-  const offset = eventTimeMs - base
+  if (spanStartMs == null || spanStartMs === 0) return `${eventTimeMs}ms`
+  const offset = eventTimeMs - spanStartMs
   if (offset < 0) return `+0ms`
   if (offset < 1000) return `+${offset}ms`
   return `+${(offset / 1000).toFixed(1)}s`
