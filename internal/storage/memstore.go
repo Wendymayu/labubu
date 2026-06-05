@@ -7,7 +7,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -529,19 +528,6 @@ func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int
 
 func (m *memStore) Close() error {
 	return nil
-}
-
-// parseJSONArray parses a JSON array string into []interface{}.
-// Returns an empty slice if parsing fails or the string is empty/"[]".
-func parseJSONArray(raw string) []interface{} {
-	if raw == "" || raw == "[]" {
-		return make([]interface{}, 0)
-	}
-	var arr []interface{}
-	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
-		return make([]interface{}, 0)
-	}
-	return arr
 }
 
 // containsSubstring does a simple case-insensitive substring match.

@@ -182,12 +182,23 @@ func (s *chDBStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListRes
 
 // GetTrace returns all spans for a trace.
 func (s *chDBStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail, error) {
-	sql := buildGetTraceSQL(traceID) + " FORMAT JSONEachRow"
-	result, err := s.querySQL(sql)
+	traceIDHex := fmt.Sprintf("%x", traceID)
+
+	// Query spans.
+	spansSQL := buildGetTraceSQL(traceID) + " FORMAT JSONEachRow"
+	spansResult, err := s.querySQL(spansSQL)
 	if err != nil {
-		return nil, fmt.Errorf("get trace: %w", err)
+		return nil, fmt.Errorf("get trace spans: %w", err)
 	}
-	return parseTraceDetail(result)
+
+	// Query trace-level metadata from the traces table.
+	metaSQL := buildGetTraceMetaSQL(traceID) + " FORMAT JSONEachRow"
+	metaResult, err := s.querySQL(metaSQL)
+	if err != nil {
+		return nil, fmt.Errorf("get trace meta: %w", err)
+	}
+
+	return parseTraceDetail(traceIDHex, spansResult, metaResult)
 }
 
 // GetServices returns distinct service names.
@@ -381,10 +392,11 @@ func parseTraceListItems(result string) ([]TraceListItem, error) {
 	return items, nil
 }
 
-func parseTraceDetail(result string) (*TraceDetail, error) {
-	lines := splitLines(result)
+func parseTraceDetail(traceIDHex, spansResult, metaResult string) (*TraceDetail, error) {
+	lines := splitLines(spansResult)
 	spans := make([]SpanDetail, 0, len(lines))
 	var root *SpanDetail
+	var minStartMS, maxEndMS uint64
 	for _, line := range lines {
 		if line == "" {
 			continue
@@ -399,21 +411,77 @@ func parseTraceDetail(result string) (*TraceDetail, error) {
 			rootCopy := sd
 			root = &rootCopy
 		}
+		// Track min/max times for trace-level duration.
+		if minStartMS == 0 || sd.StartTimeMS < minStartMS {
+			minStartMS = sd.StartTimeMS
+		}
+		endMS := sd.StartTimeMS + sd.DurationMS
+		if endMS > maxEndMS {
+			maxEndMS = endMS
+		}
 	}
 	if root == nil {
 		return nil, fmt.Errorf("no root span found in trace")
 	}
 
+	// Parse trace-level metadata from the traces table.
 	resourceAttrs := make(map[string]string)
+	resourceSchemaURL := ""
+	scope := ScopeDetail{}
+	if metaResult != "" {
+		var metaRaw map[string]interface{}
+		if err := json.Unmarshal([]byte(metaResult), &metaRaw); err == nil {
+			// resource_attributes is a Map(String,String) returned as JSON object.
+			if rawRA, ok := metaRaw["resource_attributes"]; ok && rawRA != nil {
+				if m, ok := rawRA.(map[string]interface{}); ok {
+					for k, v := range m {
+						if s, ok := v.(string); ok {
+							resourceAttrs[k] = s
+						}
+					}
+				}
+			}
+			if v, ok := metaRaw["resource_schema_url"]; ok {
+				if s, ok := v.(string); ok {
+					resourceSchemaURL = s
+				}
+			}
+			if v, ok := metaRaw["scope_name"]; ok {
+				if s, ok := v.(string); ok {
+					scope.Name = s
+				}
+			}
+			if v, ok := metaRaw["scope_version"]; ok {
+				if s, ok := v.(string); ok {
+					scope.Version = s
+				}
+			}
+			// scope_attributes is also Map(String,String).
+			scope.Attributes = make(map[string]string)
+			if rawSA, ok := metaRaw["scope_attributes"]; ok && rawSA != nil {
+				if m, ok := rawSA.(map[string]interface{}); ok {
+					for k, v := range m {
+						if s, ok := v.(string); ok {
+							scope.Attributes[k] = s
+						}
+					}
+				}
+			}
+		}
+	}
+
+	traceDuration := maxEndMS - minStartMS
 
 	return &TraceDetail{
-		TraceIDHex:    "",
-		RootSpanID:    root.SpanID,
-		SpanCount:     len(spans),
-		StartTimeMS:   root.StartTimeMS,
-		DurationMS:    root.DurationMS,
-		ResourceAttrs: resourceAttrs,
-		Spans:         spans,
+		TraceIDHex:        traceIDHex,
+		RootSpanID:        root.SpanID,
+		SpanCount:         len(spans),
+		StartTimeMS:       minStartMS,
+		DurationMS:        traceDuration,
+		ResourceAttrs:     resourceAttrs,
+		ResourceSchemaURL: resourceSchemaURL,
+		Scope:             scope,
+		Spans:             spans,
 	}, nil
 }
 
@@ -516,6 +584,22 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 		return nil
 	}
 
+	// Parse attributes (chDB returns Map(String,String) as a JSON object).
+	attrs := make(map[string]string)
+	if rawAttrs, ok := raw["attributes"]; ok && rawAttrs != nil {
+		if m, ok := rawAttrs.(map[string]interface{}); ok {
+			for k, v := range m {
+				if s, ok := v.(string); ok {
+					attrs[k] = s
+				}
+			}
+		}
+	}
+
+	// Parse events and links (JSON strings).
+	events := parseJSONArray(getStr("events"))
+	links := parseJSONArray(getStr("links"))
+
 	return SpanDetail{
 		SpanID:            getStr("span_id"),
 		ParentSpanID:      getStr("parent_span_id"),
@@ -523,6 +607,9 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 		Kind:              getStr("kind"),
 		StartTimeMS:       getUint64("start_time_ms"),
 		DurationMS:        getUint64("duration_ms"),
+		Attributes:        attrs,
+		Events:            events,
+		Links:             links,
 		Status:            getStr("status_code"),
 		StatusMessage:     getStr("status_message"),
 		InputTokens:       getNullableUint32("input_tokens"),

@@ -1,6 +1,6 @@
 # Labubu 项目特性计划
 
-> 最后更新：2026-06-05
+> 最后更新：2026-06-06
 
 ## 特性总览
 
@@ -14,13 +14,14 @@
 | 6 | Session 可观测 | ✅ 已完成 | 2026-06-05 | SessionList + SessionDetail + API |
 | 7 | 前端菜单和表格支持国际化 | ✅ 已完成 | 2026-06-05 | vue-i18n, 中英文, 菜单+表格 |
 | 8 | 项目支持打成一个整体包，推送到中心仓库供下载使用 | ✅ 已完成 | 2026-06-05 | pip wheel, Go embed, CI/CD |
-| 9 | Claude Code 可观测数据接入 Labubu | 📋 计划中 | — | |
+| 9 | Claude Code 可观测数据接入 Labubu | 🔧 进行中 | — | Metrics + Traces 已对接；Trace 缺少 I/O 内容，可诊断性受限，见 docs/integrations/claude-code-metrics.md |
 | 10 | 会话详情新增上下文窗口使用详情图 | 📋 计划中 | — | |
 | 11 | 页面风格支持黑白两种背景 | 📋 计划中 | — | |
 | 12 | 观测 Claude Code 会话任务状态详情 | 📋 计划中 | — | |
 | 13 | 观测 JiuwenClaw 页面会话任务状态详情 | 📋 计划中 | — | |
 | 14 | Trace 支持持久化，只保留一天或 1 万条，支持 YAML 配置 | 📋 计划中 | — | |
 | 15 | Metric 默认保存一天数据，支持配置 | 📋 计划中 | — | |
+| 16 | **OTLP Logs 接收与展示** | 📋 计划中 | — | OTLP `/v1/logs` 端点 + log 存储 + TraceDetail 关联展示；解决 Trace 缺 I/O 内容导致无法内容级诊断的问题 |
 
 ## 状态说明
 

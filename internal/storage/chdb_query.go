@@ -171,6 +171,22 @@ func buildGetTraceSQL(traceID [16]byte) string {
 	)
 }
 
+// buildGetTraceMetaSQL builds a query to fetch trace-level metadata.
+func buildGetTraceMetaSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT
+			resource_attributes,
+			resource_schema_url,
+			scope_name,
+			scope_version,
+			scope_attributes
+		FROM traces
+		WHERE trace_id = unhex('%x')
+		LIMIT 1`,
+		traceID,
+	)
+}
+
 // buildSessionListWhereClause builds the WHERE clause for session queries.
 func buildSessionListWhereClause(q SessionQuery) string {
 	clauses := []string{"session_id != ''"}

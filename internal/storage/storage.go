@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -260,4 +261,16 @@ func StatusCodeToString(code int32) string {
 	default:
 		return "UNSET"
 	}
+}
+
+// parseJSONArray parses a JSON array string into []interface{}.
+func parseJSONArray(raw string) []interface{} {
+	if raw == "" || raw == "[]" {
+		return make([]interface{}, 0)
+	}
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return make([]interface{}, 0)
+	}
+	return arr
 }
