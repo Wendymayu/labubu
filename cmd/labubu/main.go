@@ -79,7 +79,6 @@ func runServe(args []string) {
 
 	metricsEnabled := fs.Bool("metrics-enabled", true, "enable/disable metrics ingestion")
 	metricsDataDir := fs.String("metrics-data-dir", "", "tstorage data directory (empty = pure memory)")
-	metricsRetention := fs.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
 
 	logLevel := fs.String("log-level", "info", "log level: debug, info, warn, error")
 	configPath := fs.String("config", "labubu.yaml", "config file path")
@@ -119,6 +118,7 @@ func runServe(args []string) {
 	}
 	fmt.Printf("  Trace retention:  max_age=%s, max_count=%d, cleanup=%s\n",
 		cfg.Trace.Retention.MaxAge, cfg.Trace.Retention.MaxCount, cfg.Trace.Retention.CleanupInterval)
+	fmt.Printf("  Metric retention: max_age=%s\n", cfg.Metric.Retention.MaxAge)
 	fmt.Println()
 
 	// Initialize storage (in-memory for non-CGO builds).
@@ -138,7 +138,7 @@ func runServe(args []string) {
 	if *metricsEnabled {
 		ms, err := metrics.NewTStorageStore(metrics.TStorageConfig{
 			DataDir:   *metricsDataDir,
-			Retention: *metricsRetention,
+			Retention: cfg.Metric.Retention.MaxAge,
 		})
 		if err != nil {
 			log.Fatalf("Failed to initialize metrics store: %v", err)
