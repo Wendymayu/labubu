@@ -1,10 +1,12 @@
 package api
 
 import (
+	"io"
+	"io/fs"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/labubu/labubu/web"
 )
 
 // NewRouter creates the HTTP handler with API routes and static file serving.
@@ -64,51 +66,69 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Serve Vue SPA from filesystem. In production, web/dist contains the built frontend.
-	// In development, the Vite dev server proxies /api requests.
-	distPath := filepath.Join("web", "dist")
-	if _, err := os.Stat(distPath); err == nil {
-		spa := spaHandler{staticDir: distPath}
-		mux.Handle("/", spa)
-	} else {
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/api") {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte(devFallbackHTML))
-		})
+	// Serve Vue SPA from embedded or disk-based FS.
+	spaFS, err := fs.Sub(web.StaticFS, "dist")
+	if err == nil {
+		if _, err := fs.Stat(spaFS, "index.html"); err == nil {
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				serveSPA(spaFS, w, r)
+			})
+			return mux
+		}
 	}
+
+	// Fallback: frontend not built yet (dev mode without dist).
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(devFallbackHTML))
+	})
 
 	return mux
 }
 
-// spaHandler serves the Vue SPA from a directory on disk.
-type spaHandler struct {
-	staticDir string
-}
-
-func (s spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// serveSPA serves a single-page app from an fs.FS.
+// Static files are served directly; all other paths fall back to index.html
+// for client-side routing.
+func serveSPA(fsys fs.FS, w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if path == "" {
 		path = "index.html"
 	}
 
-	fullPath := filepath.Join(s.staticDir, path)
-	if _, err := os.Stat(fullPath); err == nil {
-		http.ServeFile(w, r, fullPath)
-		return
+	// Try serving the requested file.
+	if f, err := fsys.Open(path); err == nil {
+		if serveFile(f, path, w, r) {
+			return
+		}
 	}
 
-	// Fallback: serve index.html for SPA client-side routing.
-	indexPath := filepath.Join(s.staticDir, "index.html")
-	if _, err := os.Stat(indexPath); err == nil {
-		http.ServeFile(w, r, indexPath)
-		return
+	// Fallback to index.html for SPA client-side routing.
+	if f, err := fsys.Open("index.html"); err == nil {
+		if serveFile(f, "index.html", w, r) {
+			return
+		}
 	}
 
 	http.Error(w, "not found", http.StatusNotFound)
+}
+
+// serveFile serves a single file from an fs.FS. Returns true if the file was served.
+func serveFile(f fs.File, name string, w http.ResponseWriter, r *http.Request) bool {
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil || stat.IsDir() {
+		return false
+	}
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		return false
+	}
+	http.ServeContent(w, r, name, stat.ModTime(), rs)
+	return true
 }
 
 // devFallbackHTML is shown when the frontend hasn't been built yet.

@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 0.1.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            platform_tag: linux_x86_64
+            binary_name: labubu
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            platform_tag: win_amd64
+            binary_name: labubu.exe
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      - name: Determine version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          else
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          fi
+
+      - name: Build Go binary
+        shell: bash
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags "-X main.Version=${{ env.VERSION }}" \
+            -o "bin/${{ matrix.binary_name }}" ./cmd/labubu
+
+      - name: Prepare Python package
+        shell: bash
+        run: |
+          mkdir -p labubu-python/labubu/bin
+          cp "bin/${{ matrix.binary_name }}" "labubu-python/labubu/bin/"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python build tools
+        run: pip install build wheel
+
+      - name: Build wheel
+        working-directory: labubu-python
+        run: python -m build --wheel
+
+      - name: Tag wheel for platform
+        working-directory: labubu-python
+        shell: bash
+        run: |
+          pip install wheel
+          wheel tags --platform-tag ${{ matrix.platform_tag }} dist/*.whl
+          # Remove the original any-tagged wheel if it still exists.
+          rm -f dist/*-py3-none-any.whl
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          pip install labubu-python/dist/*.whl
+          labubu version
+          # Start server in background, check health, then stop.
+          labubu serve --port 19876 &
+          SERVER_PID=$!
+          sleep 3
+          curl -sf http://localhost:19876/api/health
+          echo ""
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: labubu-python/dist/*.whl
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}

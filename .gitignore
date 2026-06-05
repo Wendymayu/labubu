@@ -1,3 +1,12 @@
 node_modules/
 web/dist/*
 !web/dist/.gitkeep
+
+# Build artifacts
+bin/
+
+# Python
+labubu-python/dist/
+labubu-python/labubu/bin/
+labubu-python/*.egg-info/
+labubu-python/labubu.egg-info/

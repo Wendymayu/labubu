@@ -1,34 +1,46 @@
-.PHONY: build test run dev clean
+.PHONY: build build-embed build-nocgo test test-nocgo run dev clean web-build build-all dev-setup
 
 # Binary name
 BINARY=labubu
 
-# Build the Go binary (with CGO enabled for chDB)
-build:
-	CGO_ENABLED=1 go build -o bin/$(BINARY) ./cmd/labubu
+# Version from git or fallback
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-# Build without CGO (for linting/analysis — storage/chdb.go is excluded via build tags)
+LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
+
+# Build Go binary (requires web/dist to exist for frontend embedding)
+build: web-build
+	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/labubu
+
+# Alias for build (explicit name for embedded frontend)
+build-embed: build
+
+# Build without CGO (for linting/analysis — no embed, no storage CGO)
 build-nocgo:
-	CGO_ENABLED=0 go build -tags nocgo -o /dev/null ./cmd/labubu
+	CGO_ENABLED=0 go build -tags "nocgo dev" -o /dev/null ./cmd/labubu
 
 # Run all tests
 test:
-	go test -v ./internal/...
+	go test -v ./internal/... ./web/... ./cmd/...
 
-# Run tests excluding chDB integration tests (requires libchdb)
+# Run tests excluding chDB integration tests
 test-nocgo:
 	go test -v -tags nocgo ./internal/...
 
-# Run with dev mode (requires Vite dev server separately)
+# Run with dev mode (reads frontend from disk, no embed)
 run:
-	go run ./cmd/labubu
+	go run -tags dev ./cmd/labubu serve
+
+# Start Vite dev server for frontend development
+dev:
+	cd web && npm run dev
 
 # Build Vue frontend
 web-build:
 	cd web && npm run build
 
 # Build Vue + Go binary together
-build-all: web-build build
+build-all: build
 
 # Clean build artifacts
 clean:

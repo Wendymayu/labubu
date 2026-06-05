@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -18,23 +21,79 @@ import (
 	"github.com/labubu/labubu/internal/storage"
 )
 
+// Version is set at build time via ldflags.
+var Version = "dev"
+
 func main() {
-	var (
-		apiAddr       = flag.String("api-addr", "0.0.0.0:8080", "API and UI listen address")
-		dataDir       = flag.String("data-dir", "./data", "chDB data directory (empty for in-memory)")
-		bufferSize    = flag.Int("buffer-size", 1000, "pipeline buffer capacity")
-		flushInterval = flag.Duration("flush-interval", 200*time.Millisecond, "pipeline flush interval")
+	os.Exit(run())
+}
 
-		metricsEnabled        = flag.Bool("metrics-enabled", true, "enable/disable metrics ingestion")
-		metricsDataDir        = flag.String("metrics-data-dir", "./data/metrics", "tstorage data directory (empty = pure memory)")
-		metricsRetention      = flag.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
-		metricsPrometheusAddr = flag.String("metrics-prometheus-addr", "", "production Prometheus address (empty = use embedded tstorage)")
+// run dispatches subcommands and returns an exit code.
+// Separated from main() so tests can call it without os.Exit.
+func run() int {
+	if len(os.Args) < 2 {
+		printUsage()
+		return 1
+	}
 
-		dashboardsDir = flag.String("dashboards-dir", "./data/dashboards", "dashboard panel configs directory")
+	switch os.Args[1] {
+	case "serve":
+		runServe(os.Args[2:])
+		return 0
+	case "version":
+		fmt.Printf("labubu %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
+		return 0
+	case "help":
+		printUsageTo(os.Stdout)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", os.Args[1])
+		printUsage()
+		return 1
+	}
+}
 
-		logLevel = flag.String("log-level", "info", "log level: debug, info, warn, error")
-	)
-	flag.Parse()
+func printUsage() {
+	printUsageTo(os.Stderr)
+}
+
+func printUsageTo(w *os.File) {
+	fmt.Fprintf(w, `Usage: labubu <command> [options]
+
+Commands:
+  serve     Start the Labubu server (OTLP receiver + API + UI)
+  version   Print version information
+  help      Show this help message
+
+Run "labubu serve --help" for serve options.
+`)
+}
+
+func runServe(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+
+	port := fs.Int("port", 8080, "API and UI listen port")
+	dataDir := fs.String("data-dir", "", "data directory (empty = in-memory)")
+	bufferSize := fs.Int("buffer-size", 1000, "pipeline buffer capacity")
+	flushInterval := fs.Duration("flush-interval", 200*time.Millisecond, "pipeline flush interval")
+
+	metricsEnabled := fs.Bool("metrics-enabled", true, "enable/disable metrics ingestion")
+	metricsDataDir := fs.String("metrics-data-dir", "", "tstorage data directory (empty = pure memory)")
+	metricsRetention := fs.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
+
+	logLevel := fs.String("log-level", "info", "log level: debug, info, warn, error")
+
+	fs.Parse(args)
+
+	apiAddr := fmt.Sprintf("0.0.0.0:%d", *port)
+
+	// Check port availability before starting.
+	if ln, err := net.Listen("tcp", apiAddr); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: port %d is already in use.\nTry: labubu serve --port %d\n", *port, *port+1)
+		os.Exit(1)
+	} else {
+		ln.Close()
+	}
 
 	// Set log level.
 	lvl, err := ilog.ParseLevel(*logLevel)
@@ -42,24 +101,30 @@ func main() {
 		log.Fatalf("Invalid log level: %v", err)
 	}
 	ilog.SetLevel(lvl)
-
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("Labubu starting...")
 
-	// Initialize chDB storage.
+	// Print startup banner.
+	fmt.Printf("Labubu v%s starting...\n", Version)
+	fmt.Printf("  OTLP gRPC:      http://localhost:4317\n")
+	fmt.Printf("  OTLP HTTP:      http://localhost:4318\n")
+	fmt.Printf("  API & UI:       http://localhost:%d\n", *port)
+	if *dataDir == "" {
+		fmt.Printf("  Storage:        in-memory (data lost on exit)\n")
+	} else {
+		fmt.Printf("  Storage:        %s\n", *dataDir)
+	}
+	fmt.Println()
+
+	// Initialize storage (in-memory for non-CGO builds).
 	store, err := storage.NewChDBStore(*dataDir)
 	if err != nil {
-		log.Fatalf("Failed to initialize chDB: %v", err)
+		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 	defer store.Close()
-	log.Printf("chDB initialized (data dir: %q)", *dataDir)
 
 	// Initialize metrics store (if enabled).
 	var metricStore metrics.Store
 	if *metricsEnabled {
-		if *metricsPrometheusAddr != "" {
-			log.Printf("metrics: prometheus remote mode not yet implemented, falling back to tstorage")
-		}
 		ms, err := metrics.NewTStorageStore(metrics.TStorageConfig{
 			DataDir:   *metricsDataDir,
 			Retention: *metricsRetention,
@@ -69,9 +134,6 @@ func main() {
 		}
 		defer ms.Close()
 		metricStore = ms
-		log.Printf("metrics: tstorage initialized (data dir: %q, retention: %v)", *metricsDataDir, *metricsRetention)
-	} else {
-		log.Println("metrics: disabled")
 	}
 
 	// Initialize pipeline.
@@ -83,7 +145,6 @@ func main() {
 			log.Printf("Pipeline shutdown error: %v", err)
 		}
 	}()
-	log.Printf("Pipeline started (buffer: %d, flush: %v)", *bufferSize, *flushInterval)
 
 	// Initialize OTLP receiver.
 	recv := receiver.New(pipe, metricStore)
@@ -104,12 +165,12 @@ func main() {
 	if metricStore != nil {
 		metricsHandler = api.NewMetricsHandler(metricStore)
 	}
-	dashboardHandler := api.NewDashboardHandler(*dashboardsDir)
+	dashboardHandler := api.NewDashboardHandler("")
 	sessionHandler := api.NewSessionHandler(store)
 	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler)
 
 	httpSrv := &http.Server{
-		Addr:         *apiAddr,
+		Addr:         apiAddr,
 		Handler:      router,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -117,21 +178,20 @@ func main() {
 
 	// Start API server.
 	go func() {
-		log.Printf("API server listening on %s", *apiAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("API server error: %v", err)
 		}
 	}()
 
+	fmt.Println("Press Ctrl+C to stop.")
+
 	// Wait for shutdown signal.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-	log.Printf("Received signal %v, shutting down...", sig)
+	<-quit
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
 	if err := httpSrv.Shutdown(ctx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}

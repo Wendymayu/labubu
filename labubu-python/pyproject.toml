@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labubu"
+version = "0.1.0"
+description = "Local-first LLM observability platform"
+requires-python = ">=3.8"
+
+[project.scripts]
+labubu = "labubu.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+labubu = ["bin/*"]
