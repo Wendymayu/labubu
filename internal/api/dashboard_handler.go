@@ -28,7 +28,11 @@ type DashboardHandler struct {
 }
 
 // NewDashboardHandler creates a DashboardHandler.
+// If dir is empty, "./data/dashboards" is used as the default.
 func NewDashboardHandler(dir string) *DashboardHandler {
+	if dir == "" {
+		dir = filepath.Join("data", "dashboards")
+	}
 	return &DashboardHandler{dir: dir}
 }
 
