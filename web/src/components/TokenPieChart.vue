@@ -48,6 +48,7 @@ export interface PieSlice {
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Chart, DoughnutController, ArcElement, Tooltip } from 'chart.js'
+import { useTheme } from '../composables/useTheme'
 
 Chart.register(DoughnutController, ArcElement, Tooltip)
 
@@ -63,16 +64,24 @@ const props = withDefaults(defineProps<{
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let chart: Chart<'doughnut'> | null = null
 
-// --- Colors (matching reference) ---
-const COLORS: Record<string, string> = {
-  system:            '#8b5cf6',
-  assistant:         '#ec4899',
-  user:              '#3b82f6',
-  tool:              '#06b6d4',
-  tool_definitions:  '#f59e0b',
-  skill:             '#10b981',
-  output:            '#ef4444',
+// --- Theme-aware colors ---
+function getCSSVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
+
+function getColors(): Record<string, string> {
+  return {
+    system:           getCSSVar('--chart-pie-system'),
+    assistant:        getCSSVar('--chart-pie-assistant'),
+    user:             getCSSVar('--chart-pie-user'),
+    tool:             getCSSVar('--chart-pie-tool'),
+    tool_definitions: getCSSVar('--chart-pie-tool-defs'),
+    skill:            getCSSVar('--chart-pie-skill'),
+    output:           getCSSVar('--chart-pie-output'),
+  }
+}
+
+const { theme } = useTheme()
 
 const KEY_PATTERNS: { pattern: string; key: string; label: string }[] = [
   { pattern: 'gen_ai.context.system_tokens',           key: 'system',           label: 'System' },
@@ -98,7 +107,7 @@ const segments = computed<Segment[]>(() => {
     const found = props.items.find(s => s.name === label)
     const value = found ? found.tokens : 0
     if (value > 0) {
-      out.push({ key, label, value, color: COLORS[key], pct: '' })
+      out.push({ key, label, value, color: getColors()[key] || getCSSVar('--chart-internal'), pct: '' })
     }
   }
 
@@ -106,7 +115,7 @@ const segments = computed<Segment[]>(() => {
   const outputFound = props.items.find(s => s.name === 'Output (completion)')
   const outputVal = outputFound ? outputFound.tokens : props.outputTokens
   if (outputVal > 0 && !out.find(s => s.key === 'output')) {
-    out.push({ key: 'output', label: 'Output Tokens', value: outputVal, color: COLORS['output'], pct: '' })
+    out.push({ key: 'output', label: 'Output Tokens', value: outputVal, color: getColors()['output'], pct: '' })
   }
 
   // Compute percentages.
@@ -133,6 +142,11 @@ function createChart() {
   const labels = segments.value.map(s => s.label)
   const data = segments.value.map(s => s.value)
   const colors = segments.value.map(s => s.color)
+  const borderColor = getCSSVar('--chart-pie-border')
+  const tooltipBg = getCSSVar('--bg-secondary')
+  const tooltipTitle = getCSSVar('--text-primary')
+  const tooltipBody = getCSSVar('--text-secondary')
+  const tooltipBorder = getCSSVar('--border-group')
 
   chart = new Chart(canvasRef.value, {
     type: 'doughnut',
@@ -141,7 +155,7 @@ function createChart() {
       datasets: [{
         data,
         backgroundColor: colors,
-        borderColor: '#1a1d27',
+        borderColor: borderColor,
         borderWidth: 2,
         hoverOffset: 6,
       }]
@@ -153,10 +167,10 @@ function createChart() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1a1d27',
-          titleColor: '#e4e4e7',
-          bodyColor: '#9ca3af',
-          borderColor: '#2d3140',
+          backgroundColor: tooltipBg,
+          titleColor: tooltipTitle,
+          bodyColor: tooltipBody,
+          borderColor: tooltipBorder,
           borderWidth: 1,
           padding: 12,
           cornerRadius: 6,
@@ -181,6 +195,10 @@ watch(segments, () => {
   requestAnimationFrame(createChart)
 }, { deep: true })
 
+watch(theme, () => {
+  requestAnimationFrame(createChart)
+})
+
 onMounted(() => {
   requestAnimationFrame(createChart)
 })
@@ -195,8 +213,8 @@ onUnmounted(() => {
 
 <style scoped>
 .token-chart {
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
   padding: 16px;
   margin-bottom: 12px;
@@ -204,7 +222,7 @@ onUnmounted(() => {
 .chart-title {
   font-size: 14px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-primary);
   margin-bottom: 12px;
 }
 .chart-container {
@@ -214,7 +232,6 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
-/* Legend */
 .token-legend {
   margin-top: 14px;
 }
@@ -233,27 +250,26 @@ onUnmounted(() => {
 }
 .legend-label {
   flex: 1;
-  color: #94a3b8;
+  color: var(--text-secondary);
 }
 .legend-value {
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 .legend-pct {
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 11px;
   width: 40px;
   text-align: right;
 }
 
-/* Summary stats */
 .token-summary {
   display: flex;
   gap: 10px;
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid #334155;
+  border-top: 1px solid var(--border-default);
 }
 .summary-item {
   flex: 1;
@@ -261,7 +277,7 @@ onUnmounted(() => {
 }
 .s-label {
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -271,7 +287,7 @@ onUnmounted(() => {
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
 }
-.s-value.purple { color: #c4b5fd; }
-.s-value.green { color: #6ee7b7; }
-.s-value.blue { color: #60a5fa; }
+.s-value.purple { color: var(--token-highlight); }
+.s-value.green { color: var(--token-green); }
+.s-value.blue { color: var(--token-input); }
 </style>

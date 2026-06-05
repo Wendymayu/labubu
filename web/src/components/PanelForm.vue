@@ -176,37 +176,37 @@ onMounted(async () => {
   z-index: 1000;
 }
 .modal-content {
-  background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+  background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 12px;
   padding: 24px; width: 480px; max-height: 90vh; overflow-y: auto;
 }
-.modal-title { font-size: 18px; font-weight: 600; color: #e2e8f0; margin: 0 0 20px 0; }
+.modal-title { font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 0 0 20px 0; }
 .form-group { margin-bottom: 16px; }
-.form-group label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 6px; }
+.form-group label { display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
 .form-group input, .form-group select {
-  width: 100%; padding: 8px 12px; background: #0f172a; border: 1px solid #334155;
-  border-radius: 6px; color: #e2e8f0; font-size: 14px; box-sizing: border-box;
+  width: 100%; padding: 8px 12px; background: var(--bg-surface-deep); border: 1px solid var(--border-default);
+  border-radius: 6px; color: var(--text-primary); font-size: 14px; box-sizing: border-box;
 }
-.form-group input:focus, .form-group select:focus { border-color: #38bdf8; outline: none; }
+.form-group input:focus, .form-group select:focus { border-color: var(--accent-blue); outline: none; }
 .label-row { display: flex; gap: 8px; margin-bottom: 8px; }
 .label-row select { flex: 1; }
 .btn-remove {
-  background: none; border: none; color: #f87171; cursor: pointer;
+  background: none; border: none; color: var(--status-error-accent); cursor: pointer;
   font-size: 16px; padding: 0 8px;
 }
 .btn-add-label {
-  background: none; border: 1px dashed #334155; color: #94a3b8;
+  background: none; border: 1px dashed var(--border-default); color: var(--text-secondary);
   padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%;
 }
-.btn-add-label:hover { border-color: #38bdf8; color: #38bdf8; }
+.btn-add-label:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
 .btn {
   padding: 8px 20px; border-radius: 6px; border: none;
   font-size: 14px; cursor: pointer; font-weight: 500;
 }
-.btn-primary { background: #38bdf8; color: #000; }
-.btn-primary:hover { background: #7dd3fc; }
+.btn-primary { background: var(--accent-blue); color: var(--bg-primary); }
+.btn-primary:hover { background: var(--accent-light); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-secondary { background: #334155; color: #e2e8f0; }
-.btn-secondary:hover { background: #475569; }
-.form-error { color: #f87171; font-size: 13px; margin-top: 8px; }
+.btn-secondary { background: var(--bg-surface-hover); color: var(--text-primary); }
+.btn-secondary:hover { background: var(--border-strong); }
+.form-error { color: var(--status-error-accent); font-size: 13px; margin-top: 8px; }
 </style>
