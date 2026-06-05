@@ -47,6 +47,10 @@ func (m *mockStore) GetSession(ctx context.Context, sessionID string) (*storage.
 	return nil, nil
 }
 
+func (m *mockStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	return 0, 0, nil
+}
+
 func (m *mockStore) Close() error { return nil }
 
 func TestPipelineIngestAndFlush(t *testing.T) {

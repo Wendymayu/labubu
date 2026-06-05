@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/labubu/labubu/internal/storage"
 )
@@ -41,6 +42,10 @@ func (m *handlerMockStore) ListSessions(ctx context.Context, q storage.SessionQu
 
 func (m *handlerMockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
 	return nil, nil
+}
+
+func (m *handlerMockStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	return 0, 0, nil
 }
 
 func (m *handlerMockStore) Close() error { return nil }

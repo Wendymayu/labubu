@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"sort"
 	"sync"
+	"time"
 )
 
 // memStore is an in-memory Store used when chDB CGO is not available.
@@ -460,6 +461,70 @@ func (m *memStore) GetServices(ctx context.Context) ([]string, error) {
 	}
 	sort.Strings(services)
 	return services, nil
+}
+
+func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := uint64(time.Now().UnixMilli())
+	cutoffMS := uint64(0)
+	if maxAge > 0 {
+		cutoffMS = now - uint64(maxAge.Milliseconds())
+	}
+
+	deletedTraces := 0
+	deletedSpans := 0
+
+	// Phase 1: collect trace IDs to keep based on age.
+	keepTraces := make(map[[16]byte]bool)
+	for traceID, trace := range m.traces {
+		if cutoffMS > 0 && trace.StartTimeMS < cutoffMS {
+			continue // too old, skip
+		}
+		keepTraces[traceID] = true
+	}
+
+	// Phase 2: if maxCount > 0, further restrict to newest maxCount traces.
+	if maxCount > 0 && len(keepTraces) > maxCount {
+		type timedTrace struct {
+			id    [16]byte
+			start uint64
+		}
+		sorted := make([]timedTrace, 0, len(keepTraces))
+		for id := range keepTraces {
+			sorted = append(sorted, timedTrace{id, m.traces[id].StartTimeMS})
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].start > sorted[j].start
+		})
+		keepTraces = make(map[[16]byte]bool)
+		for _, tv := range sorted[:maxCount] {
+			keepTraces[tv.id] = true
+		}
+	}
+
+	// Delete traces not in keepTraces.
+	for id := range m.traces {
+		if !keepTraces[id] {
+			delete(m.traces, id)
+			deletedTraces++
+		}
+	}
+
+	// Delete spans belonging to deleted traces.
+	newSpans := make([]Span, 0, len(m.spans))
+	for _, s := range m.spans {
+		if keepTraces[s.TraceID] {
+			newSpans = append(newSpans, s)
+		} else {
+			deletedSpans++
+		}
+	}
+	m.spans = newSpans
+
+	return deletedTraces, deletedSpans, nil
 }
 
 func (m *memStore) Close() error {

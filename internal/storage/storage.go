@@ -5,6 +5,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Span represents a single OTLP span stored in the spans table.
@@ -200,6 +201,12 @@ type Store interface {
 
 	// GetSession returns a session summary and all its traces.
 	GetSession(ctx context.Context, sessionID string) (*SessionDetail, error)
+
+	// Purge removes traces (and their spans) that exceed the retention policy.
+	// maxAge: delete traces with start_time_ms older than (now - maxAge). 0 = no age limit.
+	// maxCount: keep only the newest maxCount traces. 0 = no count limit.
+	// Returns the number of deleted traces and spans.
+	Purge(ctx context.Context, maxAge time.Duration, maxCount int) (deletedTraces int, deletedSpans int, err error)
 
 	// Close releases resources (e.g., chDB session).
 	Close() error

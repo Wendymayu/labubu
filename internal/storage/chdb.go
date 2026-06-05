@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -276,6 +277,74 @@ func (s *chDBStore) Close() error {
 		s.conn = nil
 	}
 	return nil
+}
+
+// Purge removes traces (and their spans) that exceed the retention policy.
+func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	now := uint64(time.Now().UnixMilli())
+
+	// Get current counts.
+	countResult, err := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
+	if err != nil {
+		return 0, 0, fmt.Errorf("count traces: %w", err)
+	}
+	traceCountBefore := parseCount(countResult)
+
+	spanCountResult, err := s.querySQL("SELECT count(*) AS count FROM spans FORMAT JSONEachRow")
+	if err != nil {
+		return 0, 0, fmt.Errorf("count spans: %w", err)
+	}
+	spanCountBefore := parseCount(spanCountResult)
+
+	// Phase 1: delete by age.
+	if maxAge > 0 {
+		cutoffMS := now - uint64(maxAge.Milliseconds())
+		if err := s.execSQL(fmt.Sprintf(
+			"ALTER TABLE traces DELETE WHERE start_time_ms < %d", cutoffMS)); err != nil {
+			return 0, 0, fmt.Errorf("delete old traces: %w", err)
+		}
+		if err := s.execSQL(fmt.Sprintf(
+			"ALTER TABLE spans DELETE WHERE trace_id IN (SELECT trace_id FROM traces WHERE start_time_ms < %d)", cutoffMS)); err != nil {
+			return 0, 0, fmt.Errorf("delete old spans: %w", err)
+		}
+	}
+
+	// Phase 2: delete by count (keep newest maxCount).
+	if maxCount > 0 {
+		// Re-count after age deletion.
+		countResult2, err := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
+		if err != nil {
+			return 0, 0, fmt.Errorf("recount traces: %w", err)
+		}
+		currentCount := parseCount(countResult2)
+		if currentCount > maxCount {
+			if err := s.execSQL(fmt.Sprintf(
+				"ALTER TABLE spans DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces ORDER BY start_time_ms DESC LIMIT %d)", maxCount)); err != nil {
+				return 0, 0, fmt.Errorf("delete excess spans: %w", err)
+			}
+			if err := s.execSQL(fmt.Sprintf(
+				"ALTER TABLE traces DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces ORDER BY start_time_ms DESC LIMIT %d)", maxCount)); err != nil {
+				return 0, 0, fmt.Errorf("delete excess traces: %w", err)
+			}
+		}
+	}
+
+	// Estimate deletions (MergeTree mutations are async, exact counts unavailable).
+	traceCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
+	spanCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM spans FORMAT JSONEachRow")
+	tracesAfter := parseCount(traceCountAfter)
+	spansAfter := parseCount(spanCountAfter)
+
+	deletedTraces := traceCountBefore - tracesAfter
+	if deletedTraces < 0 {
+		deletedTraces = 0
+	}
+	deletedSpans := spanCountBefore - spansAfter
+	if deletedSpans < 0 {
+		deletedSpans = 0
+	}
+
+	return deletedTraces, deletedSpans, nil
 }
 
 // JSON parsing helpers
