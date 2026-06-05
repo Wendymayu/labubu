@@ -1,0 +1,128 @@
+/* ===== Dark theme (default) ===== */
+:root {
+  --bg-primary: #000000;
+  --bg-secondary: #111111;
+  --bg-surface: #1e293b;
+  --bg-surface-deep: #0f172a;
+  --bg-surface-hover: #334155;
+  --bg-surface-hover-subtle: #1a1a1a;
+
+  --border-default: #334155;
+  --border-subtle: #1e293b;
+  --border-strong: #475569;
+  --border-group: #222222;
+
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --accent-blue: #38bdf8;
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-light: #7dd3fc;
+
+  --status-ok-bg: #065f46;
+  --status-ok-text: #6ee7b7;
+  --status-error-bg: #7f1d1d;
+  --status-error-text: #fca5a5;
+  --status-error-accent: #ef4444;
+  --status-warning: #fbbf24;
+  --token-highlight: #c4b5fd;
+  --token-input: #60a5fa;
+  --token-green: #6ee7b7;
+
+  --chart-server: #3b82f6;
+  --chart-client: #22c55e;
+  --chart-producer: #f59e0b;
+  --chart-consumer: #a855f7;
+  --chart-internal: #6b7280;
+  --chart-llm-start: #8b5cf6;
+  --chart-llm-end: #a78bfa;
+
+  --chart-pie-system: #8b5cf6;
+  --chart-pie-assistant: #ec4899;
+  --chart-pie-user: #3b82f6;
+  --chart-pie-tool: #06b6d4;
+  --chart-pie-tool-defs: #f59e0b;
+  --chart-pie-skill: #10b981;
+  --chart-pie-output: #ef4444;
+  --chart-pie-border: #1a1d27;
+
+  --scrollbar-thumb: #475569;
+  --shadow-tooltip: rgba(0, 0, 0, 0.5);
+}
+
+/* ===== Light theme ===== */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f1f5f9;
+  --bg-surface: #f8fafc;
+  --bg-surface-deep: #f1f5f9;
+  --bg-surface-hover: #e2e8f0;
+  --bg-surface-hover-subtle: #e2e8f0;
+
+  --border-default: #cbd5e1;
+  --border-subtle: #e2e8f0;
+  --border-strong: #94a3b8;
+  --border-group: #e2e8f0;
+
+  --text-primary: #1e293b;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --accent-blue: #0284c7;
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-light: #0ea5e9;
+
+  --status-ok-bg: #d1fae5;
+  --status-ok-text: #065f46;
+  --status-error-bg: #fee2e2;
+  --status-error-text: #991b1b;
+  --status-error-accent: #dc2626;
+  --status-warning: #d97706;
+  --token-highlight: #7c3aed;
+  --token-input: #2563eb;
+  --token-green: #059669;
+
+  --chart-server: #2563eb;
+  --chart-client: #16a34a;
+  --chart-producer: #d97706;
+  --chart-consumer: #9333ea;
+  --chart-internal: #6b7280;
+  --chart-llm-start: #7c3aed;
+  --chart-llm-end: #8b5cf6;
+
+  --chart-pie-system: #7c3aed;
+  --chart-pie-assistant: #db2777;
+  --chart-pie-user: #2563eb;
+  --chart-pie-tool: #0891b2;
+  --chart-pie-tool-defs: #d97706;
+  --chart-pie-skill: #059669;
+  --chart-pie-output: #dc2626;
+  --chart-pie-border: #e2e8f0;
+
+  --scrollbar-thumb: #cbd5e1;
+  --shadow-tooltip: rgba(0, 0, 0, 0.15);
+}
+
+/* ===== Body defaults ===== */
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* ===== Theme transition ===== */
+html {
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+html *,
+html *::before,
+html *::after {
+  transition: background-color 0.25s ease,
+              border-color 0.25s ease,
+              color 0.25s ease,
+              fill 0.25s ease,
+              stroke 0.25s ease;
+}
