@@ -82,8 +82,12 @@ func runServe(args []string) {
 	metricsRetention := fs.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
 
 	logLevel := fs.String("log-level", "info", "log level: debug, info, warn, error")
+	configPath := fs.String("config", "labubu.yaml", "config file path")
 
 	fs.Parse(args)
+
+	// Load YAML config.
+	cfg := storage.LoadConfig(*configPath)
 
 	apiAddr := fmt.Sprintf("0.0.0.0:%d", *port)
 
@@ -113,6 +117,8 @@ func runServe(args []string) {
 	} else {
 		fmt.Printf("  Storage:        %s\n", *dataDir)
 	}
+	fmt.Printf("  Trace retention:  max_age=%s, max_count=%d, cleanup=%s\n",
+		cfg.Trace.Retention.MaxAge, cfg.Trace.Retention.MaxCount, cfg.Trace.Retention.CleanupInterval)
 	fmt.Println()
 
 	// Initialize storage (in-memory for non-CGO builds).
@@ -121,6 +127,11 @@ func runServe(args []string) {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 	defer store.Close()
+
+	// Start retention cleanup goroutine.
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	defer retentionCancel()
+	go runRetentionCleanup(retentionCtx, store, cfg.Trace.Retention)
 
 	// Initialize metrics store (if enabled).
 	var metricStore metrics.Store
@@ -197,4 +208,23 @@ func runServe(args []string) {
 	}
 
 	log.Println("Labubu stopped.")
+}
+
+func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.RetentionConfig) {
+	ticker := time.NewTicker(ret.CleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			deleted, spans, err := store.Purge(ctx, ret.MaxAge, ret.MaxCount)
+			if err != nil {
+				log.Printf("Trace cleanup error: %v", err)
+			} else if deleted > 0 {
+				log.Printf("Trace cleanup: removed %d traces, %d spans", deleted, spans)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
