@@ -233,18 +233,18 @@ onUnmounted(() => {
 <style scoped>
 .trace-detail { max-width: 1600px; }
 .back-link { margin-bottom: 16px; }
-.back-link a { color: #94a3b8; text-decoration: none; font-size: 14px; }
-.back-link a:hover { color: #e2e8f0; }
-.loading, .error { text-align: center; padding: 60px; color: #94a3b8; }
-.error { color: #f87171; }
+.back-link a { color: var(--text-secondary); text-decoration: none; font-size: 14px; }
+.back-link a:hover { color: var(--text-primary); }
+.loading, .error { text-align: center; padding: 60px; color: var(--text-secondary); }
+.error { color: var(--status-error-accent); }
 .trace-summary { margin-bottom: 24px; }
 .trace-summary h2 { font-size: 20px; margin-bottom: 12px; }
 .summary-grid { display: flex; gap: 24px; flex-wrap: wrap; }
 .summary-item { display: flex; flex-direction: column; }
-.summary-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+.summary-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; }
 .summary-value { font-size: 14px; }
 .mono { font-family: 'Courier New', monospace; font-size: 12px; word-break: break-all; }
-.token-highlight { color: #c4b5fd; font-weight: 600; }
+.token-highlight { color: var(--token-highlight); font-weight: 600; }
 
 .download-group {
   display: flex;
@@ -253,9 +253,9 @@ onUnmounted(() => {
 }
 .btn-download {
   padding: 6px 12px;
-  border: 1px solid #333;
-  background: #111;
-  color: #94a3b8;
+  border: 1px solid var(--border-group);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
 }
@@ -266,8 +266,8 @@ onUnmounted(() => {
   border-radius: 0 6px 6px 0;
 }
 .btn-download:hover {
-  border-color: #38bdf8;
-  color: #38bdf8;
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
 }
 
 /* === New drawer layout === */
@@ -292,7 +292,7 @@ onUnmounted(() => {
 
 .hint-click {
   text-align: center;
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 12px;
   padding: 24px 0;
 }
@@ -301,8 +301,8 @@ onUnmounted(() => {
 .detail-drawer {
   width: 480px;
   flex-shrink: 0;
-  border-left: 1px solid #444;
-  background: #000;
+  border-left: 1px solid var(--border-strong);
+  background: var(--bg-primary);
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 240px);
@@ -320,7 +320,7 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: flex-start;
   padding: 12px 16px;
-  border-bottom: 1px solid #444;
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
 }
 .drawer-title {
@@ -330,7 +330,7 @@ onUnmounted(() => {
   display: block;
   font-size: 14px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -338,14 +338,14 @@ onUnmounted(() => {
 .drawer-span-id {
   display: block;
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   font-family: 'Courier New', monospace;
   margin-top: 2px;
 }
 .drawer-close {
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 18px;
   cursor: pointer;
   padding: 4px 8px;
@@ -353,8 +353,8 @@ onUnmounted(() => {
   line-height: 1;
 }
 .drawer-close:hover {
-  color: #e2e8f0;
-  background: #222;
+  color: var(--text-primary);
+  background: var(--bg-surface-hover-subtle);
 }
 
 .drawer-body {
@@ -363,12 +363,10 @@ onUnmounted(() => {
   flex: 1;
 }
 
-/* Scrollbar for drawer body */
 .drawer-body::-webkit-scrollbar { width: 4px; }
 .drawer-body::-webkit-scrollbar-track { background: transparent; }
-.drawer-body::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+.drawer-body::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 
-/* Responsive: on narrow screens overlay instead of split */
 @media (max-width: 900px) {
   .detail-drawer {
     position: fixed;
