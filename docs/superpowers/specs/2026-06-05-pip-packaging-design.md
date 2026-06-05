@@ -74,9 +74,9 @@ macOS support will be added in a later iteration.
 
 ## Go Binary Changes
 
-### 3a. Frontend Embedding
+### Frontend Embedding
 
-New file `web/embed.go`:
+New file `web/embed.go` (production builds):
 
 ```go
 //go:build !dev
@@ -89,9 +89,22 @@ import "embed"
 var StaticFS embed.FS
 ```
 
-Modify `router.go` to serve SPA files from `web.StaticFS` instead of the filesystem. In dev mode (`-tags dev`), continue reading from disk `web/dist` to preserve the `npm run dev` workflow.
+New file `web/embed_dev.go` (development builds):
 
-### 3b. Subcommand Structure
+```go
+//go:build dev
+
+package web
+
+import "os"
+
+// StaticFS reads from disk in dev mode so npm run dev works.
+var StaticFS = os.DirFS("web/dist")
+```
+
+Modify `router.go` to serve SPA files from `web.StaticFS` instead of hardcoded filesystem paths. Default `go build` embeds the frontend; `go build -tags dev` reads from disk.
+
+### Subcommand Structure
 
 Refactor `cmd/labubu/main.go` from `flag`-only to subcommands:
 
@@ -146,7 +159,7 @@ The `version` subcommand prints: `labubu 0.1.0 (linux/amd64, storage=memory)`
 labubu-python/
 ├── pyproject.toml
 ├── README.md
-├── LICENSE
+├── LICENSE                  # Copy from project root
 ├── labubu/
 │   ├── __init__.py          # Version string
 │   ├── __main__.py          # python -m labubu support
@@ -224,10 +237,10 @@ After building each wheel:
 
 ```bash
 pip install ./dist/labubu-*.whl
-labubu version                    # verify binary runs
-labubu serve --port 0 &           # start on random port
+labubu version                         # verify binary runs
+labubu serve --port 19876 &            # start on fixed test port
 sleep 2
-curl http://localhost:<port>/api/health  # verify API responds
+curl http://localhost:19876/api/health # verify API responds
 kill %1
 ```
 
@@ -276,7 +289,8 @@ Startup banner clearly states `Storage: in-memory (data lost on exit)` to preven
 
 | File | Purpose |
 |------|---------|
-| `web/embed.go` | `go:embed` for frontend static files |
+| `web/embed.go` | `go:embed` for frontend static files (production) |
+| `web/embed_dev.go` | Disk-based `StaticFS` for development (`-tags dev`) |
 | `labubu-python/pyproject.toml` | Python package metadata and build config |
 | `labubu-python/labubu/__init__.py` | Version string |
 | `labubu-python/labubu/__main__.py` | `python -m labubu` entry point |
