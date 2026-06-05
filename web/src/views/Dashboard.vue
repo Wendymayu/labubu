@@ -152,27 +152,27 @@ onMounted(loadPanels)
 }
 .time-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .btn-preset {
-  padding: 6px 16px; border: 1px solid #333; background: #111;
-  color: #94a3b8; border-radius: 6px; cursor: pointer; font-size: 13px;
+  padding: 6px 16px; border: 1px solid var(--border-group); background: var(--bg-secondary);
+  color: var(--text-secondary); border-radius: 6px; cursor: pointer; font-size: 13px;
 }
-.btn-preset.active { background: #38bdf8; color: #000; border-color: #38bdf8; }
-.btn-preset:hover:not(.active) { border-color: #38bdf8; color: #38bdf8; }
+.btn-preset.active { background: var(--accent-blue); color: var(--bg-primary); border-color: var(--accent-blue); }
+.btn-preset:hover:not(.active) { border-color: var(--accent-blue); color: var(--accent-blue); }
 .custom-range { display: flex; align-items: center; gap: 8px; }
 .custom-range input {
-  background: #000; border: 1px solid #333; border-radius: 6px;
-  color: #e2e8f0; padding: 6px 10px; font-size: 13px;
+  background: var(--bg-primary); border: 1px solid var(--border-group); border-radius: 6px;
+  color: var(--text-primary); padding: 6px 10px; font-size: 13px;
 }
-.custom-range span { color: #94a3b8; font-size: 13px; }
+.custom-range span { color: var(--text-secondary); font-size: 13px; }
 .btn {
   padding: 8px 20px; border-radius: 6px; border: none;
   font-size: 14px; cursor: pointer; font-weight: 500;
 }
-.btn-primary { background: #38bdf8; color: #000; }
-.btn-primary:hover { background: #7dd3fc; }
+.btn-primary { background: var(--accent-blue); color: var(--bg-primary); }
+.btn-primary:hover { background: var(--accent-light); }
 .btn-refresh {
-  background: #111; border: 1px solid #333; color: #e2e8f0;
+  background: var(--bg-secondary); border: 1px solid var(--border-group); color: var(--text-primary);
 }
-.btn-refresh:hover { background: #222; border-color: #38bdf8; }
+.btn-refresh:hover { background: var(--bg-surface-hover-subtle); border-color: var(--accent-blue); }
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -182,7 +182,7 @@ onMounted(loadPanels)
   .panel-grid { grid-template-columns: 1fr; }
 }
 .page-state {
-  text-align: center; padding: 80px 20px; color: #94a3b8; font-size: 15px;
+  text-align: center; padding: 80px 20px; color: var(--text-secondary); font-size: 15px;
 }
-.page-error { color: #f87171; }
+.page-error { color: var(--status-error-accent); }
 </style>
