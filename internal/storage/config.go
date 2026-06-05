@@ -10,7 +10,8 @@ import (
 
 // Config is the top-level Labubu configuration loaded from YAML.
 type Config struct {
-	Trace TraceConfig `yaml:"trace"`
+	Trace  TraceConfig  `yaml:"trace"`
+	Metric MetricConfig `yaml:"metric"`
 }
 
 // TraceConfig holds trace-specific configuration.
@@ -25,6 +26,16 @@ type RetentionConfig struct {
 	CleanupInterval time.Duration // how often the cleanup goroutine runs
 }
 
+// MetricConfig holds metric-specific configuration.
+type MetricConfig struct {
+	Retention MetricRetentionConfig `yaml:"retention"`
+}
+
+// MetricRetentionConfig controls how long metric data is retained.
+type MetricRetentionConfig struct {
+	MaxAge time.Duration // metrics older than this are dropped by tstorage
+}
+
 // yamlConfig mirrors Config but uses string fields for durations
 // so that YAML values like "24h" are parsed via time.ParseDuration.
 type yamlConfig struct {
@@ -35,6 +46,11 @@ type yamlConfig struct {
 			CleanupInterval string `yaml:"cleanup_interval"`
 		} `yaml:"retention"`
 	} `yaml:"trace"`
+	Metric struct {
+		Retention struct {
+			MaxAge string `yaml:"max_age"`
+		} `yaml:"retention"`
+	} `yaml:"metric"`
 }
 
 // DefaultConfig returns a Config with production defaults.
@@ -45,6 +61,11 @@ func DefaultConfig() Config {
 				MaxAge:          24 * time.Hour,
 				MaxCount:        10000,
 				CleanupInterval: 5 * time.Minute,
+			},
+		},
+		Metric: MetricConfig{
+			Retention: MetricRetentionConfig{
+				MaxAge: 24 * time.Hour,
 			},
 		},
 	}
@@ -78,6 +99,12 @@ func LoadConfig(path string) Config {
 	if raw.Trace.Retention.CleanupInterval != "" {
 		if d, err := time.ParseDuration(raw.Trace.Retention.CleanupInterval); err == nil {
 			cfg.Trace.Retention.CleanupInterval = d
+		}
+	}
+
+	if raw.Metric.Retention.MaxAge != "" {
+		if d, err := time.ParseDuration(raw.Metric.Retention.MaxAge); err == nil {
+			cfg.Metric.Retention.MaxAge = d
 		}
 	}
 
