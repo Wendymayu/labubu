@@ -4,6 +4,13 @@ web/dist/*
 
 # Build artifacts
 bin/
+labubu.exe
+
+# Local data
+data/
+
+# Superpowers
+.superpowers/
 
 # Python
 labubu-python/dist/
