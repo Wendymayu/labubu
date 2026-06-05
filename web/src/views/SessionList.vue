@@ -4,31 +4,31 @@
       <input
         v-model="filters.q"
         type="text"
-        placeholder="Search sessions..."
+        :placeholder="t('sessionList.searchPlaceholder')"
         class="search-input"
         @keyup.enter="search"
       />
       <select v-model="filters.service" class="filter-select">
-        <option value="">All services</option>
+        <option value="">{{ t('common.allServices') }}</option>
         <option v-for="svc in services" :key="svc" :value="svc">{{ svc }}</option>
       </select>
-      <button @click="search" class="btn btn-primary">Search</button>
-      <button @click="reset" class="btn">Reset</button>
+      <button @click="search" class="btn btn-primary">{{ t('common.search') }}</button>
+      <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 
-    <div v-if="loading" class="loading">Loading...</div>
+    <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
     <div v-else-if="error" class="error">{{ error }}</div>
     <template v-else>
       <table class="trace-table" v-if="sessions.length > 0">
         <thead>
           <tr>
-            <th>Session ID</th>
-            <th>Turns</th>
-            <th>Total Tokens</th>
-            <th>Avg Latency</th>
-            <th>Max Latency</th>
-            <th>Error Rate</th>
-            <th>Last Active</th>
+            <th>{{ t('sessionList.sessionId') }}</th>
+            <th>{{ t('sessionList.turns') }}</th>
+            <th>{{ t('sessionList.totalTokens') }}</th>
+            <th>{{ t('sessionList.avgLatency') }}</th>
+            <th>{{ t('sessionList.maxLatency') }}</th>
+            <th>{{ t('sessionList.errorRate') }}</th>
+            <th>{{ t('sessionList.lastActive') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -53,7 +53,7 @@
         </tbody>
       </table>
 
-      <div v-else class="empty">No sessions found.</div>
+      <div v-else class="empty">{{ t('sessionList.noSessions') }}</div>
 
       <div class="pagination" v-if="pagination.total > 0">
         <button
@@ -61,17 +61,17 @@
           @click="goToPage(pagination.page - 1)"
           class="btn"
         >
-          ← Prev
+          {{ t('common.prev') }}
         </button>
         <span class="page-info">
-          Page {{ pagination.page }} of {{ totalPages }} ({{ pagination.total }} sessions)
+          {{ t('common.pageOf', { page: pagination.page, total: totalPages, count: pagination.total }) }}
         </span>
         <button
           :disabled="pagination.page >= totalPages"
           @click="goToPage(pagination.page + 1)"
           class="btn"
         >
-          Next →
+          {{ t('common.next') }}
         </button>
       </div>
     </template>
@@ -81,9 +81,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { listSessions, getServices, type SessionListItem, type Pagination } from '../api/client'
 
 const router = useRouter()
+const { t } = useI18n()
 
 const sessions = ref<SessionListItem[]>([])
 const pagination = ref<Pagination>({ page: 1, page_size: 20, total: 0 })

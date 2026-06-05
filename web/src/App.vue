@@ -3,10 +3,16 @@
     <aside class="sidebar">
       <router-link to="/" class="app-title">Labubu</router-link>
       <nav class="app-nav">
-        <router-link to="/traces">Trace</router-link>
-        <router-link to="/sessions">Sessions</router-link>
-        <router-link to="/dashboards">Metrics</router-link>
+        <router-link to="/traces">{{ t('nav.traces') }}</router-link>
+        <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
+        <router-link to="/dashboards">{{ t('nav.metrics') }}</router-link>
       </nav>
+      <div class="lang-switcher">
+        <select v-model="locale" @change="onLocaleChange">
+          <option value="en">English</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
     </aside>
     <main class="app-main">
       <router-view />
@@ -15,6 +21,13 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
+function onLocaleChange() {
+  localStorage.setItem('locale', locale.value)
+}
 </script>
 
 <style scoped>
@@ -35,4 +48,25 @@
 .app-nav a:hover { color: #e2e8f0; }
 .app-nav a.router-link-active { color: #38bdf8; }
 .app-main { flex: 1; padding: 24px; }
+.lang-switcher {
+  margin-top: auto;
+}
+.lang-switcher select {
+  width: 100%;
+  padding: 6px 10px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #94a3b8;
+  font-size: 13px;
+  cursor: pointer;
+}
+.lang-switcher select:hover {
+  border-color: #475569;
+  color: #e2e8f0;
+}
+.lang-switcher select:focus {
+  outline: none;
+  border-color: #38bdf8;
+}
 </style>

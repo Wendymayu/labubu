@@ -4,36 +4,36 @@
       <input
         v-model="filters.q"
         type="text"
-        placeholder="Search traces..."
+        :placeholder="t('traceList.searchPlaceholder')"
         class="search-input"
         @keyup.enter="search"
       />
       <select v-model="filters.service" class="filter-select">
-        <option value="">All services</option>
+        <option value="">{{ t('common.allServices') }}</option>
         <option v-for="svc in services" :key="svc" :value="svc">{{ svc }}</option>
       </select>
       <select v-model="filters.status" class="filter-select">
-        <option value="">All status</option>
+        <option value="">{{ t('traceList.allStatus') }}</option>
         <option value="OK">OK</option>
         <option value="ERROR">ERROR</option>
       </select>
-      <button @click="search" class="btn btn-primary">Search</button>
-      <button @click="reset" class="btn">Reset</button>
+      <button @click="search" class="btn btn-primary">{{ t('common.search') }}</button>
+      <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 
-    <div v-if="loading" class="loading">Loading...</div>
+    <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
     <div v-else-if="error" class="error">{{ error }}</div>
     <template v-else>
       <table class="trace-table" v-if="traces.length > 0">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Service</th>
-            <th>Duration</th>
-            <th>Spans</th>
-            <th>Status</th>
-            <th>Tokens</th>
-            <th>Time</th>
+            <th>{{ t('traceList.name') }}</th>
+            <th>{{ t('traceList.service') }}</th>
+            <th>{{ t('traceList.duration') }}</th>
+            <th>{{ t('traceList.spans') }}</th>
+            <th>{{ t('traceList.status') }}</th>
+            <th>{{ t('traceList.tokens') }}</th>
+            <th>{{ t('traceList.time') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -56,7 +56,7 @@
         </tbody>
       </table>
 
-      <div v-else class="empty">No traces found.</div>
+      <div v-else class="empty">{{ t('traceList.noTraces') }}</div>
 
       <div class="pagination" v-if="pagination.total > 0">
         <button
@@ -64,17 +64,17 @@
           @click="goToPage(pagination.page - 1)"
           class="btn"
         >
-          ← Prev
+          {{ t('common.prev') }}
         </button>
         <span class="page-info">
-          Page {{ pagination.page }} of {{ totalPages }} ({{ pagination.total }} traces)
+          {{ t('common.pageOf', { page: pagination.page, total: totalPages, count: pagination.total }) }}
         </span>
         <button
           :disabled="pagination.page >= totalPages"
           @click="goToPage(pagination.page + 1)"
           class="btn"
         >
-          Next →
+          {{ t('common.next') }}
         </button>
       </div>
     </template>
@@ -84,9 +84,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { listTraces, getServices, type TraceListItem, type Pagination } from '../api/client'
 
 const router = useRouter()
+const { t } = useI18n()
 
 const traces = ref<TraceListItem[]>([])
 const pagination = ref<Pagination>({ page: 1, page_size: 20, total: 0 })
