@@ -341,7 +341,7 @@ function statusClass(status: string): string {
 
 <style scoped>
 .span-detail {
-  background: #000;
+  background: var(--bg-primary);
   padding: 0;
 }
 
@@ -353,38 +353,38 @@ function statusClass(status: string): string {
   margin-bottom: 12px;
 }
 .qi-item {
-  background: #0f172a;
+  background: var(--bg-surface-deep);
   border-radius: 6px;
   padding: 10px 8px;
   text-align: center;
 }
 .qi-label {
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   text-transform: uppercase;
   margin-bottom: 4px;
 }
 .qi-value {
   font-size: 13px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 .qi-model {
   font-size: 11px;
-  color: #38bdf8;
+  color: var(--accent-blue);
   word-break: break-all;
 }
-.kind-server { color: #3b82f6; }
-.kind-client { color: #22c55e; }
-.kind-producer { color: #f59e0b; }
-.kind-consumer { color: #a855f7; }
-.kind-internal { color: #94a3b8; }
-.status-ok { color: #6ee7b7; }
-.status-error { color: #fca5a5; }
+.kind-server { color: var(--chart-server); }
+.kind-client { color: var(--chart-client); }
+.kind-producer { color: var(--chart-producer); }
+.kind-consumer { color: var(--chart-consumer); }
+.kind-internal { color: var(--text-secondary); }
+.status-ok { color: var(--status-ok-text); }
+.status-error { color: var(--status-error-text); }
 
 .status-msg {
-  background: #7f1d1d;
-  color: #fca5a5;
+  background: var(--status-error-bg);
+  color: var(--status-error-text);
   padding: 8px 12px;
   border-radius: 4px;
   font-size: 12px;
@@ -397,7 +397,7 @@ function statusClass(status: string): string {
   gap: 16px;
   margin-bottom: 12px;
   padding: 8px 0;
-  border-bottom: 1px solid #222;
+  border-bottom: 1px solid var(--border-group);
 }
 .ts-item {
   text-align: center;
@@ -406,16 +406,16 @@ function statusClass(status: string): string {
 .ts-label {
   display: block;
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   text-transform: uppercase;
 }
 .ts-val {
   font-size: 16px;
   font-weight: 700;
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 .ts-highlight {
-  color: #c4b5fd;
+  color: var(--token-highlight);
 }
 
 /* --- Attributes --- */
@@ -430,35 +430,35 @@ function statusClass(status: string): string {
 }
 .section-header h4 {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-secondary);
   text-transform: uppercase;
   margin: 0;
 }
 .attr-search {
-  background: #0f172a;
-  border: 1px solid #333;
+  background: var(--bg-surface-deep);
+  border: 1px solid var(--border-group);
   border-radius: 4px;
   padding: 4px 10px;
   font-size: 11px;
-  color: #e2e8f0;
+  color: var(--text-primary);
   width: 170px;
 }
 .attr-search::placeholder {
-  color: #64748b;
+  color: var(--text-muted);
 }
 .attr-search:focus {
   outline: none;
-  border-color: #38bdf8;
+  border-color: var(--accent-blue);
 }
 .attr-empty {
   text-align: center;
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 12px;
   padding: 12px 0;
 }
 
 .attr-group {
-  border: 1px solid #222;
+  border: 1px solid var(--border-group);
   border-radius: 4px;
   overflow: hidden;
   margin-bottom: 4px;
@@ -468,18 +468,18 @@ function statusClass(status: string): string {
   justify-content: space-between;
   align-items: center;
   padding: 6px 10px;
-  background: #111;
+  background: var(--bg-secondary);
   cursor: pointer;
   font-size: 12px;
-  color: #e2e8f0;
+  color: var(--text-primary);
   user-select: none;
 }
 .attr-group-header:hover {
-  background: #1a1a1a;
+  background: var(--bg-surface-hover-subtle);
 }
 .attr-group-count {
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
 }
 .attr-group-body {
   padding: 2px 0;
@@ -487,25 +487,25 @@ function statusClass(status: string): string {
 .attr-row {
   display: flex;
   padding: 3px 10px;
-  border-bottom: 1px solid #0f172a;
+  border-bottom: 1px solid var(--bg-surface-deep);
   font-size: 11px;
 }
 .attr-row:last-child {
   border-bottom: none;
 }
 .attr-key {
-  color: #64748b;
+  color: var(--text-muted);
   width: 170px;
   flex-shrink: 0;
   word-break: break-all;
 }
 .attr-value {
-  color: #e2e8f0;
+  color: var(--text-primary);
   word-break: break-all;
   flex: 1;
 }
 .attr-empty-val {
-  color: #64748b;
+  color: var(--text-muted);
   font-style: italic;
 }
 
@@ -520,21 +520,21 @@ function statusClass(status: string): string {
   top: 6px;
   bottom: 6px;
   width: 2px;
-  background: #222;
+  background: var(--border-group);
 }
 
 .tl-card {
   position: relative;
-  background: #0f172a;
+  background: var(--bg-surface-deep);
   border-radius: 4px;
   padding: 8px 10px;
   margin-bottom: 8px;
-  border-left: 3px solid #6b7280;
+  border-left: 3px solid var(--chart-internal);
 }
-.tl-card-toolcall { border-left-color: #22c55e; }
-.tl-card-toolresult { border-left-color: #f59e0b; }
-.tl-card-error { border-left-color: #ef4444; }
-.tl-card-default { border-left-color: #6b7280; }
+.tl-card-toolcall { border-left-color: var(--chart-client); }
+.tl-card-toolresult { border-left-color: var(--chart-producer); }
+.tl-card-error { border-left-color: var(--status-error-accent); }
+.tl-card-default { border-left-color: var(--chart-internal); }
 
 .tl-dot {
   position: absolute;
@@ -544,10 +544,10 @@ function statusClass(status: string): string {
   height: 6px;
   border-radius: 50%;
 }
-.tl-dot-toolcall { background: #22c55e; }
-.tl-dot-toolresult { background: #f59e0b; }
-.tl-dot-error { background: #ef4444; }
-.tl-dot-default { background: #6b7280; }
+.tl-dot-toolcall { background: var(--chart-client); }
+.tl-dot-toolresult { background: var(--chart-producer); }
+.tl-dot-error { background: var(--status-error-accent); }
+.tl-dot-default { background: var(--chart-internal); }
 
 .tl-header {
   display: flex;
@@ -557,12 +557,12 @@ function statusClass(status: string): string {
 }
 .tl-time {
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-.evt-name-toolcall { color: #22c55e; }
-.evt-name-toolresult { color: #f59e0b; }
-.evt-name-error { color: #fca5a5; }
+.evt-name-toolcall { color: var(--chart-client); }
+.evt-name-toolresult { color: var(--chart-producer); }
+.evt-name-error { color: var(--status-error-text); }
 
 .tl-attrs {
   margin-top: 6px;
@@ -573,23 +573,23 @@ function statusClass(status: string): string {
 .tl-attr-key {
   display: block;
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   margin-bottom: 2px;
 }
 .tl-attr-value {
   font-size: 11px;
-  color: #e2e8f0;
+  color: var(--text-primary);
   word-break: break-all;
 }
 
 .tl-code-toggle {
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--text-secondary);
   cursor: pointer;
   margin-bottom: 2px;
 }
 .tl-code-toggle:hover {
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 .tl-copy-inline {
   margin-left: 8px;
@@ -597,7 +597,7 @@ function statusClass(status: string): string {
   font-size: 10px;
 }
 .tl-code {
-  background: #000;
+  background: var(--bg-primary);
   border-radius: 3px;
   padding: 6px 8px;
   font-size: 10px;
@@ -606,19 +606,19 @@ function statusClass(status: string): string {
   overflow-y: auto;
   margin: 0;
   font-family: 'Courier New', monospace;
-  color: #e2e8f0;
+  color: var(--text-primary);
   line-height: 1.5;
 }
 .tl-code code {
   font-family: inherit;
 }
-.tl-code :deep(.j-key) { color: #94a3b8; }
-.tl-code :deep(.j-str) { color: #6ee7b7; }
-.tl-code :deep(.j-num) { color: #facc15; }
-.tl-code :deep(.j-bool) { color: #f472b6; }
+.tl-code :deep(.j-key) { color: var(--text-secondary); }
+.tl-code :deep(.j-str) { color: var(--token-green); }
+.tl-code :deep(.j-num) { color: var(--status-warning); }
+.tl-code :deep(.j-bool) { color: var(--chart-pie-assistant); }
 
 /* --- Scrollbar --- */
 .tl-code::-webkit-scrollbar { width: 3px; height: 3px; }
 .tl-code::-webkit-scrollbar-track { background: transparent; }
-.tl-code::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+.tl-code::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 </style>
