@@ -27,6 +27,18 @@ func (m *sessionMockStore) GetSession(ctx context.Context, sessionID string) (*s
 	return m.sessionDetail, m.sessionErr
 }
 
+func (m *sessionMockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
+
+func (m *sessionMockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.LogListResult, error) {
+	return nil, nil
+}
+
+func (m *sessionMockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]storage.LogListItem, error) {
+	return nil, nil
+}
+
+func (m *sessionMockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
+
 func TestListSessions(t *testing.T) {
 	tokens := uint32(5000)
 	store := &sessionMockStore{
