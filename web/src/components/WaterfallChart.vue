@@ -414,4 +414,118 @@ function formatTokens(tokens: number): string {
   margin-left: 6px;
   font-size: 10px;
 }
+
+/* === Toolbar === */
+.waterfall-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  flex-wrap: wrap;
+}
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.search-input {
+  padding: 4px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  width: 180px;
+}
+.search-input::placeholder { color: var(--text-muted); }
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+.search-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.toolbar-filters {
+  display: flex;
+  gap: 4px;
+}
+.filter-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.filter-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.filter-btn.active {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+.toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.action-btn {
+  padding: 3px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+.action-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+/* === Stats bar === */
+.waterfall-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--bg-surface-deep);
+}
+.stats-sep { color: var(--text-muted); }
+.stats-link {
+  cursor: pointer;
+  color: var(--accent-blue);
+}
+.stats-link:hover { text-decoration: underline; }
+.stats-link.active {
+  font-weight: 600;
+  background: rgba(59, 130, 246, 0.1);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+/* === Search & filter highlights === */
+.waterfall-row.search-match {
+  background: rgba(251, 191, 36, 0.08);
+}
+.waterfall-row.search-match:hover {
+  background: rgba(251, 191, 36, 0.15);
+}
+.waterfall-row.filter-dimmed {
+  opacity: 0.35;
+}
+.waterfall-row.filter-dimmed:hover {
+  opacity: 0.6;
+}
+.match-text { font-weight: 700; }
 </style>
