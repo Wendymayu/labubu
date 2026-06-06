@@ -12,6 +12,7 @@ export default {
     traces: 'Trace',
     sessions: 'Sessions',
     metrics: 'Metrics',
+    logs: 'Logs',
   },
   traceList: {
     searchPlaceholder: 'Search traces...',
@@ -35,5 +36,18 @@ export default {
     errorRate: 'Error Rate',
     lastActive: 'Last Active',
     noSessions: 'No sessions found.',
+  },
+  logList: {
+    searchPlaceholder: 'Search logs...',
+    allSeverity: 'All severities',
+    allEvents: 'All events',
+    timestamp: 'Timestamp',
+    severity: 'Severity',
+    event: 'Event',
+    body: 'Body',
+    trace: 'Trace',
+    noLogs: 'No logs found.',
+    filteredBySpan: 'Filtered: {name}',
+    logCount: 'Logs ({count})',
   },
 }

@@ -6,6 +6,7 @@
         <router-link to="/traces">{{ t('nav.traces') }}</router-link>
         <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
         <router-link to="/dashboards">{{ t('nav.metrics') }}</router-link>
+        <router-link to="/logs">{{ t('nav.logs') }}</router-link>
       </nav>
       <div class="sidebar-footer">
         <ThemeToggle />
