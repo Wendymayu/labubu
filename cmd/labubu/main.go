@@ -158,7 +158,7 @@ func runServe(args []string) {
 	}()
 
 	// Initialize OTLP receiver.
-	recv := receiver.New(pipe, metricStore)
+	recv := receiver.New(pipe, metricStore, store)
 	if err := recv.Start(); err != nil {
 		log.Fatalf("Failed to start OTLP receiver: %v", err)
 	}
@@ -178,7 +178,8 @@ func runServe(args []string) {
 	}
 	dashboardHandler := api.NewDashboardHandler("")
 	sessionHandler := api.NewSessionHandler(store)
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler)
+	logHandler := api.NewLogHandler(store)
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler)
 
 	httpSrv := &http.Server{
 		Addr:         apiAddr,
