@@ -1,5 +1,33 @@
 <template>
   <div class="waterfall">
+    <div class="waterfall-toolbar">
+      <div class="toolbar-left">
+        <input
+          class="search-input"
+          type="text"
+          placeholder="Search span name..."
+          :value="searchQuery"
+          @input="onSearchInput(($event.target as HTMLInputElement).value)"
+        />
+        <span v-if="searchQuery" class="search-count">{{ matchCount }}/{{ spans.length }}</span>
+      </div>
+      <div class="toolbar-filters">
+        <button
+          :class="['filter-btn', { active: activeFilters.size === 0 }]"
+          @click="clearFilters"
+        >All</button>
+        <button
+          v-for="opt in FILTER_OPTIONS"
+          :key="opt.key"
+          :class="['filter-btn', { active: activeFilters.has(opt.key) }]"
+          @click="toggleFilter(opt.key)"
+        >{{ opt.label }}</button>
+      </div>
+      <div class="toolbar-actions">
+        <button class="action-btn" @click="expandAll" title="Expand All">⇤</button>
+        <button class="action-btn" @click="collapseAll" title="Collapse All">⇥</button>
+      </div>
+    </div>
     <div class="waterfall-header">
       <span class="col-name">Name</span>
       <span class="col-timeline">Timeline</span>
@@ -68,12 +96,70 @@ const collapsedParents = ref<Set<string>>(new Set())
 const previousSpans = ref<SpanDetail[] | null>(null)
 const DEFAULT_EXPAND_DEPTH = 1
 
+// --- Search & Filter ---
+const searchQuery = ref('')
+const activeFilters = ref<Set<string>>(new Set())
+const FILTER_OPTIONS = [
+  { key: 'llm', label: 'LLM' },
+  { key: 'error', label: 'Error' },
+  { key: 'tool', label: 'Tool' },
+] as const
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+function matchesSearch(span: SpanDetail): boolean {
+  if (!searchQuery.value) return true
+  return span.name.toLowerCase().includes(searchQuery.value.toLowerCase())
+}
+
+function matchesFilters(span: SpanDetail): boolean {
+  if (activeFilters.value.size === 0) return true
+  let match = false
+  for (const f of activeFilters.value) {
+    switch (f) {
+      case 'llm':
+        if (span.total_tokens && span.total_tokens > 0) match = true
+        break
+      case 'error':
+        if (span.status === 'ERROR') match = true
+        break
+      case 'tool':
+        if (span.kind === 'CLIENT' && span.name.toLowerCase().includes('tool')) match = true
+        break
+    }
+  }
+  return match
+}
+
+function toggleFilter(key: string) {
+  const newFilters = new Set(activeFilters.value)
+  if (newFilters.has(key)) {
+    newFilters.delete(key)
+  } else {
+    newFilters.add(key)
+  }
+  activeFilters.value = newFilters
+}
+
+function clearFilters() {
+  activeFilters.value = new Set()
+}
+
+function onSearchInput(value: string) {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    searchQuery.value = value
+  }, 500)
+}
+
 interface DisplaySpan extends SpanDetail {
   _depth: number
   _hasChildren: boolean
   _expanded: boolean
   _childCount: number
   _hasCollapsedChildren: boolean
+  _searchMatch: boolean
+  _filterMatch: boolean
 }
 
 const displaySpans = computed(() => {
@@ -119,6 +205,8 @@ const displaySpans = computed(() => {
         _expanded: !isCollapsed,
         _childCount: childCount,
         _hasCollapsedChildren: hasChildren && isCollapsed,
+        _searchMatch: searchQuery.value ? matchesSearch(span) : true,
+        _filterMatch: activeFilters.value.size > 0 ? matchesFilters(span) : true,
       })
       if (hasChildren && !isCollapsed) {
         walk(span.span_id, depth + 1)
@@ -129,12 +217,47 @@ const displaySpans = computed(() => {
   return result
 })
 
+const matchCount = computed(() => {
+  let count = 0
+  for (const span of props.spans) {
+    if (matchesSearch(span) && matchesFilters(span)) count++
+  }
+  return count
+})
+
 function toggleExpand(spanId: string) {
   if (collapsedParents.value.has(spanId)) {
     collapsedParents.value.delete(spanId)
   } else {
     collapsedParents.value.add(spanId)
   }
+}
+
+function expandAll() {
+  collapsedParents.value = new Set()
+}
+
+function collapseAll() {
+  const newSet = new Set<string>()
+  // Collect all parent spans at depth >= 1
+  const childrenMap = new Map<string, SpanDetail[]>()
+  for (const span of props.spans) {
+    const pk = span.parent_span_id || '__root__'
+    if (!childrenMap.has(pk)) childrenMap.set(pk, [])
+    childrenMap.get(pk)!.push(span)
+  }
+  function collect(parentId: string, depth: number) {
+    const children = childrenMap.get(parentId) || []
+    for (const span of children) {
+      const hasKids = (childrenMap.get(span.span_id)?.length ?? 0) > 0
+      if (hasKids && depth >= 1) {
+        newSet.add(span.span_id)
+      }
+      collect(span.span_id, depth + 1)
+    }
+  }
+  collect('__root__', 0)
+  collapsedParents.value = newSet
 }
 
 function barStyle(span: DisplaySpan) {
