@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSession, type SessionDetail, type QueryResult } from '../api/client'
@@ -71,14 +71,12 @@ import {
   Chart, LineController, CategoryScale, LinearScale,
   PointElement, LineElement, Tooltip, Legend, Filler
 } from 'chart.js'
-import { useTheme } from '../composables/useTheme'
 
 Chart.register(
   LineController, CategoryScale, LinearScale,
   PointElement, LineElement, Tooltip, Legend, Filler
 )
 
-const CTX_COMPONENTS = ['system', 'user', 'assistant', 'tool', 'tool_definitions', 'skill'] as const
 const CTX_COLOR_VARS: Record<string, string> = {
   system: '--chart-pie-system',
   user: '--chart-pie-user',
@@ -100,7 +98,6 @@ interface CtxSeries {
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const { theme } = useTheme()
 const sessionId = route.params.sessionId as string
 
 const detail = ref<SessionDetail | null>(null)
