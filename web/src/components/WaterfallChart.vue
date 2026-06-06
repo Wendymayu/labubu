@@ -35,6 +35,9 @@
       <span class="col-duration">{{ formatDuration(span.duration_ms) }}</span>
       <span class="col-tokens">
         <span v-if="span.total_tokens" class="token-badge">🎯 {{ formatTokens(span.total_tokens) }}</span>
+        <span v-if="logCounts?.[span.span_id]" class="log-badge" @click.stop="$emit('filter-logs', span.span_id)" :title="`${logCounts[span.span_id]} log(s)`">
+          📋 {{ logCounts[span.span_id] }}
+        </span>
       </span>
     </div>
   </div>
@@ -49,10 +52,12 @@ const props = defineProps<{
   traceStartMs: number
   traceDurationMs: number
   selectedSpanId?: string
+  logCounts?: Record<string, number>
 }>()
 
 defineEmits<{
   'select-span': [span: SpanDetail]
+  'filter-logs': [spanId: string]
 }>()
 
 interface DisplaySpan extends SpanDetail {
@@ -171,6 +176,16 @@ function formatTokens(tokens: number): string {
 .bar-internal { background: var(--chart-internal); }
 .bar-llm { background: linear-gradient(90deg, var(--chart-llm-start), var(--chart-llm-end)); }
 .token-badge { font-size: 11px; color: var(--token-highlight); }
+.log-badge {
+  margin-left: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-surface-hover);
+}
+.log-badge:hover { opacity: 1; background: var(--bg-surface-hover-subtle); }
 .selected-marker {
   color: var(--accent-blue);
   margin-left: 6px;
