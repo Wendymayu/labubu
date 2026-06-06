@@ -10,12 +10,7 @@
       </nav>
       <div class="sidebar-footer">
         <ThemeToggle />
-        <div class="lang-switcher">
-          <select v-model="locale" @change="onLocaleChange">
-            <option value="en">English</option>
-            <option value="zh">中文</option>
-          </select>
-        </div>
+        <LanguageToggle />
       </div>
     </aside>
     <main class="app-main">
@@ -28,13 +23,10 @@
 import { useI18n } from 'vue-i18n'
 import { useTheme } from './composables/useTheme'
 import ThemeToggle from './components/ThemeToggle.vue'
+import LanguageToggle from './components/LanguageToggle.vue'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 useTheme() // initialize theme
-
-function onLocaleChange() {
-  localStorage.setItem('locale', locale.value)
-}
 </script>
 
 <style scoped>
@@ -61,22 +53,5 @@ function onLocaleChange() {
   flex-direction: column;
   gap: 10px;
 }
-.lang-switcher select {
-  width: 100%;
-  padding: 6px 10px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-}
-.lang-switcher select:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-.lang-switcher select:focus {
-  outline: none;
-  border-color: var(--accent-blue);
-}
+
 </style>
