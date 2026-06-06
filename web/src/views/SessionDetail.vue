@@ -63,23 +63,62 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getSession, type SessionDetail } from '../api/client'
+import { useI18n } from 'vue-i18n'
+import { getSession, type SessionDetail, type QueryResult } from '../api/client'
+import {
+  Chart, LineController, CategoryScale, LinearScale,
+  PointElement, LineElement, Tooltip, Legend, Filler
+} from 'chart.js'
+import { useTheme } from '../composables/useTheme'
+
+Chart.register(
+  LineController, CategoryScale, LinearScale,
+  PointElement, LineElement, Tooltip, Legend, Filler
+)
+
+const CTX_COMPONENTS = ['system', 'user', 'assistant', 'tool', 'tool_definitions', 'skill'] as const
+const CTX_COLOR_VARS: Record<string, string> = {
+  system: '--chart-pie-system',
+  user: '--chart-pie-user',
+  assistant: '--chart-pie-assistant',
+  tool: '--chart-pie-tool',
+  tool_definitions: '--chart-pie-tool-defs',
+  skill: '--chart-pie-skill',
+}
+
+interface CtxSeries {
+  component: string
+  label: string
+  color: string
+  values: [number, number][]  // [time_ms, token_count]
+  maxTokens: number
+  avgTokens: number
+}
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
+const { theme } = useTheme()
 const sessionId = route.params.sessionId as string
 
 const detail = ref<SessionDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
 
+// Context window chart state
+const ctxLoading = ref(false)
+const ctxError = ref('')
+
+const ctxSeries = ref<CtxSeries[]>([])
+
 async function fetchSession() {
   loading.value = true
   error.value = ''
   try {
     detail.value = await getSession(sessionId)
+    fetchContextWindow()  // fetch context window data in background
   } catch (e: any) {
     error.value = e.message || 'Failed to load session'
   } finally {
@@ -107,6 +146,66 @@ function formatTokens(tokens?: number): string {
 
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleTimeString()
+}
+
+function getCSSVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
+
+function ctxLabel(component: string): string {
+  return t(`sessionDetail.component.${component}`)
+}
+
+async function fetchContextWindow() {
+  if (!detail.value) return
+
+  const sessionId = detail.value.session.session_id
+  const startMs = detail.value.session.first_active_ms
+  const endMs = detail.value.session.last_active_ms
+  const durationSec = (endMs - startMs) / 1000
+  const step = Math.max(60, Math.ceil(durationSec / 60))
+
+  const query = `gen_ai_context_tokens{jiuwenclaw.session.id="${sessionId}"}`
+  const startSec = Math.floor(startMs / 1000) - 60
+  const endSec = Math.floor(endMs / 1000) + 60
+
+  ctxLoading.value = true
+  ctxError.value = ''
+
+  try {
+    const url = `/api/v1/query_range?query=${encodeURIComponent(query)}&start=${startSec}&end=${endSec}&step=${step}`
+    const res = await fetch(url)
+    const data: QueryResult = await res.json()
+
+    if (data.status === 'error') {
+      ctxError.value = data.error || 'Query error'
+      return
+    }
+
+    const results = data.data?.result || []
+    ctxSeries.value = results.map(series => {
+      const comp = series.metric?.component || 'unknown'
+      const values = (series.values || []).map(([ts, val]: [number, string]) => [ts * 1000, parseFloat(val)] as [number, number])
+      const tokenVals = values.map(v => v[1])
+      const maxTokens = tokenVals.length > 0 ? Math.max(...tokenVals) : 0
+      const avgTokens = tokenVals.length > 0 ? tokenVals.reduce((a, b) => a + b, 0) / tokenVals.length : 0
+      return {
+        component: comp,
+        label: ctxLabel(comp),
+        color: getCSSVar(CTX_COLOR_VARS[comp] || '--text-muted'),
+        values,
+        maxTokens,
+        avgTokens,
+      }
+    })
+    // Sort by component name for stable display order
+    ctxSeries.value.sort((a, b) => a.component.localeCompare(b.component))
+  } catch (e: any) {
+    ctxError.value = e.message || 'Failed to load context window data'
+    ctxSeries.value = []
+  } finally {
+    ctxLoading.value = false
+  }
 }
 
 function statusClass(status: string): string {
