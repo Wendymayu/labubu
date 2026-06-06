@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
+	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -27,15 +28,17 @@ import (
 type Receiver struct {
 	pipeline    *pipeline.Pipeline
 	metricStore metrics.Store
+	store       storage.Store
 	grpcSrv     *grpc.Server
 	httpSrv     *http.Server
 }
 
 // New creates a new Receiver.
-func New(p *pipeline.Pipeline, ms metrics.Store) *Receiver {
+func New(p *pipeline.Pipeline, ms metrics.Store, s storage.Store) *Receiver {
 	return &Receiver{
 		pipeline:    p,
 		metricStore: ms,
+		store:       s,
 	}
 }
 
@@ -47,12 +50,18 @@ func (r *Receiver) Start() error {
 	if r.metricStore != nil {
 		colmetricspb.RegisterMetricsServiceServer(r.grpcSrv, &metricsService{metricStore: r.metricStore})
 	}
+	if r.store != nil {
+		collogspb.RegisterLogsServiceServer(r.grpcSrv, &logsService{store: r.store})
+	}
 
 	// HTTP server for OTLP HTTP (/v1/traces).
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", r.handleHTTPTraces)
 	if r.metricStore != nil {
 		mux.HandleFunc("/v1/metrics", r.handleHTTPMetrics)
+	}
+	if r.store != nil {
+		mux.HandleFunc("/v1/logs", r.handleHTTPLogs)
 	}
 	r.httpSrv = &http.Server{Handler: mux}
 
@@ -170,6 +179,29 @@ func (s *metricsService) Export(ctx context.Context, req *colmetricspb.ExportMet
 	return &colmetricspb.ExportMetricsServiceResponse{}, nil
 }
 
+// logsService implements the OTLP gRPC LogsService.
+type logsService struct {
+	collogspb.UnimplementedLogsServiceServer
+	store storage.Store
+}
+
+// Export receives log data via gRPC.
+func (s *logsService) Export(ctx context.Context, req *collogspb.ExportLogsServiceRequest) (*collogspb.ExportLogsServiceResponse, error) {
+	logs := translateLogs(req.ResourceLogs)
+	if len(logs) == 0 {
+		return &collogspb.ExportLogsServiceResponse{}, nil
+	}
+	if err := s.store.InsertLogs(ctx, logs); err != nil {
+		return &collogspb.ExportLogsServiceResponse{
+			PartialSuccess: &collogspb.ExportLogsPartialSuccess{
+				RejectedLogRecords: int64(len(logs)),
+				ErrorMessage:       "store insert failed",
+			},
+		}, nil
+	}
+	return &collogspb.ExportLogsServiceResponse{}, nil
+}
+
 // handleHTTPTraces handles OTLP HTTP POST /v1/traces.
 func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
@@ -276,6 +308,45 @@ func (r *Receiver) handleHTTPMetrics(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := r.metricStore.Insert(req.Context(), points); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "store insert failed"})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"partialSuccess": map[string]interface{}{},
+	})
+}
+
+// handleHTTPLogs handles OTLP HTTP POST /v1/logs.
+func (r *Receiver) handleHTTPLogs(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer req.Body.Close()
+
+	var exportReq collogspb.ExportLogsServiceRequest
+	if err := proto.Unmarshal(body, &exportReq); err != nil {
+		http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	logs := translateLogs(exportReq.ResourceLogs)
+	if len(logs) == 0 {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{"partialSuccess": map[string]interface{}{}})
+		return
+	}
+
+	if err := r.store.InsertLogs(req.Context(), logs); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{"error": "store insert failed"})
 		return
