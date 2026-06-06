@@ -63,9 +63,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useTheme } from '../composables/useTheme'
 import { getSession, type SessionDetail, type QueryResult } from '../api/client'
 import {
   Chart, LineController, CategoryScale, LinearScale,
@@ -86,6 +87,8 @@ const CTX_COLOR_VARS: Record<string, string> = {
   skill: '--chart-pie-skill',
 }
 
+const CTX_COMPONENTS = ['system', 'user', 'assistant', 'tool', 'tool_definitions', 'skill'] as const
+
 interface CtxSeries {
   component: string
   label: string
@@ -97,8 +100,9 @@ interface CtxSeries {
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
 const sessionId = route.params.sessionId as string
+const { t } = useI18n()
+const { theme } = useTheme()
 
 const detail = ref<SessionDetail | null>(null)
 const loading = ref(true)
@@ -109,6 +113,16 @@ const ctxLoading = ref(false)
 const ctxError = ref('')
 
 const ctxSeries = ref<CtxSeries[]>([])
+
+// Chart.js refs
+const ctxCanvasRef = ref<HTMLCanvasElement | null>(null)
+const ctxTooltipRef = ref<HTMLDivElement | null>(null)
+let ctxChart: Chart | null = null
+let tooltipHovering = false
+
+const CTX_COLORS = [
+  '#a78bfa', '#38bdf8', '#f472b6', '#22d3ee', '#fbbf24', '#4ade80',
+]
 
 async function fetchSession() {
   loading.value = true
@@ -151,6 +165,51 @@ function getCSSVar(name: string): string {
 
 function ctxLabel(component: string): string {
   return t(`sessionDetail.component.${component}`)
+}
+
+function ctxExternalTooltip(context: any) {
+  const { chart, tooltip } = context
+  const el = ctxTooltipRef.value
+  if (!el) return
+
+  if (tooltip.opacity === 0) {
+    if (!tooltipHovering) el.style.opacity = '0'
+    return
+  }
+  if (tooltipHovering) return
+
+  const dataPoints = tooltip.dataPoints || []
+  if (dataPoints.length === 0) {
+    el.style.opacity = '0'
+    return
+  }
+
+  let html = `<div class="tt-time">${dataPoints[0].label}</div><div class="tt-body">`
+  for (const dp of dataPoints) {
+    const ds = chart.data.datasets[dp.datasetIndex]
+    const val = parseFloat(dp.formattedValue)
+    html += `<div class="tt-item">`
+    html += `<span class="tt-color" style="background:${ds.borderColor}"></span>`
+    html += `<span class="tt-label">${ds.label}</span>`
+    html += `<span class="tt-value">${val >= 1000 ? (val / 1000).toFixed(1) + 'K' : val.toFixed(0)}</span>`
+    html += `</div>`
+  }
+  html += '</div>'
+
+  el.innerHTML = html
+  el.style.opacity = '1'
+
+  const rect = chart.canvas.getBoundingClientRect()
+  let left = rect.left + window.scrollX + tooltip.caretX - el.offsetWidth / 2
+  let top = rect.top + window.scrollY + tooltip.caretY - el.offsetHeight - 12
+
+  if (left < 0) left = 4
+  const maxLeft = window.innerWidth - el.offsetWidth - 4
+  if (left > maxLeft) left = maxLeft
+  if (top < 0) top = rect.top + window.scrollY + tooltip.caretY + 16
+
+  el.style.left = left + 'px'
+  el.style.top = top + 'px'
 }
 
 async function fetchContextWindow() {
@@ -205,6 +264,107 @@ async function fetchContextWindow() {
   }
 }
 
+function renderCtxChart() {
+  if (!ctxCanvasRef.value || ctxSeries.value.length === 0) return
+
+  if (ctxChart) {
+    ctxChart.destroy()
+    ctxChart = null
+  }
+
+  // Use first series' timestamps as shared labels
+  const firstValues = ctxSeries.value[0]?.values || []
+  const labels = firstValues.map(v => new Date(v[0]).toLocaleTimeString())
+
+  const datasets = ctxSeries.value.map((s, idx) => ({
+    label: s.label,
+    data: s.values.map(v => v[1]),
+    borderColor: s.color || CTX_COLORS[idx % CTX_COLORS.length],
+    backgroundColor: s.color ? s.color + '22' : CTX_COLORS[idx % CTX_COLORS.length] + '22',
+    borderWidth: 2,
+    fill: false,
+    tension: 0.3,
+    pointRadius: 0,
+  }))
+
+  ctxChart = new Chart(ctxCanvasRef.value, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: {
+          display: ctxSeries.value.length > 1,
+          position: 'bottom',
+          labels: {
+            color: getCSSVar('--text-secondary'),
+            font: { size: 10 },
+            boxWidth: 12,
+            padding: 8,
+          },
+        },
+        tooltip: {
+          enabled: false,
+          mode: 'index',
+          intersect: false,
+          position: 'nearest',
+          external: ctxExternalTooltip,
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: getCSSVar('--text-secondary'), maxTicksLimit: 8, font: { size: 10 } },
+          grid: { color: getCSSVar('--border-subtle') },
+        },
+        y: {
+          ticks: {
+            color: getCSSVar('--text-secondary'),
+            font: { size: 10 },
+            callback: (val: any) => val >= 1000 ? (val / 1000).toFixed(0) + 'K' : val,
+          },
+          grid: { color: getCSSVar('--border-subtle') },
+        },
+      },
+    },
+  })
+}
+
+function setupCtxTooltipListeners() {
+  const el = ctxTooltipRef.value
+  if (!el || !ctxCanvasRef.value) return
+
+  el.addEventListener('mouseenter', () => { tooltipHovering = true })
+  el.addEventListener('mouseleave', () => { tooltipHovering = false; el.style.opacity = '0' })
+  ctxCanvasRef.value.addEventListener('mouseleave', () => {
+    if (!tooltipHovering) el.style.opacity = '0'
+  })
+}
+
+// Watch for ctxSeries changes to render chart
+watch(ctxSeries, () => {
+  nextTick(() => {
+    renderCtxChart()
+    setupCtxTooltipListeners()
+  })
+})
+
+// Re-render on theme change to pick up new CSS variable colors
+watch(theme, () => {
+  if (ctxChart) {
+    ctxChart.destroy()
+    ctxChart = null
+  }
+  ctxSeries.value = ctxSeries.value.map(s => ({
+    ...s,
+    color: getCSSVar(CTX_COLOR_VARS[s.component] || '--text-muted'),
+  }))
+  nextTick(() => {
+    renderCtxChart()
+  })
+})
+
 function statusClass(status: string): string {
   switch (status) {
     case 'OK': return 'status-ok'
@@ -222,27 +382,34 @@ function errorRateClass(rate: number): string {
 onMounted(() => {
   fetchSession()
 })
+
+onUnmounted(() => {
+  if (ctxChart) {
+    ctxChart.destroy()
+    ctxChart = null
+  }
+})
 </script>
 
 <style scoped>
 .session-detail { max-width: 1200px; }
 .back-link { margin-bottom: 16px; }
-.back-link a { color: var(--text-secondary); text-decoration: none; font-size: 14px; }
-.back-link a:hover { color: var(--text-primary); }
-.loading, .error { text-align: center; padding: 60px; color: var(--text-secondary); }
-.error { color: var(--status-error-accent); }
+.back-link a { color: #94a3b8; text-decoration: none; font-size: 14px; }
+.back-link a:hover { color: #e2e8f0; }
+.loading, .error { text-align: center; padding: 60px; color: #94a3b8; }
+.error { color: #f87171; }
 .session-summary { margin-bottom: 24px; }
 .session-summary h2 { font-size: 20px; margin-bottom: 12px; word-break: break-all; }
 .summary-grid { display: flex; gap: 24px; flex-wrap: wrap; }
 .summary-item { display: flex; flex-direction: column; }
-.summary-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; }
+.summary-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
 .summary-value { font-size: 14px; }
-.token-highlight { color: var(--token-highlight); font-weight: 600; }
-.error-high { color: var(--status-error-text); }
-.error-medium { color: var(--status-warning); }
-.error-ok { color: var(--status-ok-text); }
+.token-highlight { color: #c4b5fd; font-weight: 600; }
+.error-high { color: #fca5a5; }
+.error-medium { color: #fbbf24; }
+.error-ok { color: #6ee7b7; }
 
-.turns-heading { font-size: 16px; margin-bottom: 12px; color: var(--text-primary); }
+.turns-heading { font-size: 16px; margin-bottom: 12px; color: #e2e8f0; }
 
 .turns-list { display: flex; flex-direction: column; gap: 2px; }
 .turn-row {
@@ -250,18 +417,18 @@ onMounted(() => {
   align-items: center;
   gap: 16px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid #1e293b;
   cursor: pointer;
   font-size: 14px;
 }
-.turn-row:hover { background: var(--bg-surface); }
-.turn-number { color: var(--text-muted); font-size: 12px; font-weight: 600; min-width: 32px; }
-.turn-name { flex: 1; font-weight: 600; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-row:hover { background: #1e293b; }
+.turn-number { color: #64748b; font-size: 12px; font-weight: 600; min-width: 32px; }
+.turn-name { flex: 1; font-weight: 600; color: #38bdf8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-.status-ok { background: var(--status-ok-bg); color: var(--status-ok-text); }
-.status-error { background: var(--status-error-bg); color: var(--status-error-text); }
-.turn-duration { color: var(--text-secondary); min-width: 70px; text-align: right; }
-.turn-tokens { color: var(--token-highlight); font-weight: 600; min-width: 60px; text-align: right; }
-.turn-service { color: var(--text-secondary); font-size: 13px; min-width: 100px; }
-.turn-time { color: var(--text-muted); font-size: 13px; min-width: 80px; text-align: right; }
+.status-ok { background: #065f46; color: #6ee7b7; }
+.status-error { background: #7f1d1d; color: #fca5a5; }
+.turn-duration { color: #94a3b8; min-width: 70px; text-align: right; }
+.turn-tokens { color: #c4b5fd; font-weight: 600; min-width: 60px; text-align: right; }
+.turn-service { color: #94a3b8; font-size: 13px; min-width: 100px; }
+.turn-time { color: #64748b; font-size: 13px; min-width: 80px; text-align: right; }
 </style>
