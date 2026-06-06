@@ -87,8 +87,6 @@ const CTX_COLOR_VARS: Record<string, string> = {
   skill: '--chart-pie-skill',
 }
 
-const CTX_COMPONENTS = ['system', 'user', 'assistant', 'tool', 'tool_definitions', 'skill'] as const
-
 interface CtxSeries {
   component: string
   label: string
@@ -346,7 +344,6 @@ function setupCtxTooltipListeners() {
 watch(ctxSeries, () => {
   nextTick(() => {
     renderCtxChart()
-    setupCtxTooltipListeners()
   })
 })
 
@@ -381,6 +378,7 @@ function errorRateClass(rate: number): string {
 
 onMounted(() => {
   fetchSession()
+  setupCtxTooltipListeners()
 })
 
 onUnmounted(() => {
@@ -394,22 +392,22 @@ onUnmounted(() => {
 <style scoped>
 .session-detail { max-width: 1200px; }
 .back-link { margin-bottom: 16px; }
-.back-link a { color: #94a3b8; text-decoration: none; font-size: 14px; }
-.back-link a:hover { color: #e2e8f0; }
-.loading, .error { text-align: center; padding: 60px; color: #94a3b8; }
-.error { color: #f87171; }
+.back-link a { color: var(--text-secondary); text-decoration: none; font-size: 14px; }
+.back-link a:hover { color: var(--text-primary); }
+.loading, .error { text-align: center; padding: 60px; color: var(--text-secondary); }
+.error { color: var(--status-error-accent); }
 .session-summary { margin-bottom: 24px; }
 .session-summary h2 { font-size: 20px; margin-bottom: 12px; word-break: break-all; }
 .summary-grid { display: flex; gap: 24px; flex-wrap: wrap; }
 .summary-item { display: flex; flex-direction: column; }
-.summary-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+.summary-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; }
 .summary-value { font-size: 14px; }
-.token-highlight { color: #c4b5fd; font-weight: 600; }
-.error-high { color: #fca5a5; }
-.error-medium { color: #fbbf24; }
-.error-ok { color: #6ee7b7; }
+.token-highlight { color: var(--token-highlight); font-weight: 600; }
+.error-high { color: var(--status-error-text); }
+.error-medium { color: var(--status-warning); }
+.error-ok { color: var(--status-ok-text); }
 
-.turns-heading { font-size: 16px; margin-bottom: 12px; color: #e2e8f0; }
+.turns-heading { font-size: 16px; margin-bottom: 12px; color: var(--text-primary); }
 
 .turns-list { display: flex; flex-direction: column; gap: 2px; }
 .turn-row {
@@ -417,18 +415,18 @@ onUnmounted(() => {
   align-items: center;
   gap: 16px;
   padding: 10px 12px;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
   font-size: 14px;
 }
-.turn-row:hover { background: #1e293b; }
-.turn-number { color: #64748b; font-size: 12px; font-weight: 600; min-width: 32px; }
-.turn-name { flex: 1; font-weight: 600; color: #38bdf8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-row:hover { background: var(--bg-surface); }
+.turn-number { color: var(--text-muted); font-size: 12px; font-weight: 600; min-width: 32px; }
+.turn-name { flex: 1; font-weight: 600; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-.status-ok { background: #065f46; color: #6ee7b7; }
-.status-error { background: #7f1d1d; color: #fca5a5; }
-.turn-duration { color: #94a3b8; min-width: 70px; text-align: right; }
-.turn-tokens { color: #c4b5fd; font-weight: 600; min-width: 60px; text-align: right; }
-.turn-service { color: #94a3b8; font-size: 13px; min-width: 100px; }
-.turn-time { color: #64748b; font-size: 13px; min-width: 80px; text-align: right; }
+.status-ok { background: var(--status-ok-bg); color: var(--status-ok-text); }
+.status-error { background: var(--status-error-bg); color: var(--status-error-text); }
+.turn-duration { color: var(--text-secondary); min-width: 70px; text-align: right; }
+.turn-tokens { color: var(--token-highlight); font-weight: 600; min-width: 60px; text-align: right; }
+.turn-service { color: var(--text-secondary); font-size: 13px; min-width: 100px; }
+.turn-time { color: var(--text-muted); font-size: 13px; min-width: 80px; text-align: right; }
 </style>
