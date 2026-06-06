@@ -4,6 +4,7 @@
       <span class="col-name">Name</span>
       <span class="col-timeline">Timeline</span>
       <span class="col-duration">Duration</span>
+      <span class="col-children"></span>
       <span class="col-tokens">Tokens</span>
     </div>
 
@@ -19,6 +20,7 @@
           class="toggle-icon"
           @click.stop="toggleExpand(span.span_id)"
         >{{ span._expanded ? '▼' : '▶' }}</span>
+        <span v-else class="toggle-icon toggle-placeholder"></span>
         <span :class="['kind-dot', kindDotClass(span.kind)]"></span>
         {{ span.name }}
         <span v-if="selectedSpanId === span.span_id" class="selected-marker">◀</span>
@@ -33,6 +35,7 @@
       </span>
 
       <span class="col-duration">{{ formatDuration(span.duration_ms) }}</span>
+      <span class="col-children">{{ span._hasCollapsedChildren ? `[${span._childCount}]` : '' }}</span>
       <span class="col-tokens">
         <span v-if="span.total_tokens" class="token-badge">🎯 {{ formatTokens(span.total_tokens) }}</span>
         <span v-if="logCounts?.[span.span_id]" class="log-badge" @click.stop="$emit('filter-logs', span.span_id)" :title="`${logCounts[span.span_id]} log(s)`">
@@ -44,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { SpanDetail } from '../api/client'
 
 const props = defineProps<{
@@ -60,47 +63,88 @@ defineEmits<{
   'filter-logs': [spanId: string]
 }>()
 
+// --- Collapse state ---
+const collapsedParents = ref<Set<string>>(new Set())
+const lastSpansRef = ref<SpanDetail[] | null>(null)
+const DEFAULT_EXPAND_DEPTH = 1
+
 interface DisplaySpan extends SpanDetail {
   _depth: number
   _hasChildren: boolean
   _expanded: boolean
+  _childCount: number
+  _hasCollapsedChildren: boolean
 }
 
 const displaySpans = computed(() => {
-  const childrenMap = new Map<string, SpanDetail[]>()
-
-  for (const span of props.spans) {
-    const parentKey = span.parent_span_id || '__root__'
-    if (!childrenMap.has(parentKey)) {
-      childrenMap.set(parentKey, [])
+  // --- 首次加载：初始化折叠状态 ---
+  if (lastSpansRef.value !== props.spans) {
+    collapsedParents.value = new Set()
+    // 先构建 childrenMap 确定哪些有子节点
+    const initChildrenMap = new Map<string, SpanDetail[]>()
+    for (const span of props.spans) {
+      const pk = span.parent_span_id || '__root__'
+      if (!initChildrenMap.has(pk)) initChildrenMap.set(pk, [])
+      initChildrenMap.get(pk)!.push(span)
     }
-    childrenMap.get(parentKey)!.push(span)
+    // 折叠 depth >= DEFAULT_EXPAND_DEPTH 且有子节点的 span
+    function markCollapsed(parentId: string, depth: number) {
+      const children = initChildrenMap.get(parentId) || []
+      for (const span of children) {
+        const hasKids = initChildrenMap.has(span.span_id) && (initChildrenMap.get(span.span_id)?.length ?? 0) > 0
+        if (hasKids && depth >= DEFAULT_EXPAND_DEPTH) {
+          collapsedParents.value.add(span.span_id)
+        }
+        markCollapsed(span.span_id, depth + 1)
+      }
+    }
+    markCollapsed('__root__', 0)
+    lastSpansRef.value = props.spans
   }
 
-  const result: DisplaySpan[] = []
+  // --- 构建 childrenMap ---
+  const childrenMap = new Map<string, SpanDetail[]>()
+  const childCountMap = new Map<string, number>()
+  for (const span of props.spans) {
+    const parentKey = span.parent_span_id || '__root__'
+    if (!childrenMap.has(parentKey)) childrenMap.set(parentKey, [])
+    childrenMap.get(parentKey)!.push(span)
+    childCountMap.set(parentKey, (childCountMap.get(parentKey) || 0) + 1)
+  }
 
+  // --- walk ---
+  const result: DisplaySpan[] = []
   function walk(parentId: string, depth: number) {
     const children = childrenMap.get(parentId) || []
     for (const span of children) {
       const hasChildren = childrenMap.has(span.span_id) && (childrenMap.get(span.span_id)?.length ?? 0) > 0
+      const childCount = childCountMap.get(span.span_id) || 0
+      const isCollapsed = collapsedParents.value.has(span.span_id)
       result.push({
         ...span,
         _depth: depth,
         _hasChildren: hasChildren,
-        _expanded: true,
+        _expanded: !isCollapsed,
+        _childCount: childCount,
+        _hasCollapsedChildren: hasChildren && isCollapsed,
       })
-      if (hasChildren) {
+      if (hasChildren && !isCollapsed) {
         walk(span.span_id, depth + 1)
       }
     }
   }
-
   walk('__root__', 0)
   return result
 })
 
-function toggleExpand(_spanId: string) {
-  // Phase 1: all spans expanded by default. Expand/collapse in future iteration.
+function toggleExpand(spanId: string) {
+  if (collapsedParents.value.has(spanId)) {
+    collapsedParents.value.delete(spanId)
+  } else {
+    collapsedParents.value.add(spanId)
+  }
+  // 触发 computed 重新计算
+  collapsedParents.value = new Set(collapsedParents.value)
 }
 
 function barStyle(span: DisplaySpan) {
@@ -160,8 +204,10 @@ function formatTokens(tokens: number): string {
 .col-name { flex: 0 0 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-timeline { flex: 1; position: relative; height: 20px; }
 .col-duration { flex: 0 0 80px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.col-children { flex: 0 0 70px; text-align: right; font-size: 11px; color: var(--text-muted); }
 .col-tokens { flex: 0 0 100px; text-align: right; }
 .toggle-icon { cursor: pointer; margin-right: 4px; font-size: 10px; color: var(--text-muted); }
+.toggle-placeholder { display: inline-block; width: 14px; }
 .kind-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .dot-server { background: var(--chart-server); }
 .dot-client { background: var(--chart-client); }
