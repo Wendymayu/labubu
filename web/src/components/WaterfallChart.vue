@@ -65,7 +65,7 @@ defineEmits<{
 
 // --- Collapse state ---
 const collapsedParents = ref<Set<string>>(new Set())
-const lastSpansRef = ref<SpanDetail[] | null>(null)
+const previousSpans = ref<SpanDetail[] | null>(null)
 const DEFAULT_EXPAND_DEPTH = 1
 
 interface DisplaySpan extends SpanDetail {
@@ -77,32 +77,7 @@ interface DisplaySpan extends SpanDetail {
 }
 
 const displaySpans = computed(() => {
-  // --- 首次加载：初始化折叠状态 ---
-  if (lastSpansRef.value !== props.spans) {
-    collapsedParents.value = new Set()
-    // 先构建 childrenMap 确定哪些有子节点
-    const initChildrenMap = new Map<string, SpanDetail[]>()
-    for (const span of props.spans) {
-      const pk = span.parent_span_id || '__root__'
-      if (!initChildrenMap.has(pk)) initChildrenMap.set(pk, [])
-      initChildrenMap.get(pk)!.push(span)
-    }
-    // 折叠 depth >= DEFAULT_EXPAND_DEPTH 且有子节点的 span
-    function markCollapsed(parentId: string, depth: number) {
-      const children = initChildrenMap.get(parentId) || []
-      for (const span of children) {
-        const hasKids = initChildrenMap.has(span.span_id) && (initChildrenMap.get(span.span_id)?.length ?? 0) > 0
-        if (hasKids && depth >= DEFAULT_EXPAND_DEPTH) {
-          collapsedParents.value.add(span.span_id)
-        }
-        markCollapsed(span.span_id, depth + 1)
-      }
-    }
-    markCollapsed('__root__', 0)
-    lastSpansRef.value = props.spans
-  }
-
-  // --- 构建 childrenMap ---
+  // --- Build childrenMap and childCountMap (once, reused below) ---
   const childrenMap = new Map<string, SpanDetail[]>()
   const childCountMap = new Map<string, number>()
   for (const span of props.spans) {
@@ -112,12 +87,29 @@ const displaySpans = computed(() => {
     childCountMap.set(parentKey, (childCountMap.get(parentKey) || 0) + 1)
   }
 
-  // --- walk ---
+  // --- First load: init collapsed state ---
+  if (previousSpans.value !== props.spans) {
+    collapsedParents.value = new Set()
+    function markCollapsed(parentId: string, depth: number) {
+      const children = childrenMap.get(parentId) || []
+      for (const span of children) {
+        const hasKids = (childrenMap.get(span.span_id)?.length ?? 0) > 0
+        if (hasKids && depth >= DEFAULT_EXPAND_DEPTH) {
+          collapsedParents.value.add(span.span_id)
+        }
+        markCollapsed(span.span_id, depth + 1)
+      }
+    }
+    markCollapsed('__root__', 0)
+    previousSpans.value = props.spans
+  }
+
+  // --- Walk tree, honor collapsed state ---
   const result: DisplaySpan[] = []
   function walk(parentId: string, depth: number) {
     const children = childrenMap.get(parentId) || []
     for (const span of children) {
-      const hasChildren = childrenMap.has(span.span_id) && (childrenMap.get(span.span_id)?.length ?? 0) > 0
+      const hasChildren = (childrenMap.get(span.span_id)?.length ?? 0) > 0
       const childCount = childCountMap.get(span.span_id) || 0
       const isCollapsed = collapsedParents.value.has(span.span_id)
       result.push({
@@ -143,8 +135,6 @@ function toggleExpand(spanId: string) {
   } else {
     collapsedParents.value.add(spanId)
   }
-  // 触发 computed 重新计算
-  collapsedParents.value = new Set(collapsedParents.value)
 }
 
 function barStyle(span: DisplaySpan) {
