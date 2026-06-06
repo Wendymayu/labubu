@@ -21,7 +21,7 @@
 | 13 | 观测 JiuwenClaw 页面会话任务状态详情 | 📋 计划中 | — | |
 | 14 | Trace 支持持久化，只保留一天或 1 万条，支持 YAML 配置 | 📋 计划中 | — | |
 | 15 | Metric 默认保存一天数据，支持配置 | 📋 计划中 | — | |
-| 16 | **OTLP Logs 接收与展示** | 📋 计划中 | — | OTLP `/v1/logs` 端点 + log 存储 + TraceDetail 关联展示；解决 Trace 缺 I/O 内容导致无法内容级诊断的问题 |
+| 16 | **OTLP Logs 接收与展示** | ✅ 已完成 | 2026-06-06 | OTLP `/v1/logs` gRPC+HTTP 端点 + log 存储(memstore/chDB) + LogList 页面 + TraceDetail 日志面板 |
 
 ## 状态说明
 
