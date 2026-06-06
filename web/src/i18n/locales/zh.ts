@@ -36,4 +36,18 @@ export default {
     lastActive: '最后活跃',
     noSessions: '未找到会话数据。',
   },
+  sessionDetail: {
+    contextWindow: '上下文窗口',
+    noContextData: '此会话无上下文窗口数据',
+    max: '峰值',
+    avg: '均值',
+    component: {
+      system: '系统提示词',
+      user: '用户消息',
+      assistant: '助手历史',
+      tool: '工具结果',
+      tool_definitions: '工具定义',
+      skill: '技能',
+    },
+  },
 }

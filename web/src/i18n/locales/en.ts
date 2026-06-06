@@ -36,4 +36,18 @@ export default {
     lastActive: 'Last Active',
     noSessions: 'No sessions found.',
   },
+  sessionDetail: {
+    contextWindow: 'Context Window',
+    noContextData: 'No context window data for this session',
+    max: 'max',
+    avg: 'avg',
+    component: {
+      system: 'System',
+      user: 'User',
+      assistant: 'Assistant',
+      tool: 'Tool Results',
+      tool_definitions: 'Tool Definitions',
+      skill: 'Skill',
+    },
+  },
 }
