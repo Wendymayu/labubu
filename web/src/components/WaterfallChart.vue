@@ -28,6 +28,17 @@
         <button class="action-btn" @click="collapseAll" title="Collapse All">⇥</button>
       </div>
     </div>
+    <div class="waterfall-stats">
+      <span>共 {{ statsCounts.total }} spans</span>
+      <span class="stats-sep">·</span>
+      <span :class="['stats-link', { active: activeFilters.has('llm') }]" @click="toggleFilter('llm')">LLM {{ statsCounts.llm }}</span>
+      <span class="stats-sep">·</span>
+      <span :class="['stats-link', { active: activeFilters.has('error') }]" @click="toggleFilter('error')">Error {{ statsCounts.error }}</span>
+      <span class="stats-sep">·</span>
+      <span :class="['stats-link', { active: activeFilters.has('tool') }]" @click="toggleFilter('tool')">Tool {{ statsCounts.tool }}</span>
+      <span class="stats-sep">·</span>
+      <span>最长 span: {{ statsCounts.maxDurationName }} ({{ formatDuration(statsCounts.maxDurationMs) }})</span>
+    </div>
     <div class="waterfall-header">
       <span class="col-name">Name</span>
       <span class="col-timeline">Timeline</span>
@@ -39,7 +50,14 @@
     <div
       v-for="span in displaySpans"
       :key="span.span_id"
-      :class="['waterfall-row', { selected: selectedSpanId === span.span_id }]"
+      :class="[
+        'waterfall-row',
+        {
+          selected: selectedSpanId === span.span_id,
+          'search-match': span._searchMatch && searchQuery,
+          'filter-dimmed': activeFilters.size > 0 && !span._filterMatch,
+        }
+      ]"
       @click="$emit('select-span', span)"
     >
       <span class="col-name" :style="{ paddingLeft: (span._depth * 20 + 8) + 'px' }">
@@ -50,7 +68,7 @@
         >{{ span._expanded ? '▼' : '▶' }}</span>
         <span v-else class="toggle-icon toggle-placeholder"></span>
         <span :class="['kind-dot', kindDotClass(span.kind)]"></span>
-        {{ span.name }}
+        <span :class="{ 'match-text': span._searchMatch && searchQuery }">{{ span.name }}</span>
         <span v-if="selectedSpanId === span.span_id" class="selected-marker">◀</span>
       </span>
 
@@ -75,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { SpanDetail } from '../api/client'
 
 const props = defineProps<{
@@ -225,6 +243,24 @@ const matchCount = computed(() => {
   return count
 })
 
+const statsCounts = computed(() => {
+  let llm = 0, error = 0, tool = 0
+  let maxDurationSpan: SpanDetail | null = null
+  for (const span of props.spans) {
+    if (span.total_tokens && span.total_tokens > 0) llm++
+    if (span.status === 'ERROR') error++
+    if (span.kind === 'CLIENT' && span.name.toLowerCase().includes('tool')) tool++
+    if (!maxDurationSpan || span.duration_ms > maxDurationSpan.duration_ms) {
+      maxDurationSpan = span
+    }
+  }
+  return {
+    llm, error, tool, total: props.spans.length,
+    maxDurationName: maxDurationSpan?.name || '-',
+    maxDurationMs: maxDurationSpan?.duration_ms || 0,
+  }
+})
+
 function toggleExpand(spanId: string) {
   if (collapsedParents.value.has(spanId)) {
     collapsedParents.value.delete(spanId)
@@ -232,6 +268,34 @@ function toggleExpand(spanId: string) {
     collapsedParents.value.add(spanId)
   }
 }
+
+function expandAncestors(spanId: string) {
+  // Build parent map from props.spans
+  const parentMap = new Map<string, string>()
+  for (const span of props.spans) {
+    if (span.parent_span_id) {
+      parentMap.set(span.span_id, span.parent_span_id)
+    }
+  }
+  // Walk up from spanId to root, expanding all ancestors
+  let current: string | undefined = spanId
+  while (current && parentMap.has(current)) {
+    const parentId: string = parentMap.get(current)!
+    collapsedParents.value.delete(parentId)
+    current = parentId
+  }
+  // Trigger reactive update
+  collapsedParents.value = new Set(collapsedParents.value)
+}
+
+watch(searchQuery, (newVal) => {
+  if (!newVal) return
+  for (const span of props.spans) {
+    if (matchesSearch(span)) {
+      expandAncestors(span.span_id)
+    }
+  }
+})
 
 function expandAll() {
   collapsedParents.value = new Set()
