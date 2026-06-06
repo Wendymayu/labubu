@@ -234,3 +234,53 @@ export async function listSessions(query: SessionQuery): Promise<SessionListResp
 export async function getSession(sessionId: string): Promise<SessionDetail> {
   return get<SessionDetail>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}`)
 }
+
+// --- Log types and API ---
+
+export interface LogRecord {
+  trace_id_hex: string
+  span_id_hex: string
+  timestamp: number
+  severity: string
+  event_name: string
+  body: string
+  attributes: Record<string, string>
+}
+
+export interface LogQuery {
+  page?: number
+  page_size?: number
+  severity?: string
+  event_name?: string
+  q?: string
+  trace_id?: string
+  start?: number
+  end?: number
+}
+
+export interface LogListResponse {
+  logs: LogRecord[]
+  pagination: Pagination
+}
+
+export async function listLogs(query: LogQuery): Promise<LogListResponse> {
+  return get<LogListResponse>(`${BASE_URL}/logs`, {
+    page: query.page,
+    page_size: query.page_size,
+    severity: query.severity,
+    event_name: query.event_name,
+    q: query.q,
+    trace_id: query.trace_id,
+    start: query.start,
+    end: query.end,
+  })
+}
+
+export async function getLogsByTrace(traceIdHex: string): Promise<{ logs: LogRecord[] }> {
+  return get<{ logs: LogRecord[] }>(`${BASE_URL}/logs/${traceIdHex}`)
+}
+
+export async function getLogEventNames(): Promise<string[]> {
+  const data = await get<{ event_names: string[] }>(`${BASE_URL}/log-event-names`)
+  return data.event_names || []
+}
