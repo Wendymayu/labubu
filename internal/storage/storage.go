@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -209,6 +210,18 @@ type Store interface {
 	// Returns the number of deleted traces and spans.
 	Purge(ctx context.Context, maxAge time.Duration, maxCount int) (deletedTraces int, deletedSpans int, err error)
 
+	// InsertLogs writes a batch of log records.
+	InsertLogs(ctx context.Context, logs []LogRecord) error
+
+	// ListLogs returns a paginated list of log records matching the query.
+	ListLogs(ctx context.Context, q LogQuery) (*LogListResult, error)
+
+	// GetLogsByTrace returns all log records for a given trace, ordered by timestamp.
+	GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error)
+
+	// GetLogEventNames returns distinct event_name values for the filter dropdown.
+	GetLogEventNames(ctx context.Context) ([]string, error)
+
 	// Close releases resources (e.g., chDB session).
 	Close() error
 }
@@ -263,6 +276,48 @@ func StatusCodeToString(code int32) string {
 	}
 }
 
+// --- Log types ---
+
+// LogRecord represents a single OTLP log record stored in the logs table.
+type LogRecord struct {
+	TraceID    [16]byte
+	SpanID     [8]byte
+	Timestamp  uint64
+	Severity   string // TRACE, DEBUG, INFO, WARN, ERROR, FATAL
+	EventName  string // extracted from attributes["event.name"]
+	Body       string // JSON string, preserved as-is
+	Attributes map[string]string
+}
+
+// LogQuery defines filters for listing logs.
+type LogQuery struct {
+	Page      int
+	PageSize  int
+	Severity  string   // "" = all
+	EventName string   // "" = all
+	Query     string   // full-text search on body
+	TraceID   [16]byte // zero value = no trace filter
+	StartTime uint64
+	EndTime   uint64
+}
+
+// LogListItem is the API response item for a log record.
+type LogListItem struct {
+	TraceIDHex  string            `json:"trace_id_hex"`
+	SpanIDHex   string            `json:"span_id_hex"`
+	Timestamp   uint64            `json:"timestamp"`
+	Severity    string            `json:"severity"`
+	EventName   string            `json:"event_name"`
+	Body        string            `json:"body"`
+	Attributes  map[string]string `json:"attributes"`
+}
+
+// LogListResult holds a page of log records.
+type LogListResult struct {
+	Logs       []LogListItem `json:"logs"`
+	Pagination Pagination    `json:"pagination"`
+}
+
 // parseJSONArray parses a JSON array string into []interface{}.
 func parseJSONArray(raw string) []interface{} {
 	if raw == "" || raw == "[]" {
@@ -273,4 +328,25 @@ func parseJSONArray(raw string) []interface{} {
 		return make([]interface{}, 0)
 	}
 	return arr
+}
+
+// SeverityToNumber converts a severity string to a numeric level for comparison.
+// Higher number = more severe.
+func SeverityToNumber(s string) int {
+	switch strings.ToUpper(s) {
+	case "TRACE":
+		return 0
+	case "DEBUG":
+		return 1
+	case "INFO":
+		return 2
+	case "WARN":
+		return 3
+	case "ERROR":
+		return 4
+	case "FATAL":
+		return 5
+	default:
+		return -1
+	}
 }
