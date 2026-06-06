@@ -42,28 +42,28 @@
 
       <!-- Context Window Chart -->
       <div class="ctx-window-section">
-        <h3 class="ctx-heading">Context Window</h3>
+        <h3 class="ctx-heading">{{ t('sessionDetail.contextWindow') }}</h3>
 
         <!-- Stat cards -->
         <div v-if="ctxSeries.length > 0 && !ctxLoading" class="ctx-stats">
           <div v-for="s in ctxSeries" :key="s.component" class="ctx-stat-card">
             <span class="ctx-stat-label" :style="{ color: s.color }">{{ s.label }}</span>
             <span class="ctx-stat-values">
-              max <strong>{{ formatTokens(s.maxTokens) }}</strong>
-              &nbsp;avg <strong>{{ formatTokens(s.avgTokens) }}</strong>
+              {{ t('sessionDetail.max') }} <strong>{{ formatTokens(s.maxTokens) }}</strong>
+              &nbsp;{{ t('sessionDetail.avg') }} <strong>{{ formatTokens(s.avgTokens) }}</strong>
             </span>
           </div>
         </div>
 
         <!-- Loading / Error / Empty states -->
-        <div v-if="ctxLoading" class="ctx-state">Loading...</div>
+        <div v-if="ctxLoading" class="ctx-state">{{ t('common.loading') }}</div>
         <div v-else-if="ctxError" class="ctx-state ctx-error">{{ ctxError }}</div>
-        <div v-else-if="ctxSeries.length === 0" class="ctx-state">No context window data for this session</div>
+        <div v-else-if="ctxSeries.length === 0" class="ctx-state">{{ t('sessionDetail.noContextData') }}</div>
 
         <!-- Chart canvas -->
         <div v-show="ctxSeries.length > 0 && !ctxLoading && !ctxError" class="ctx-chart-body">
           <canvas ref="ctxCanvasRef"></canvas>
-          <div ref="ctxTooltipRef" class="ctx-tooltip chart-tooltip"></div>
+          <div ref="ctxTooltipRef" class="ctx-tooltip"></div>
         </div>
       </div>
 
@@ -532,4 +532,40 @@ onUnmounted(() => {
 .ctx-tooltip::-webkit-scrollbar { width: 4px; }
 .ctx-tooltip::-webkit-scrollbar-track { background: transparent; }
 .ctx-tooltip::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
+
+.ctx-tooltip .tt-time {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-group);
+}
+.ctx-tooltip .tt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ctx-tooltip .tt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.ctx-tooltip .tt-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.ctx-tooltip .tt-label {
+  color: var(--text-primary);
+  line-height: 1.5;
+  word-break: break-all;
+}
+.ctx-tooltip .tt-value {
+  color: var(--accent-blue);
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-left: auto;
+}
 </style>
