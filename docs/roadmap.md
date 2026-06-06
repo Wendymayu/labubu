@@ -1,6 +1,6 @@
 # Labubu 项目特性计划
 
-> 最后更新：2026-06-06
+> 最后更新：2026-06-07
 
 ## 特性总览
 
@@ -22,6 +22,11 @@
 | 14 | Trace 支持持久化，只保留一天或 1 万条，支持 YAML 配置 | 📋 计划中 | — | |
 | 15 | Metric 默认保存一天数据，支持配置 | 📋 计划中 | — | |
 | 16 | **OTLP Logs 接收与展示** | ✅ 已完成 | 2026-06-06 | OTLP `/v1/logs` gRPC+HTTP 端点 + log 存储(memstore/chDB) + LogList 页面 + TraceDetail 日志面板 |
+| 17 | **AI 成本追踪** | 📋 计划中 | — | 模型单价配置 + 按 Trace/Session/模型维度自动计算费用 + Cost Dashboard |
+| 18 | **Agent 任务成功率分析** | 📋 计划中 | — | 任务完成率、工具调用成功率、重试次数、loop 深度聚合，Session 级别 Agent 运行稳定性指标 |
+| 19 | **Trace 对比（Diff View）** | 📋 计划中 | — | 选中两条 Trace 并排对比：Span 树、token 用量、tool call 路径差异 |
+| 20 | **实时 Trace 流（Live Tail）** | 📋 计划中 | — | WebSocket 推送新 Trace 实时展示，自动滚动，支持过滤，观察运行中的 Agent |
+| 21 | **告警规则** | 📋 计划中 | — | 阈值告警（token/错误率/延迟），Webhook 通知（钉钉/飞书/Slack） |
 
 ## 状态说明
 
