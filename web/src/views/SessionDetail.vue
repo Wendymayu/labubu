@@ -40,6 +40,33 @@
         </div>
       </div>
 
+      <!-- Context Window Chart -->
+      <div class="ctx-window-section">
+        <h3 class="ctx-heading">Context Window</h3>
+
+        <!-- Stat cards -->
+        <div v-if="ctxSeries.length > 0 && !ctxLoading" class="ctx-stats">
+          <div v-for="s in ctxSeries" :key="s.component" class="ctx-stat-card">
+            <span class="ctx-stat-label" :style="{ color: s.color }">{{ s.label }}</span>
+            <span class="ctx-stat-values">
+              max <strong>{{ formatTokens(s.maxTokens) }}</strong>
+              &nbsp;avg <strong>{{ formatTokens(s.avgTokens) }}</strong>
+            </span>
+          </div>
+        </div>
+
+        <!-- Loading / Error / Empty states -->
+        <div v-if="ctxLoading" class="ctx-state">Loading...</div>
+        <div v-else-if="ctxError" class="ctx-state ctx-error">{{ ctxError }}</div>
+        <div v-else-if="ctxSeries.length === 0" class="ctx-state">No context window data for this session</div>
+
+        <!-- Chart canvas -->
+        <div v-show="ctxSeries.length > 0 && !ctxLoading && !ctxError" class="ctx-chart-body">
+          <canvas ref="ctxCanvasRef"></canvas>
+          <div ref="ctxTooltipRef" class="ctx-tooltip chart-tooltip"></div>
+        </div>
+      </div>
+
       <h3 class="turns-heading">Turns ({{ detail.traces.length }})</h3>
 
       <div class="turns-list">
@@ -168,4 +195,81 @@ onMounted(() => {
 .turn-tokens { color: #c4b5fd; font-weight: 600; min-width: 60px; text-align: right; }
 .turn-service { color: #94a3b8; font-size: 13px; min-width: 100px; }
 .turn-time { color: #64748b; font-size: 13px; min-width: 80px; text-align: right; }
+
+/* Context window chart section */
+.ctx-window-section {
+  margin-bottom: 24px;
+}
+.ctx-heading {
+  font-size: 16px;
+  margin-bottom: 12px;
+  color: #e2e8f0;
+}
+.ctx-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ctx-stat-card {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  background: #1e293b;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  min-width: 140px;
+}
+.ctx-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.ctx-stat-values {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.ctx-stat-values strong {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+.ctx-state {
+  text-align: center;
+  padding: 40px 0;
+  color: #94a3b8;
+  font-size: 14px;
+}
+.ctx-error {
+  color: #f87171;
+}
+.ctx-chart-body {
+  height: 300px;
+  position: relative;
+}
+.ctx-chart-body canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Tooltip (mirrors PanelChart's .chart-tooltip for use outside scoped styles) */
+.ctx-tooltip {
+  position: fixed;
+  pointer-events: auto;
+  opacity: 0;
+  z-index: 9999;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-group);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 160px;
+  max-width: 280px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 12px;
+  box-shadow: 0 4px 16px var(--shadow-tooltip);
+  transition: opacity 0.15s;
+}
+.ctx-tooltip::-webkit-scrollbar { width: 4px; }
+.ctx-tooltip::-webkit-scrollbar-track { background: transparent; }
+.ctx-tooltip::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 </style>
