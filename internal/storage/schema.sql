@@ -51,3 +51,15 @@ CREATE TABLE IF NOT EXISTS spans (
 )
 ENGINE = MergeTree
 ORDER BY (trace_id, start_time_ms);
+
+CREATE TABLE IF NOT EXISTS logs (
+    trace_id    FixedString(16),
+    span_id     FixedString(8),
+    timestamp   UInt64,
+    severity    String,
+    event_name  String,
+    body        String,
+    attributes  Map(String, String)
+)
+ENGINE = MergeTree
+ORDER BY (trace_id, timestamp);

@@ -280,6 +280,99 @@ func buildSessionTracesSQL(sessionID string) string {
 	)
 }
 
+// buildInsertLogSQL builds an INSERT statement for a single log record.
+func buildInsertLogSQL(l LogRecord) string {
+	return fmt.Sprintf(
+		`INSERT INTO logs (trace_id, span_id, timestamp, severity, event_name, body, attributes) VALUES (
+			unhex('%x'), unhex('%x'), %d, '%s', '%s', '%s', %s
+		)`,
+		l.TraceID, l.SpanID, l.Timestamp,
+		escapeSQL(l.Severity), escapeSQL(l.EventName),
+		escapeSQL(l.Body), mapToSQL(l.Attributes),
+	)
+}
+
+// buildLogCountSQL builds a count query for logs matching the filters.
+func buildLogCountSQL(q LogQuery) string {
+	return "SELECT count(*) AS count FROM logs" + buildLogWhereClause(q)
+}
+
+// buildLogListSQL builds a list query for logs with filters, ordering, and pagination.
+func buildLogListSQL(q LogQuery) string {
+	offset := (q.Page - 1) * q.PageSize
+	return fmt.Sprintf(
+		`SELECT
+			hex(trace_id) AS trace_id_hex,
+			hex(span_id) AS span_id_hex,
+			timestamp, severity, event_name, body, attributes
+		FROM logs%s
+		ORDER BY timestamp DESC
+		LIMIT %d OFFSET %d`,
+		buildLogWhereClause(q), q.PageSize, offset,
+	)
+}
+
+// buildLogWhereClause builds the WHERE clause for log queries.
+func buildLogWhereClause(q LogQuery) string {
+	var clauses []string
+
+	if q.Severity != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"severity = '%s'", escapeSQL(q.Severity),
+		))
+	}
+	if q.EventName != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"event_name = '%s'", escapeSQL(q.EventName),
+		))
+	}
+	if q.Query != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"body LIKE '%%%s%%'", escapeSQL(q.Query),
+		))
+	}
+	var zeroTrace [16]byte
+	if q.TraceID != zeroTrace {
+		clauses = append(clauses, fmt.Sprintf(
+			"trace_id = unhex('%x')", q.TraceID,
+		))
+	}
+	if q.StartTime > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"timestamp >= %d", q.StartTime,
+		))
+	}
+	if q.EndTime > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"timestamp <= %d", q.EndTime,
+		))
+	}
+
+	if len(clauses) == 0 {
+		return ""
+	}
+	return " WHERE " + strings.Join(clauses, " AND ")
+}
+
+// buildGetLogsByTraceSQL builds a query to fetch all logs for a trace.
+func buildGetLogsByTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT
+			hex(trace_id) AS trace_id_hex,
+			hex(span_id) AS span_id_hex,
+			timestamp, severity, event_name, body, attributes
+		FROM logs
+		WHERE trace_id = unhex('%x')
+		ORDER BY timestamp ASC`,
+		traceID,
+	)
+}
+
+// buildLogEventNamesSQL builds a query to fetch distinct event_name values.
+func buildLogEventNamesSQL() string {
+	return `SELECT DISTINCT event_name FROM logs WHERE event_name != '' ORDER BY event_name`
+}
+
 // --- SQL helpers ---
 
 // escapeSQL escapes single quotes for SQL string literals.

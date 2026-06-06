@@ -143,6 +143,77 @@ func (s *chDBStore) InsertSpans(ctx context.Context, resource ResourceInfo, scop
 	return nil
 }
 
+// InsertLogs writes log records to the logs table.
+func (s *chDBStore) InsertLogs(ctx context.Context, logs []LogRecord) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	for _, l := range logs {
+		sql := buildInsertLogSQL(l)
+		if err := s.execSQL(sql); err != nil {
+			return fmt.Errorf("insert log: %w", err)
+		}
+	}
+	return nil
+}
+
+// ListLogs returns a paginated list of log records.
+func (s *chDBStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, error) {
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 || q.PageSize > 100 {
+		q.PageSize = 20
+	}
+
+	countSQL := buildLogCountSQL(q)
+	countResult, err := s.querySQL(countSQL + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("count logs: %w", err)
+	}
+	total := parseCount(countResult)
+
+	dataSQL := buildLogListSQL(q)
+	dataResult, err := s.querySQL(dataSQL + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("list logs: %w", err)
+	}
+
+	logs, err := parseLogListItems(dataResult)
+	if err != nil {
+		return nil, fmt.Errorf("parse log list: %w", err)
+	}
+
+	return &LogListResult{
+		Logs: logs,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+// GetLogsByTrace returns all log records for a given trace.
+func (s *chDBStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error) {
+	sql := buildGetLogsByTraceSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get logs by trace: %w", err)
+	}
+	return parseLogListItems(result)
+}
+
+// GetLogEventNames returns distinct event_name values.
+func (s *chDBStore) GetLogEventNames(ctx context.Context) ([]string, error) {
+	sql := buildLogEventNamesSQL() + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get log event names: %w", err)
+	}
+	return parseLogEventNames(result)
+}
+
 // ListTraces returns a paginated list of trace summaries.
 func (s *chDBStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResult, error) {
 	if q.Page < 1 {
@@ -340,6 +411,12 @@ func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount in
 		}
 	}
 
+	// Phase 3: delete orphaned log records.
+	if err := s.execSQL("ALTER TABLE logs DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces)"); err != nil {
+		// Non-fatal: log cleanup failure shouldn't block trace purge.
+		// The logs table may not exist on first run before any logs are ingested.
+	}
+
 	// Estimate deletions (MergeTree mutations are async, exact counts unavailable).
 	traceCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
 	spanCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM spans FORMAT JSONEachRow")
@@ -359,6 +436,58 @@ func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount in
 }
 
 // JSON parsing helpers
+
+func parseLogListItems(result string) ([]LogListItem, error) {
+	lines := splitLines(result)
+	items := make([]LogListItem, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			TraceIDHex string            `json:"trace_id_hex"`
+			SpanIDHex  string            `json:"span_id_hex"`
+			Timestamp  uint64            `json:"timestamp"`
+			Severity   string            `json:"severity"`
+			EventName  string            `json:"event_name"`
+			Body       string            `json:"body"`
+			Attributes map[string]string `json:"attributes"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			return nil, fmt.Errorf("parse log item: %w (line: %s)", err, line)
+		}
+		items = append(items, LogListItem{
+			TraceIDHex: raw.TraceIDHex,
+			SpanIDHex:  raw.SpanIDHex,
+			Timestamp:  raw.Timestamp,
+			Severity:   raw.Severity,
+			EventName:  raw.EventName,
+			Body:       raw.Body,
+			Attributes: raw.Attributes,
+		})
+	}
+	return items, nil
+}
+
+func parseLogEventNames(result string) ([]string, error) {
+	lines := splitLines(result)
+	names := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			EventName string `json:"event_name"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		if row.EventName != "" {
+			names = append(names, row.EventName)
+		}
+	}
+	return names, nil
+}
 
 func parseCount(result string) int {
 	if result == "" {

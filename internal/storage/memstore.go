@@ -8,6 +8,7 @@ package storage
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +19,7 @@ type memStore struct {
 	spans    []Span
 	traces   map[[16]byte]Trace
 	services map[string]bool
+	logs     []LogRecord
 }
 
 // NewChDBStore returns an in-memory Store when chDB is not available.
@@ -28,6 +30,7 @@ func NewChDBStore(dataDir string) (Store, error) {
 		spans:    make([]Span, 0),
 		traces:   make(map[[16]byte]Trace),
 		services: make(map[string]bool),
+		logs:     make([]LogRecord, 0),
 	}, nil
 }
 
@@ -83,6 +86,135 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 	}
 
 	return nil
+}
+
+func (m *memStore) InsertLogs(ctx context.Context, logs []LogRecord) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logs = append(m.logs, logs...)
+	return nil
+}
+
+func (m *memStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Filter.
+	filtered := make([]LogRecord, 0, len(m.logs))
+	for _, l := range m.logs {
+		if q.Severity != "" && !strings.EqualFold(l.Severity, q.Severity) {
+			continue
+		}
+		if q.EventName != "" && l.EventName != q.EventName {
+			continue
+		}
+		if q.Query != "" && !containsSubstring(l.Body, q.Query) {
+			continue
+		}
+		var zeroTrace [16]byte
+		if q.TraceID != zeroTrace && l.TraceID != q.TraceID {
+			continue
+		}
+		if q.StartTime > 0 && l.Timestamp < q.StartTime {
+			continue
+		}
+		if q.EndTime > 0 && l.Timestamp > q.EndTime {
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+
+	// Sort by timestamp descending.
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Timestamp > filtered[j].Timestamp
+	})
+
+	total := len(filtered)
+
+	// Paginate.
+	start := (q.Page - 1) * q.PageSize
+	if start > total {
+		start = total
+	}
+	end := start + q.PageSize
+	if end > total {
+		end = total
+	}
+	page := filtered[start:end]
+	if page == nil {
+		page = make([]LogRecord, 0)
+	}
+
+	items := make([]LogListItem, len(page))
+	for i, l := range page {
+		items[i] = LogListItem{
+			TraceIDHex: TraceIDToHex(l.TraceID),
+			SpanIDHex:  SpanIDToHex(l.SpanID),
+			Timestamp:  l.Timestamp,
+			Severity:   l.Severity,
+			EventName:  l.EventName,
+			Body:       l.Body,
+			Attributes: l.Attributes,
+		}
+	}
+
+	return &LogListResult{
+		Logs: items,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+func (m *memStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var items []LogListItem
+	for _, l := range m.logs {
+		if l.TraceID == traceID {
+			items = append(items, LogListItem{
+				TraceIDHex: TraceIDToHex(l.TraceID),
+				SpanIDHex:  SpanIDToHex(l.SpanID),
+				Timestamp:  l.Timestamp,
+				Severity:   l.Severity,
+				EventName:  l.EventName,
+				Body:       l.Body,
+				Attributes: l.Attributes,
+			})
+		}
+	}
+
+	// Sort by timestamp ascending.
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Timestamp < items[j].Timestamp
+	})
+
+	return items, nil
+}
+
+func (m *memStore) GetLogEventNames(ctx context.Context) ([]string, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	for _, l := range m.logs {
+		if l.EventName != "" && !seen[l.EventName] {
+			seen[l.EventName] = true
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (m *memStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResult, error) {
@@ -522,6 +654,15 @@ func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int
 		}
 	}
 	m.spans = newSpans
+
+	// Delete logs belonging to deleted traces.
+	newLogs := make([]LogRecord, 0, len(m.logs))
+	for _, l := range m.logs {
+		if keepTraces[l.TraceID] {
+			newLogs = append(newLogs, l)
+		}
+	}
+	m.logs = newLogs
 
 	return deletedTraces, deletedSpans, nil
 }

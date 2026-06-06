@@ -12,6 +12,7 @@ export default {
     traces: '链路追踪',
     sessions: '会话',
     metrics: '指标监控',
+    logs: '日志',
   },
   traceList: {
     searchPlaceholder: '搜索链路...',
@@ -49,5 +50,18 @@ export default {
       tool_definitions: '工具定义',
       skill: '技能',
     },
+  },
+  logList: {
+    searchPlaceholder: '搜索日志...',
+    allSeverity: '所有级别',
+    allEvents: '所有事件',
+    timestamp: '时间',
+    severity: '级别',
+    event: '事件',
+    body: '正文',
+    trace: '链路',
+    noLogs: '未找到日志。',
+    filteredBySpan: '已过滤: {name}',
+    logCount: '日志 ({count})',
   },
 }

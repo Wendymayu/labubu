@@ -51,6 +51,18 @@ func (m *mockStore) Purge(ctx context.Context, maxAge time.Duration, maxCount in
 	return 0, 0, nil
 }
 
+func (m *mockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
+
+func (m *mockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.LogListResult, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]storage.LogListItem, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
+
 func (m *mockStore) Close() error { return nil }
 
 func TestPipelineIngestAndFlush(t *testing.T) {
