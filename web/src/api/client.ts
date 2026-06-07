@@ -111,6 +111,24 @@ export async function getServices(): Promise<string[]> {
   return data.services
 }
 
+export interface ExportRequest {
+  trace_ids: string[]
+  format: string
+}
+
+export async function exportTraces(traceIds: string[], format: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/traces/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trace_ids: traceIds, format } as ExportRequest),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Export failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 // --- Dashboard types and API ---
 
 export interface PanelConfig {
