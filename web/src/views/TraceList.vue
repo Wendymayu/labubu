@@ -178,6 +178,7 @@ const totalPages = computed(() => {
 })
 
 async function fetchTraces(page = 1) {
+  clearSelection()
   loading.value = true
   error.value = ''
   try {
