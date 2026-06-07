@@ -122,6 +122,11 @@ func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Format != "otlp" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "format must be 'otlp'"})
+		return
+	}
+
 	if len(req.TraceIDs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "trace_ids must not be empty"})
 		return
