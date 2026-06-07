@@ -21,12 +21,24 @@
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 
+    <!-- Batch action bar -->
+    <div v-if="selectedIds.size > 0" class="batch-bar">
+      <span class="batch-count">{{ t('traceList.selected', { count: selectedIds.size }) }}</span>
+      <button @click="downloadSelected" :disabled="exportLoading" class="btn btn-primary">
+        {{ exportLoading ? t('common.loading') : t('traceList.downloadOtlp') }}
+      </button>
+      <button @click="clearSelection" class="btn">{{ t('traceList.clearSelection') }}</button>
+    </div>
+
     <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
     <div v-else-if="error" class="error">{{ error }}</div>
     <template v-else>
       <table class="trace-table" v-if="traces.length > 0">
         <thead>
           <tr>
+            <th class="col-checkbox">
+              <input type="checkbox" :checked="selectedIds.size === traces.length && traces.length > 0" @change="toggleSelectAll" />
+            </th>
             <th>{{ t('traceList.name') }}</th>
             <th>{{ t('traceList.service') }}</th>
             <th>{{ t('traceList.duration') }}</th>
@@ -40,18 +52,20 @@
           <tr
             v-for="trace in traces"
             :key="trace.trace_id_hex"
-            @click="goToTrace(trace.trace_id_hex)"
-            class="trace-row"
+            :class="['trace-row', { 'row-selected': isSelected(trace.trace_id_hex) }]"
           >
-            <td class="cell-name">{{ trace.root_name }}</td>
-            <td>{{ trace.root_service }}</td>
-            <td>{{ formatDuration(trace.duration_ms) }}</td>
-            <td>{{ trace.span_count }}</td>
-            <td>
+            <td class="col-checkbox" @click.stop>
+              <input type="checkbox" :checked="isSelected(trace.trace_id_hex)" @change="toggleSelect(trace.trace_id_hex)" />
+            </td>
+            <td class="cell-name" @click="goToTrace(trace.trace_id_hex)">{{ trace.root_name }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ trace.root_service }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ formatDuration(trace.duration_ms) }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ trace.span_count }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">
               <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
             </td>
-            <td>{{ formatTokens(trace.total_tokens) }}</td>
-            <td class="cell-time">{{ formatTime(trace.start_time_ms) }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ formatTokens(trace.total_tokens) }}</td>
+            <td class="cell-time" @click="goToTrace(trace.trace_id_hex)">{{ formatTime(trace.start_time_ms) }}</td>
           </tr>
         </tbody>
       </table>
@@ -82,10 +96,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listTraces, getServices, type TraceListItem, type Pagination } from '../api/client'
+import { listTraces, getServices, exportTraces, type TraceListItem, type Pagination } from '../api/client'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -95,6 +109,63 @@ const pagination = ref<Pagination>({ page: 1, page_size: 20, total: 0 })
 const services = ref<string[]>([])
 const loading = ref(true)
 const error = ref('')
+
+// Batch selection state
+const selectedIds = ref<Set<string>>(new Set())
+const exportLoading = ref(false)
+
+function toggleSelect(traceId: string) {
+  const next = new Set(selectedIds.value)
+  if (next.has(traceId)) {
+    next.delete(traceId)
+  } else {
+    next.add(traceId)
+  }
+  selectedIds.value = next
+}
+
+function toggleSelectAll() {
+  if (selectedIds.value.size === traces.value.length) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(traces.value.map(t => t.trace_id_hex))
+  }
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+function isSelected(traceId: string): boolean {
+  return selectedIds.value.has(traceId)
+}
+
+function downloadBlob(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+async function downloadSelected() {
+  const ids = Array.from(selectedIds.value)
+  if (ids.length === 0) return
+
+  exportLoading.value = true
+  try {
+    const data = await exportTraces(ids, 'otlp')
+    downloadBlob(JSON.stringify(data, null, 2), 'labubu-traces-export.json')
+  } catch (e: any) {
+    alert(`${t('traceList.exportFailed')}: ${e.message}`)
+  } finally {
+    exportLoading.value = false
+  }
+}
 
 const filters = ref({
   q: '',
@@ -171,6 +242,11 @@ function statusClass(status: string): string {
   }
 }
 
+// Clear selection when page changes
+watch(() => pagination.value.page, () => {
+  clearSelection()
+})
+
 onMounted(() => {
   fetchTraces()
   fetchServices()
@@ -201,4 +277,34 @@ onMounted(() => {
 .status-error { background: var(--status-error-bg); color: var(--status-error-text); }
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
 .page-info { font-size: 14px; color: var(--text-secondary); }
+
+/* Batch selection */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-primary);
+  border-radius: 6px;
+}
+.batch-count {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.col-checkbox {
+  width: 36px;
+  text-align: center;
+}
+.col-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+}
+.row-selected {
+  background: var(--bg-surface) !important;
+}
 </style>
