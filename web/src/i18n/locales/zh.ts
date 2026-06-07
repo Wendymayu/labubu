@@ -25,6 +25,10 @@ export default {
     tokens: 'Token数',
     time: '时间',
     noTraces: '未找到链路数据。',
+    selected: '已选 {count} 条',
+    downloadOtlp: '下载 OTLP',
+    clearSelection: '取消选择',
+    exportFailed: '导出失败',
   },
   sessionList: {
     searchPlaceholder: '搜索会话...',

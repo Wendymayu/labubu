@@ -25,6 +25,10 @@ export default {
     tokens: 'Tokens',
     time: 'Time',
     noTraces: 'No traces found.',
+    selected: '{count} selected',
+    downloadOtlp: 'Download OTLP',
+    clearSelection: 'Clear selection',
+    exportFailed: 'Export failed',
   },
   sessionList: {
     searchPlaceholder: 'Search sessions...',
