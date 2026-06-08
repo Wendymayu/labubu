@@ -90,7 +90,7 @@ func buildTraceListSQL(q TraceQuery) string {
 			resource_attributes['service.name'] AS root_service,
 			start_time_ms, duration_ms, span_count,
 			toString(status_code) AS status,
-			total_tokens
+			total_tokens, cost, cost_currency
 		FROM traces%s
 		ORDER BY start_time_ms DESC
 		LIMIT %d OFFSET %d`,
@@ -179,7 +179,8 @@ func buildGetTraceMetaSQL(traceID [16]byte) string {
 			resource_schema_url,
 			scope_name,
 			scope_version,
-			scope_attributes
+			scope_attributes,
+			cost, cost_currency
 		FROM traces
 		WHERE trace_id = unhex('%x')
 		LIMIT 1`,
@@ -228,6 +229,8 @@ func buildSessionListSQL(q SessionQuery) string {
 			session_id,
 			count() AS trace_count,
 			sum(total_tokens) AS total_tokens,
+			sum(cost) AS cost,
+			any(cost_currency) AS cost_currency,
 			sum(duration_ms) AS total_duration_ms,
 			max(duration_ms) AS max_duration_ms,
 			round(avg(duration_ms), 1) AS avg_duration_ms,
@@ -250,6 +253,8 @@ func buildSessionSummarySQL(sessionID string) string {
 			session_id,
 			count() AS trace_count,
 			sum(total_tokens) AS total_tokens,
+			sum(cost) AS cost,
+			any(cost_currency) AS cost_currency,
 			sum(duration_ms) AS total_duration_ms,
 			max(duration_ms) AS max_duration_ms,
 			round(avg(duration_ms), 1) AS avg_duration_ms,
@@ -272,7 +277,7 @@ func buildSessionTracesSQL(sessionID string) string {
 			resource_attributes['service.name'] AS root_service,
 			start_time_ms, duration_ms, span_count,
 			toString(status_code) AS status,
-			total_tokens
+			total_tokens, cost, cost_currency
 		FROM traces
 		WHERE session_id = '%s'
 		ORDER BY start_time_ms ASC`,
@@ -406,6 +411,40 @@ func mapToSQL(m map[string]string) string {
 		pairs = append(pairs, fmt.Sprintf("'%s': '%s'", escapeSQL(k), escapeSQL(v)))
 	}
 	return fmt.Sprintf("map(%s)", strings.Join(pairs, ", "))
+}
+
+// buildModelPricingSelectSQL builds a query to fetch all pricing entries.
+func buildModelPricingSelectSQL() string {
+	return `SELECT model_name, input_price, output_price, currency FROM model_pricing ORDER BY model_name`
+}
+
+// buildModelPricingUpsertSQL builds an INSERT to add or replace a pricing entry.
+func buildModelPricingUpsertSQL(p ModelPricing) string {
+	return fmt.Sprintf(
+		`INSERT INTO model_pricing (model_name, input_price, output_price, currency) VALUES ('%s', %f, %f, '%s')`,
+		escapeSQL(p.ModelName), p.InputPrice, p.OutputPrice, escapeSQL(p.Currency),
+	)
+}
+
+// buildModelPricingDeleteSQL builds a DELETE for a single pricing entry.
+func buildModelPricingDeleteSQL(modelName string) string {
+	return fmt.Sprintf(`DELETE FROM model_pricing WHERE model_name = '%s'`, escapeSQL(modelName))
+}
+
+// buildUpdateTraceCostSQL updates cost/cost_currency for a single trace.
+func buildUpdateTraceCostSQL(traceID [16]byte, cost float64, currency string) string {
+	return fmt.Sprintf(
+		`ALTER TABLE traces UPDATE cost = %f, cost_currency = '%s' WHERE trace_id = unhex('%x')`,
+		cost, escapeSQL(currency), traceID,
+	)
+}
+
+// buildSelectSpanTokensSQL fetches tokens + model info for all spans in a trace.
+func buildSelectSpanTokensSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT input_tokens, output_tokens, total_tokens, gen_ai_request_model
+		FROM spans WHERE trace_id = unhex('%x')`, traceID,
+	)
 }
 
 // aggregateTraces groups spans by trace_id and produces Trace aggregates.

@@ -138,6 +138,15 @@ func (s *chDBStore) InsertSpans(ctx context.Context, resource ResourceInfo, scop
 		if err := s.execSQL(sql); err != nil {
 			return fmt.Errorf("upsert trace %s: %w", trace.TraceIDHex, err)
 		}
+		// Trigger async cost calculation for each trace that has token data.
+		if trace.TotalTokens != nil && *trace.TotalTokens > 0 {
+			go func(tid [16]byte) {
+				if err := s.UpdateTraceCost(context.Background(), tid); err != nil {
+					// Log but don't fail the insert — cost is best-effort.
+					_ = err
+				}
+			}(trace.TraceID)
+		}
 	}
 
 	return nil
@@ -354,27 +363,99 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionD
 
 // Close releases the chDB connection.
 func (s *chDBStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
-	// Will be implemented in Task 2.
 	_ = ctx
-	return []ModelPricing{}, nil
+	sql := buildModelPricingSelectSQL() + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get model pricing: %w", err)
+	}
+	return parseModelPricing(result)
 }
 
 func (s *chDBStore) UpsertModelPricing(ctx context.Context, p ModelPricing) error {
 	_ = ctx
-	_ = p
-	return nil
+	sql := buildModelPricingUpsertSQL(p)
+	return s.execSQL(sql)
 }
 
 func (s *chDBStore) DeleteModelPricing(ctx context.Context, modelName string) error {
 	_ = ctx
-	_ = modelName
-	return nil
+	sql := buildModelPricingDeleteSQL(modelName)
+	return s.execSQL(sql)
 }
 
 func (s *chDBStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
-	_ = ctx
-	_ = traceID
-	return nil
+	// Query spans with token/model info.
+	spansSQL := buildSelectSpanTokensSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(spansSQL)
+	if err != nil {
+		return fmt.Errorf("query span tokens: %w", err)
+	}
+
+	// Parse span token rows.
+	type spanTokenRow struct {
+		InputTokens       *uint32 `json:"input_tokens"`
+		OutputTokens      *uint32 `json:"output_tokens"`
+		TotalTokens       *uint32 `json:"total_tokens"`
+		GenAIRequestModel *string `json:"gen_ai_request_model"`
+	}
+	var rows []spanTokenRow
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var row spanTokenRow
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		rows = append(rows, row)
+	}
+
+	// Get pricing table.
+	pricings, err := s.GetModelPricing(ctx)
+	if err != nil {
+		return fmt.Errorf("get pricing for cost calc: %w", err)
+	}
+
+	// Calculate cost.
+	var totalCost float64
+	var currency string
+	hasCost := false
+	for _, row := range rows {
+		if row.TotalTokens == nil || *row.TotalTokens == 0 {
+			continue
+		}
+		if row.GenAIRequestModel == nil || *row.GenAIRequestModel == "" {
+			continue
+		}
+		for _, p := range pricings {
+			if p.ModelName == *row.GenAIRequestModel {
+				inputT := float64(0)
+				outputT := float64(0)
+				if row.InputTokens != nil {
+					inputT = float64(*row.InputTokens)
+				}
+				if row.OutputTokens != nil {
+					outputT = float64(*row.OutputTokens)
+				}
+				c := (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+				totalCost += c
+				hasCost = true
+				if currency == "" {
+					currency = p.Currency
+				}
+				break
+			}
+		}
+	}
+
+	if !hasCost {
+		return nil
+	}
+
+	// Update trace with calculated cost.
+	updateSQL := buildUpdateTraceCostSQL(traceID, totalCost, currency)
+	return s.execSQL(updateSQL)
 }
 
 func (s *chDBStore) Close() error {
@@ -669,6 +750,8 @@ func parseSessionListItems(result string) ([]SessionListItem, error) {
 			SessionID       string  `json:"session_id"`
 			TraceCount      int     `json:"trace_count"`
 			TotalTokens     *uint32 `json:"total_tokens"`
+				Cost            *float64 `json:"cost"`
+				CostCurrency    string   `json:"cost_currency"`
 			TotalDurationMS uint64  `json:"total_duration_ms"`
 			MaxDurationMS   uint64  `json:"max_duration_ms"`
 			AvgDurationMS   float64 `json:"avg_duration_ms"`
@@ -684,6 +767,8 @@ func parseSessionListItems(result string) ([]SessionListItem, error) {
 			SessionID:       raw.SessionID,
 			TraceCount:      raw.TraceCount,
 			TotalTokens:     raw.TotalTokens,
+				Cost:            raw.Cost,
+				CostCurrency:    raw.CostCurrency,
 			TotalDurationMS: raw.TotalDurationMS,
 			MaxDurationMS:   raw.MaxDurationMS,
 			AvgDurationMS:   raw.AvgDurationMS,
@@ -692,6 +777,21 @@ func parseSessionListItems(result string) ([]SessionListItem, error) {
 			FirstActiveMS:   raw.FirstActiveMS,
 			LastActiveMS:    raw.LastActiveMS,
 		})
+	}
+	return items, nil
+}
+
+func parseModelPricing(result string) ([]ModelPricing, error) {
+	var items []ModelPricing
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var p ModelPricing
+		if err := json.Unmarshal([]byte(line), &p); err != nil {
+			return nil, fmt.Errorf("parse model pricing: %w (line: %s)", err, line)
+		}
+		items = append(items, p)
 	}
 	return items, nil
 }
