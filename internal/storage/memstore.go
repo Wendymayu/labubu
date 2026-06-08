@@ -7,6 +7,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -759,6 +760,12 @@ func (m *memStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
 	if m.llmConfigs == nil {
 		m.llmConfigs = make(map[string]LLMConfig)
 	}
+	if c.IsDefault {
+		for k, v := range m.llmConfigs {
+			v.IsDefault = false
+			m.llmConfigs[k] = v
+		}
+	}
 	m.llmConfigs[c.ID] = *c
 	return nil
 }
@@ -767,8 +774,19 @@ func (m *memStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
 	_ = ctx
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.llmConfigs == nil {
-		m.llmConfigs = make(map[string]LLMConfig)
+	existing, ok := m.llmConfigs[c.ID]
+	if !ok {
+		return fmt.Errorf("llm config not found: %s", c.ID)
+	}
+	// If api_key is masked sentinel, keep the existing key.
+	if strings.Contains(c.APIKey, "***") {
+		c.APIKey = existing.APIKey
+	}
+	if c.IsDefault {
+		for k, v := range m.llmConfigs {
+			v.IsDefault = false
+			m.llmConfigs[k] = v
+		}
 	}
 	m.llmConfigs[c.ID] = *c
 	return nil
