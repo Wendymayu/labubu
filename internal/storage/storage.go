@@ -210,6 +210,15 @@ type LLMConfig struct {
 	MaxTokens   int     `json:"max_tokens"`  // default 4096
 }
 
+// MaskAPIKey truncates an API key for display: shows first 3 and last 2 chars
+// for keys longer than 8 characters, otherwise returns "***".
+func MaskAPIKey(key string) string {
+	if len(key) <= 8 {
+		return "***"
+	}
+	return key[:3] + "***" + key[len(key)-2:]
+}
+
 // PricingConfig holds the default pricing loaded from YAML.
 type PricingConfig struct {
 	Models []ModelPricing `yaml:"models"`

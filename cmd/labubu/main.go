@@ -180,7 +180,8 @@ func runServe(args []string) {
 	sessionHandler := api.NewSessionHandler(store)
 	logHandler := api.NewLogHandler(store)
 	pricingHandler := api.NewPricingHandler(store)
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler)
+	llmConfigHandler := api.NewLLMConfigHandler(store)
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler)
 
 	httpSrv := &http.Server{
 		Addr:         apiAddr,

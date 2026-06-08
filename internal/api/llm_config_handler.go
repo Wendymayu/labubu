@@ -9,18 +9,18 @@ import (
 	"github.com/labubu/labubu/internal/storage"
 )
 
-// LlmConfigHandler holds HTTP handlers for LLM config endpoints.
-type LlmConfigHandler struct {
+// LLMConfigHandler holds HTTP handlers for LLM config endpoints.
+type LLMConfigHandler struct {
 	store storage.Store
 }
 
-// NewLlmConfigHandler creates a new LlmConfigHandler.
-func NewLlmConfigHandler(store storage.Store) *LlmConfigHandler {
-	return &LlmConfigHandler{store: store}
+// NewLLMConfigHandler creates a new LLMConfigHandler.
+func NewLLMConfigHandler(store storage.Store) *LLMConfigHandler {
+	return &LLMConfigHandler{store: store}
 }
 
 // ServeHTTP dispatches LLM config requests.
-func (h *LlmConfigHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *LLMConfigHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/llm-configs")
 	id := strings.TrimPrefix(path, "/")
 
@@ -48,7 +48,7 @@ func (h *LlmConfigHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *LlmConfigHandler) list(w http.ResponseWriter, r *http.Request) {
+func (h *LLMConfigHandler) list(w http.ResponseWriter, r *http.Request) {
 	configs, err := h.store.GetLLMConfigs(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -64,7 +64,7 @@ func (h *LlmConfigHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"configs": configs})
 }
 
-func (h *LlmConfigHandler) create(w http.ResponseWriter, r *http.Request) {
+func (h *LLMConfigHandler) create(w http.ResponseWriter, r *http.Request) {
 	var c storage.LLMConfig
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -91,7 +91,7 @@ func (h *LlmConfigHandler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
-func (h *LlmConfigHandler) update(w http.ResponseWriter, r *http.Request, id string) {
+func (h *LLMConfigHandler) update(w http.ResponseWriter, r *http.Request, id string) {
 	var c storage.LLMConfig
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -106,7 +106,7 @@ func (h *LlmConfigHandler) update(w http.ResponseWriter, r *http.Request, id str
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
-func (h *LlmConfigHandler) del(w http.ResponseWriter, r *http.Request, id string) {
+func (h *LLMConfigHandler) del(w http.ResponseWriter, r *http.Request, id string) {
 	if err := h.store.DeleteLLMConfig(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

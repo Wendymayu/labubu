@@ -10,7 +10,7 @@ import (
 )
 
 // NewRouter creates the HTTP handler with API routes and static file serving.
-func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler, sessionHandler *SessionHandler, logHandler *LogHandler, pricingHandler *PricingHandler) http.Handler {
+func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler, sessionHandler *SessionHandler, logHandler *LogHandler, pricingHandler *PricingHandler, llmConfigHandler *LLMConfigHandler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes.
@@ -73,6 +73,12 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 	if pricingHandler != nil {
 		mux.HandleFunc("/api/v1/model-pricing/", pricingHandler.ServeHTTP)
 		mux.HandleFunc("/api/v1/model-pricing", pricingHandler.ServeHTTP)
+	}
+
+	// API routes — LLM configs.
+	if llmConfigHandler != nil {
+		mux.HandleFunc("/api/v1/llm-configs/", llmConfigHandler.ServeHTTP)
+		mux.HandleFunc("/api/v1/llm-configs", llmConfigHandler.ServeHTTP)
 	}
 
 	// Health check.
