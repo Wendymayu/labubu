@@ -19,15 +19,9 @@
       </select>
       <button @click="search" class="btn btn-primary">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
-    </div>
-
-    <!-- Batch action bar -->
-    <div v-if="selectedIds.size > 0" class="batch-bar">
-      <span class="batch-count">{{ t('traceList.selected', { count: selectedIds.size }) }}</span>
-      <button @click="downloadSelected" :disabled="exportLoading" class="btn btn-primary">
-        {{ exportLoading ? t('common.loading') : t('traceList.downloadOtlp') }}
+      <button v-if="selectedIds.size > 0" @click="downloadSelected" :disabled="exportLoading" class="btn btn-primary">
+        {{ exportLoading ? t('common.loading') : t('traceList.downloadOtlp') + ' (' + selectedIds.size + ')' }}
       </button>
-      <button @click="clearSelection" class="btn">{{ t('traceList.clearSelection') }}</button>
     </div>
 
     <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
@@ -280,21 +274,6 @@ onMounted(() => {
 .page-info { font-size: 14px; color: var(--text-secondary); }
 
 /* Batch selection */
-.batch-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--accent-primary);
-  border-radius: 6px;
-}
-.batch-count {
-  font-size: 14px;
-  color: var(--text-primary);
-  font-weight: 600;
-}
 .col-checkbox {
   width: 36px;
   text-align: center;
