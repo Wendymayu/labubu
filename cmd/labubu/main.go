@@ -179,7 +179,8 @@ func runServe(args []string) {
 	dashboardHandler := api.NewDashboardHandler("")
 	sessionHandler := api.NewSessionHandler(store)
 	logHandler := api.NewLogHandler(store)
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler)
+	pricingHandler := api.NewPricingHandler(store)
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler)
 
 	httpSrv := &http.Server{
 		Addr:         apiAddr,
@@ -194,6 +195,13 @@ func runServe(args []string) {
 			log.Fatalf("API server error: %v", err)
 		}
 	}()
+
+	// Seed default pricing from config on startup.
+	for _, m := range cfg.Pricing.Models {
+		if err := store.UpsertModelPricing(context.Background(), m); err != nil {
+			log.Printf("Warning: failed to seed pricing for %s: %v", m.ModelName, err)
+		}
+	}
 
 	fmt.Println("Press Ctrl+C to stop.")
 
