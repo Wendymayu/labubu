@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,6 +60,32 @@ func (m *handlerMockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte)
 }
 
 func (m *handlerMockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
+
+func (m *handlerMockStore) GetLLMConfigs(ctx context.Context) ([]storage.LLMConfig, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) CreateLLMConfig(ctx context.Context, c *storage.LLMConfig) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) UpdateLLMConfig(ctx context.Context, c *storage.LLMConfig) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *handlerMockStore) GetModelPricing(ctx context.Context) ([]storage.ModelPricing, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) UpsertModelPricing(ctx context.Context, p storage.ModelPricing) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	return fmt.Errorf("not implemented")
+}
 
 func (m *handlerMockStore) Close() error { return nil }
 
