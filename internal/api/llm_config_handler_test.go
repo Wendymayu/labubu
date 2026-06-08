@@ -1,26 +1,12 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/labubu/labubu/internal/storage"
 )
-
-func doJSON(t *testing.T, method, url string, body interface{}) (*httptest.ResponseRecorder, *http.Request) {
-	t.Helper()
-	var b []byte
-	if body != nil {
-		b, _ = json.Marshal(body)
-	}
-	req := httptest.NewRequest(method, url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	return rec, req
-}
 
 func setupLLMConfigHandler(t *testing.T) *LLMConfigHandler {
 	t.Helper()
