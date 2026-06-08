@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -137,9 +139,89 @@ func (s *chDBStore) InsertSpans(ctx context.Context, resource ResourceInfo, scop
 		if err := s.execSQL(sql); err != nil {
 			return fmt.Errorf("upsert trace %s: %w", trace.TraceIDHex, err)
 		}
+		// Trigger async cost calculation for each trace that has token data.
+		if trace.TotalTokens != nil && *trace.TotalTokens > 0 {
+			go func(tid [16]byte) {
+				if err := s.UpdateTraceCost(context.Background(), tid); err != nil {
+					// Log but don't fail the insert — cost is best-effort.
+					_ = err
+				}
+			}(trace.TraceID)
+		}
 	}
 
 	return nil
+}
+
+// InsertLogs writes log records to the logs table.
+func (s *chDBStore) InsertLogs(ctx context.Context, logs []LogRecord) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	for _, l := range logs {
+		sql := buildInsertLogSQL(l)
+		if err := s.execSQL(sql); err != nil {
+			return fmt.Errorf("insert log: %w", err)
+		}
+	}
+	return nil
+}
+
+// ListLogs returns a paginated list of log records.
+func (s *chDBStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, error) {
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 || q.PageSize > 100 {
+		q.PageSize = 20
+	}
+
+	countSQL := buildLogCountSQL(q)
+	countResult, err := s.querySQL(countSQL + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("count logs: %w", err)
+	}
+	total := parseCount(countResult)
+
+	dataSQL := buildLogListSQL(q)
+	dataResult, err := s.querySQL(dataSQL + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("list logs: %w", err)
+	}
+
+	logs, err := parseLogListItems(dataResult)
+	if err != nil {
+		return nil, fmt.Errorf("parse log list: %w", err)
+	}
+
+	return &LogListResult{
+		Logs: logs,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+// GetLogsByTrace returns all log records for a given trace.
+func (s *chDBStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error) {
+	sql := buildGetLogsByTraceSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get logs by trace: %w", err)
+	}
+	return parseLogListItems(result)
+}
+
+// GetLogEventNames returns distinct event_name values.
+func (s *chDBStore) GetLogEventNames(ctx context.Context) ([]string, error) {
+	sql := buildLogEventNamesSQL() + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get log event names: %w", err)
+	}
+	return parseLogEventNames(result)
 }
 
 // ListTraces returns a paginated list of trace summaries.
@@ -181,12 +263,23 @@ func (s *chDBStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListRes
 
 // GetTrace returns all spans for a trace.
 func (s *chDBStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail, error) {
-	sql := buildGetTraceSQL(traceID) + " FORMAT JSONEachRow"
-	result, err := s.querySQL(sql)
+	traceIDHex := fmt.Sprintf("%x", traceID)
+
+	// Query spans.
+	spansSQL := buildGetTraceSQL(traceID) + " FORMAT JSONEachRow"
+	spansResult, err := s.querySQL(spansSQL)
 	if err != nil {
-		return nil, fmt.Errorf("get trace: %w", err)
+		return nil, fmt.Errorf("get trace spans: %w", err)
 	}
-	return parseTraceDetail(result)
+
+	// Query trace-level metadata from the traces table.
+	metaSQL := buildGetTraceMetaSQL(traceID) + " FORMAT JSONEachRow"
+	metaResult, err := s.querySQL(metaSQL)
+	if err != nil {
+		return nil, fmt.Errorf("get trace meta: %w", err)
+	}
+
+	return parseTraceDetail(traceIDHex, spansResult, metaResult)
 }
 
 // GetServices returns distinct service names.
@@ -270,6 +363,153 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionD
 }
 
 // Close releases the chDB connection.
+func (s *chDBStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
+	_ = ctx
+	sql := buildModelPricingSelectSQL() + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get model pricing: %w", err)
+	}
+	return parseModelPricing(result)
+}
+
+func (s *chDBStore) UpsertModelPricing(ctx context.Context, p ModelPricing) error {
+	_ = ctx
+	sql := buildModelPricingUpsertSQL(p)
+	return s.execSQL(sql)
+}
+
+func (s *chDBStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	_ = ctx
+	sql := buildModelPricingDeleteSQL(modelName)
+	return s.execSQL(sql)
+}
+
+func (s *chDBStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
+	_ = ctx
+	sql := buildLLMConfigSelectSQL() + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get llm configs: %w", err)
+	}
+	return parseLLMConfigs(result)
+}
+
+func (s *chDBStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	if c.IsDefault {
+		if err := s.execSQL(buildLLMConfigClearDefaultSQL()); err != nil {
+			return fmt.Errorf("clear defaults: %w", err)
+		}
+	}
+	sql := buildLLMConfigInsertSQL(*c)
+	return s.execSQL(sql)
+}
+
+func (s *chDBStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	// If api_key is the masked sentinel, retain the existing key.
+	if strings.Contains(c.APIKey, "***") {
+		existing, err := s.GetLLMConfigs(ctx)
+		if err != nil {
+			return fmt.Errorf("get existing configs: %w", err)
+		}
+		for _, e := range existing {
+			if e.ID == c.ID {
+				c.APIKey = e.APIKey
+				break
+			}
+		}
+	}
+	if c.IsDefault {
+		if err := s.execSQL(buildLLMConfigClearDefaultSQL()); err != nil {
+			return fmt.Errorf("clear defaults: %w", err)
+		}
+	}
+	sql := buildLLMConfigUpdateSQL(*c)
+	return s.execSQL(sql)
+}
+
+func (s *chDBStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	_ = ctx
+	sql := buildLLMConfigDeleteSQL(id)
+	return s.execSQL(sql)
+}
+
+func (s *chDBStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	// Query spans with token/model info.
+	spansSQL := buildSelectSpanTokensSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(spansSQL)
+	if err != nil {
+		return fmt.Errorf("query span tokens: %w", err)
+	}
+
+	// Parse span token rows.
+	type spanTokenRow struct {
+		InputTokens       *uint32 `json:"input_tokens"`
+		OutputTokens      *uint32 `json:"output_tokens"`
+		TotalTokens       *uint32 `json:"total_tokens"`
+		GenAIRequestModel *string `json:"gen_ai_request_model"`
+	}
+	var rows []spanTokenRow
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var row spanTokenRow
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		rows = append(rows, row)
+	}
+
+	// Get pricing table.
+	pricings, err := s.GetModelPricing(ctx)
+	if err != nil {
+		return fmt.Errorf("get pricing for cost calc: %w", err)
+	}
+
+	// Calculate cost.
+	var totalCost float64
+	var currency string
+	hasCost := false
+	for _, row := range rows {
+		if row.TotalTokens == nil || *row.TotalTokens == 0 {
+			continue
+		}
+		if row.GenAIRequestModel == nil || *row.GenAIRequestModel == "" {
+			continue
+		}
+		for _, p := range pricings {
+			if p.ModelName == *row.GenAIRequestModel {
+				inputT := float64(0)
+				outputT := float64(0)
+				if row.InputTokens != nil {
+					inputT = float64(*row.InputTokens)
+				}
+				if row.OutputTokens != nil {
+					outputT = float64(*row.OutputTokens)
+				}
+				c := (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+				totalCost += c
+				hasCost = true
+				if currency == "" {
+					currency = p.Currency
+				}
+				break
+			}
+		}
+	}
+
+	if !hasCost {
+		return nil
+	}
+
+	// Update trace with calculated cost.
+	updateSQL := buildUpdateTraceCostSQL(traceID, totalCost, currency)
+	return s.execSQL(updateSQL)
+}
+
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
 		C.chdb_close(s.conn)
@@ -278,7 +518,133 @@ func (s *chDBStore) Close() error {
 	return nil
 }
 
+// Purge removes traces (and their spans) that exceed the retention policy.
+func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	now := uint64(time.Now().UnixMilli())
+
+	// Get current counts.
+	countResult, err := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
+	if err != nil {
+		return 0, 0, fmt.Errorf("count traces: %w", err)
+	}
+	traceCountBefore := parseCount(countResult)
+
+	spanCountResult, err := s.querySQL("SELECT count(*) AS count FROM spans FORMAT JSONEachRow")
+	if err != nil {
+		return 0, 0, fmt.Errorf("count spans: %w", err)
+	}
+	spanCountBefore := parseCount(spanCountResult)
+
+	// Phase 1: delete by age.
+	if maxAge > 0 {
+		cutoffMS := now - uint64(maxAge.Milliseconds())
+		if err := s.execSQL(fmt.Sprintf(
+			"ALTER TABLE traces DELETE WHERE start_time_ms < %d", cutoffMS)); err != nil {
+			return 0, 0, fmt.Errorf("delete old traces: %w", err)
+		}
+		if err := s.execSQL(fmt.Sprintf(
+			"ALTER TABLE spans DELETE WHERE trace_id IN (SELECT trace_id FROM traces WHERE start_time_ms < %d)", cutoffMS)); err != nil {
+			return 0, 0, fmt.Errorf("delete old spans: %w", err)
+		}
+	}
+
+	// Phase 2: delete by count (keep newest maxCount).
+	if maxCount > 0 {
+		// Re-count after age deletion.
+		countResult2, err := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
+		if err != nil {
+			return 0, 0, fmt.Errorf("recount traces: %w", err)
+		}
+		currentCount := parseCount(countResult2)
+		if currentCount > maxCount {
+			if err := s.execSQL(fmt.Sprintf(
+				"ALTER TABLE spans DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces ORDER BY start_time_ms DESC LIMIT %d)", maxCount)); err != nil {
+				return 0, 0, fmt.Errorf("delete excess spans: %w", err)
+			}
+			if err := s.execSQL(fmt.Sprintf(
+				"ALTER TABLE traces DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces ORDER BY start_time_ms DESC LIMIT %d)", maxCount)); err != nil {
+				return 0, 0, fmt.Errorf("delete excess traces: %w", err)
+			}
+		}
+	}
+
+	// Phase 3: delete orphaned log records.
+	if err := s.execSQL("ALTER TABLE logs DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces)"); err != nil {
+		// Non-fatal: log cleanup failure shouldn't block trace purge.
+		// The logs table may not exist on first run before any logs are ingested.
+	}
+
+	// Estimate deletions (MergeTree mutations are async, exact counts unavailable).
+	traceCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
+	spanCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM spans FORMAT JSONEachRow")
+	tracesAfter := parseCount(traceCountAfter)
+	spansAfter := parseCount(spanCountAfter)
+
+	deletedTraces := traceCountBefore - tracesAfter
+	if deletedTraces < 0 {
+		deletedTraces = 0
+	}
+	deletedSpans := spanCountBefore - spansAfter
+	if deletedSpans < 0 {
+		deletedSpans = 0
+	}
+
+	return deletedTraces, deletedSpans, nil
+}
+
 // JSON parsing helpers
+
+func parseLogListItems(result string) ([]LogListItem, error) {
+	lines := splitLines(result)
+	items := make([]LogListItem, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			TraceIDHex string            `json:"trace_id_hex"`
+			SpanIDHex  string            `json:"span_id_hex"`
+			Timestamp  uint64            `json:"timestamp"`
+			Severity   string            `json:"severity"`
+			EventName  string            `json:"event_name"`
+			Body       string            `json:"body"`
+			Attributes map[string]string `json:"attributes"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			return nil, fmt.Errorf("parse log item: %w (line: %s)", err, line)
+		}
+		items = append(items, LogListItem{
+			TraceIDHex: raw.TraceIDHex,
+			SpanIDHex:  raw.SpanIDHex,
+			Timestamp:  raw.Timestamp,
+			Severity:   raw.Severity,
+			EventName:  raw.EventName,
+			Body:       raw.Body,
+			Attributes: raw.Attributes,
+		})
+	}
+	return items, nil
+}
+
+func parseLogEventNames(result string) ([]string, error) {
+	lines := splitLines(result)
+	names := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			EventName string `json:"event_name"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		if row.EventName != "" {
+			names = append(names, row.EventName)
+		}
+	}
+	return names, nil
+}
 
 func parseCount(result string) int {
 	if result == "" {
@@ -312,10 +678,11 @@ func parseTraceListItems(result string) ([]TraceListItem, error) {
 	return items, nil
 }
 
-func parseTraceDetail(result string) (*TraceDetail, error) {
-	lines := splitLines(result)
+func parseTraceDetail(traceIDHex, spansResult, metaResult string) (*TraceDetail, error) {
+	lines := splitLines(spansResult)
 	spans := make([]SpanDetail, 0, len(lines))
 	var root *SpanDetail
+	var minStartMS, maxEndMS uint64
 	for _, line := range lines {
 		if line == "" {
 			continue
@@ -330,21 +697,77 @@ func parseTraceDetail(result string) (*TraceDetail, error) {
 			rootCopy := sd
 			root = &rootCopy
 		}
+		// Track min/max times for trace-level duration.
+		if minStartMS == 0 || sd.StartTimeMS < minStartMS {
+			minStartMS = sd.StartTimeMS
+		}
+		endMS := sd.StartTimeMS + sd.DurationMS
+		if endMS > maxEndMS {
+			maxEndMS = endMS
+		}
 	}
 	if root == nil {
 		return nil, fmt.Errorf("no root span found in trace")
 	}
 
+	// Parse trace-level metadata from the traces table.
 	resourceAttrs := make(map[string]string)
+	resourceSchemaURL := ""
+	scope := ScopeDetail{}
+	if metaResult != "" {
+		var metaRaw map[string]interface{}
+		if err := json.Unmarshal([]byte(metaResult), &metaRaw); err == nil {
+			// resource_attributes is a Map(String,String) returned as JSON object.
+			if rawRA, ok := metaRaw["resource_attributes"]; ok && rawRA != nil {
+				if m, ok := rawRA.(map[string]interface{}); ok {
+					for k, v := range m {
+						if s, ok := v.(string); ok {
+							resourceAttrs[k] = s
+						}
+					}
+				}
+			}
+			if v, ok := metaRaw["resource_schema_url"]; ok {
+				if s, ok := v.(string); ok {
+					resourceSchemaURL = s
+				}
+			}
+			if v, ok := metaRaw["scope_name"]; ok {
+				if s, ok := v.(string); ok {
+					scope.Name = s
+				}
+			}
+			if v, ok := metaRaw["scope_version"]; ok {
+				if s, ok := v.(string); ok {
+					scope.Version = s
+				}
+			}
+			// scope_attributes is also Map(String,String).
+			scope.Attributes = make(map[string]string)
+			if rawSA, ok := metaRaw["scope_attributes"]; ok && rawSA != nil {
+				if m, ok := rawSA.(map[string]interface{}); ok {
+					for k, v := range m {
+						if s, ok := v.(string); ok {
+							scope.Attributes[k] = s
+						}
+					}
+				}
+			}
+		}
+	}
+
+	traceDuration := maxEndMS - minStartMS
 
 	return &TraceDetail{
-		TraceIDHex:    "",
-		RootSpanID:    root.SpanID,
-		SpanCount:     len(spans),
-		StartTimeMS:   root.StartTimeMS,
-		DurationMS:    root.DurationMS,
-		ResourceAttrs: resourceAttrs,
-		Spans:         spans,
+		TraceIDHex:        traceIDHex,
+		RootSpanID:        root.SpanID,
+		SpanCount:         len(spans),
+		StartTimeMS:       minStartMS,
+		DurationMS:        traceDuration,
+		ResourceAttrs:     resourceAttrs,
+		ResourceSchemaURL: resourceSchemaURL,
+		Scope:             scope,
+		Spans:             spans,
 	}, nil
 }
 
@@ -379,6 +802,8 @@ func parseSessionListItems(result string) ([]SessionListItem, error) {
 			SessionID       string  `json:"session_id"`
 			TraceCount      int     `json:"trace_count"`
 			TotalTokens     *uint32 `json:"total_tokens"`
+				Cost            *float64 `json:"cost"`
+				CostCurrency    string   `json:"cost_currency"`
 			TotalDurationMS uint64  `json:"total_duration_ms"`
 			MaxDurationMS   uint64  `json:"max_duration_ms"`
 			AvgDurationMS   float64 `json:"avg_duration_ms"`
@@ -394,6 +819,8 @@ func parseSessionListItems(result string) ([]SessionListItem, error) {
 			SessionID:       raw.SessionID,
 			TraceCount:      raw.TraceCount,
 			TotalTokens:     raw.TotalTokens,
+				Cost:            raw.Cost,
+				CostCurrency:    raw.CostCurrency,
 			TotalDurationMS: raw.TotalDurationMS,
 			MaxDurationMS:   raw.MaxDurationMS,
 			AvgDurationMS:   raw.AvgDurationMS,
@@ -402,6 +829,36 @@ func parseSessionListItems(result string) ([]SessionListItem, error) {
 			FirstActiveMS:   raw.FirstActiveMS,
 			LastActiveMS:    raw.LastActiveMS,
 		})
+	}
+	return items, nil
+}
+
+func parseLLMConfigs(result string) ([]LLMConfig, error) {
+	var items []LLMConfig
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var c LLMConfig
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			return nil, fmt.Errorf("parse llm config: %w (line: %s)", err, line)
+		}
+		items = append(items, c)
+	}
+	return items, nil
+}
+
+func parseModelPricing(result string) ([]ModelPricing, error) {
+	var items []ModelPricing
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var p ModelPricing
+		if err := json.Unmarshal([]byte(line), &p); err != nil {
+			return nil, fmt.Errorf("parse model pricing: %w (line: %s)", err, line)
+		}
+		items = append(items, p)
 	}
 	return items, nil
 }
@@ -447,6 +904,22 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 		return nil
 	}
 
+	// Parse attributes (chDB returns Map(String,String) as a JSON object).
+	attrs := make(map[string]string)
+	if rawAttrs, ok := raw["attributes"]; ok && rawAttrs != nil {
+		if m, ok := rawAttrs.(map[string]interface{}); ok {
+			for k, v := range m {
+				if s, ok := v.(string); ok {
+					attrs[k] = s
+				}
+			}
+		}
+	}
+
+	// Parse events and links (JSON strings).
+	events := parseJSONArray(getStr("events"))
+	links := parseJSONArray(getStr("links"))
+
 	return SpanDetail{
 		SpanID:            getStr("span_id"),
 		ParentSpanID:      getStr("parent_span_id"),
@@ -454,6 +927,9 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 		Kind:              getStr("kind"),
 		StartTimeMS:       getUint64("start_time_ms"),
 		DurationMS:        getUint64("duration_ms"),
+		Attributes:        attrs,
+		Events:            events,
+		Links:             links,
 		Status:            getStr("status_code"),
 		StatusMessage:     getStr("status_message"),
 		InputTokens:       getNullableUint32("input_tokens"),

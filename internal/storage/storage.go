@@ -4,7 +4,10 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // Span represents a single OTLP span stored in the spans table.
@@ -62,6 +65,8 @@ type Trace struct {
 	StatusCode        int32
 	StatusMessage     string
 	TotalTokens       *uint32
+	Cost              *float64
+	CostCurrency      string
 	SessionID         string
 }
 
@@ -94,7 +99,9 @@ type TraceListItem struct {
 	DurationMS   uint64  `json:"duration_ms"`
 	SpanCount    uint16  `json:"span_count"`
 	Status       string  `json:"status"`
-	TotalTokens  *uint32 `json:"total_tokens"`
+	TotalTokens  *uint32  `json:"total_tokens"`
+	Cost         *float64 `json:"cost"`
+	CostCurrency string   `json:"cost_currency"`
 }
 
 // Pagination holds page metadata.
@@ -118,8 +125,10 @@ type SessionQuery struct {
 type SessionListItem struct {
 	SessionID       string  `json:"session_id"`
 	TraceCount      int     `json:"trace_count"`
-	TotalTokens     *uint32 `json:"total_tokens"`
-	TotalDurationMS uint64  `json:"total_duration_ms"`
+	TotalTokens     *uint32  `json:"total_tokens"`
+	Cost            *float64 `json:"cost"`
+	CostCurrency    string   `json:"cost_currency"`
+	TotalDurationMS uint64   `json:"total_duration_ms"`
 	MaxDurationMS   uint64  `json:"max_duration_ms"`
 	AvgDurationMS   float64 `json:"avg_duration_ms"`
 	ErrorCount      int     `json:"error_count"`
@@ -150,6 +159,9 @@ type TraceDetail struct {
 	ResourceAttrs     map[string]string `json:"resource_attributes"`
 	ResourceSchemaURL string            `json:"resource_schema_url"`
 	Scope             ScopeDetail       `json:"scope"`
+	Cost              *float64          `json:"cost"`
+	CostCurrency      string            `json:"cost_currency"`
+	UnpricedSpans     int               `json:"unpriced_spans"`
 	Spans             []SpanDetail      `json:"spans"`
 }
 
@@ -179,6 +191,39 @@ type SpanDetail struct {
 	GenAIRequestModel   *string           `json:"gen_ai_request_model"`
 }
 
+// ModelPricing holds pricing configuration for a single model.
+type ModelPricing struct {
+	ModelName   string  `json:"model_name"`
+	InputPrice  float64 `json:"input_price"`  // per 1M input tokens
+	OutputPrice float64 `json:"output_price"` // per 1M output tokens
+	Currency    string  `json:"currency"`     // "USD" or "CNY"
+}
+
+// LLMConfig holds configuration for a single LLM model used for trace analysis.
+type LLMConfig struct {
+	ID          string  `json:"id"`
+	ModelName   string  `json:"model_name"`
+	ProviderURL string  `json:"provider_url"`
+	APIKey      string  `json:"api_key"`     // plaintext at rest, masked on GET
+	IsDefault   bool    `json:"is_default"`
+	Temperature float64 `json:"temperature"` // default 0.7
+	MaxTokens   int     `json:"max_tokens"`  // default 4096
+}
+
+// MaskAPIKey truncates an API key for display: shows first 3 and last 2 chars
+// for keys longer than 8 characters, otherwise returns "***".
+func MaskAPIKey(key string) string {
+	if len(key) <= 8 {
+		return "***"
+	}
+	return key[:3] + "***" + key[len(key)-2:]
+}
+
+// PricingConfig holds the default pricing loaded from YAML.
+type PricingConfig struct {
+	Models []ModelPricing `yaml:"models"`
+}
+
 // Store is the storage backend interface. All chDB details are hidden behind this.
 type Store interface {
 	// InsertSpans writes a batch of spans and aggregates trace-level data
@@ -200,6 +245,38 @@ type Store interface {
 
 	// GetSession returns a session summary and all its traces.
 	GetSession(ctx context.Context, sessionID string) (*SessionDetail, error)
+
+	// Purge removes traces (and their spans) that exceed the retention policy.
+	// maxAge: delete traces with start_time_ms older than (now - maxAge). 0 = no age limit.
+	// maxCount: keep only the newest maxCount traces. 0 = no count limit.
+	// Returns the number of deleted traces and spans.
+	Purge(ctx context.Context, maxAge time.Duration, maxCount int) (deletedTraces int, deletedSpans int, err error)
+
+	// InsertLogs writes a batch of log records.
+	InsertLogs(ctx context.Context, logs []LogRecord) error
+
+	// ListLogs returns a paginated list of log records matching the query.
+	ListLogs(ctx context.Context, q LogQuery) (*LogListResult, error)
+
+	// GetLogsByTrace returns all log records for a given trace, ordered by timestamp.
+	GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error)
+
+	// GetLogEventNames returns distinct event_name values for the filter dropdown.
+	GetLogEventNames(ctx context.Context) ([]string, error)
+
+	// ModelPricing CRUD.
+	GetModelPricing(ctx context.Context) ([]ModelPricing, error)
+	UpsertModelPricing(ctx context.Context, p ModelPricing) error
+	DeleteModelPricing(ctx context.Context, modelName string) error
+
+	// LLMConfig CRUD.
+	GetLLMConfigs(ctx context.Context) ([]LLMConfig, error)
+	CreateLLMConfig(ctx context.Context, c *LLMConfig) error
+	UpdateLLMConfig(ctx context.Context, c *LLMConfig) error
+	DeleteLLMConfig(ctx context.Context, id string) error
+
+	// UpdateTraceCost recalculates and stores cost for a trace.
+	UpdateTraceCost(ctx context.Context, traceID [16]byte) error
 
 	// Close releases resources (e.g., chDB session).
 	Close() error
@@ -252,5 +329,80 @@ func StatusCodeToString(code int32) string {
 		return "ERROR"
 	default:
 		return "UNSET"
+	}
+}
+
+// --- Log types ---
+
+// LogRecord represents a single OTLP log record stored in the logs table.
+type LogRecord struct {
+	TraceID    [16]byte
+	SpanID     [8]byte
+	Timestamp  uint64
+	Severity   string // TRACE, DEBUG, INFO, WARN, ERROR, FATAL
+	EventName  string // extracted from attributes["event.name"]
+	Body       string // JSON string, preserved as-is
+	Attributes map[string]string
+}
+
+// LogQuery defines filters for listing logs.
+type LogQuery struct {
+	Page      int
+	PageSize  int
+	Severity  string   // "" = all
+	EventName string   // "" = all
+	Query     string   // full-text search on body
+	TraceID   [16]byte // zero value = no trace filter
+	StartTime uint64
+	EndTime   uint64
+}
+
+// LogListItem is the API response item for a log record.
+type LogListItem struct {
+	TraceIDHex  string            `json:"trace_id_hex"`
+	SpanIDHex   string            `json:"span_id_hex"`
+	Timestamp   uint64            `json:"timestamp"`
+	Severity    string            `json:"severity"`
+	EventName   string            `json:"event_name"`
+	Body        string            `json:"body"`
+	Attributes  map[string]string `json:"attributes"`
+}
+
+// LogListResult holds a page of log records.
+type LogListResult struct {
+	Logs       []LogListItem `json:"logs"`
+	Pagination Pagination    `json:"pagination"`
+}
+
+// parseJSONArray parses a JSON array string into []interface{}.
+func parseJSONArray(raw string) []interface{} {
+	if raw == "" || raw == "[]" {
+		return make([]interface{}, 0)
+	}
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return make([]interface{}, 0)
+	}
+	return arr
+}
+
+// SeverityToNumber converts a severity string to a numeric level for comparison.
+// Higher number = more severe.
+func SeverityToNumber(s string) int {
+	switch strings.ToUpper(s) {
+	case "TRACE":
+		return 0
+	case "DEBUG":
+		return 1
+	case "INFO":
+		return 2
+	case "WARN":
+		return 3
+	case "ERROR":
+		return 4
+	case "FATAL":
+		return 5
+	default:
+		return -1
 	}
 }
