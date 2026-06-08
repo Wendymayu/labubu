@@ -14,6 +14,7 @@
           </button>
           <div v-show="settingsOpen" class="nav-group-items">
             <router-link to="/settings/pricing">Model Pricing</router-link>
+            <router-link to="/settings/llm-configs">LLM Configs</router-link>
           </div>
         </div>
       </nav>

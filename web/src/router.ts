@@ -6,6 +6,7 @@ import SessionDetail from './views/SessionDetail.vue'
 import Dashboard from './views/Dashboard.vue'
 import LogList from './views/LogList.vue'
 import PricingManager from './views/PricingManager.vue'
+import LlmConfig from './views/LlmConfig.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -18,5 +19,6 @@ export const router = createRouter({
     { path: '/dashboards', name: 'dashboards', component: Dashboard },
     { path: '/logs', name: 'log-list', component: LogList },
     { path: '/settings/pricing', name: 'pricing-manager', component: PricingManager },
+    { path: '/settings/llm-configs', name: 'llm-configs', component: LlmConfig },
   ]
 })
