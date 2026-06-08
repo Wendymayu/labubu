@@ -10,6 +10,8 @@ export interface TraceListItem {
   span_count: number
   status: string
   total_tokens?: number
+  cost?: number
+  cost_currency?: string
 }
 
 export interface Pagination {
@@ -56,6 +58,9 @@ export interface TraceDetailResponse {
     duration_ms: number
     resource_attributes: Record<string, string>
     scope: ScopeDetail
+    cost?: number
+    cost_currency?: string
+    unpriced_spans?: number
     spans: SpanDetail[]
   }
 }
@@ -245,12 +250,54 @@ export interface QueryResult {
   error?: string
 }
 
+// --- Model Pricing types and API ---
+
+export interface ModelPricing {
+  model_name: string
+  input_price: number
+  output_price: number
+  currency: string
+}
+
+export interface ModelPricingListResponse {
+  models: ModelPricing[]
+}
+
+export async function getModelPricing(): Promise<ModelPricingListResponse> {
+  return get<ModelPricingListResponse>(`${BASE_URL}/model-pricing`)
+}
+
+export async function saveModelPricing(p: ModelPricing): Promise<ModelPricing> {
+  const res = await fetch(`${BASE_URL}/model-pricing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+export async function deleteModelPricing(modelName: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/model-pricing/${encodeURIComponent(modelName)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+}
+
+export async function recalcCosts(): Promise<{ status: string; traces_updated: number; sessions_updated: number }> {
+  const res = await fetch(`${BASE_URL}/model-pricing/recalc`, { method: 'POST' })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
 // --- Session types and API ---
 
 export interface SessionListItem {
   session_id: string
   trace_count: number
   total_tokens?: number
+  cost?: number
+  cost_currency?: string
   total_duration_ms: number
   max_duration_ms: number
   avg_duration_ms: number
