@@ -7,9 +7,10 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 )
 
 // memStore is an in-memory Store used when chDB CGO is not available.
@@ -18,6 +19,9 @@ type memStore struct {
 	spans    []Span
 	traces   map[[16]byte]Trace
 	services map[string]bool
+	logs     []LogRecord
+	pricing    map[string]ModelPricing
+	llmConfigs map[string]LLMConfig
 }
 
 // NewChDBStore returns an in-memory Store when chDB is not available.
@@ -28,6 +32,9 @@ func NewChDBStore(dataDir string) (Store, error) {
 		spans:    make([]Span, 0),
 		traces:   make(map[[16]byte]Trace),
 		services: make(map[string]bool),
+		logs:     make([]LogRecord, 0),
+		pricing:    make(map[string]ModelPricing),
+		llmConfigs: make(map[string]LLMConfig),
 	}, nil
 }
 
@@ -82,7 +89,176 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 		m.services[svc] = true
 	}
 
+	// Calculate costs inline for traces with token data (lock already held).
+	for traceID, trace := range traceMap {
+		if trace.TotalTokens != nil && *trace.TotalTokens > 0 {
+			var totalCost float64
+			var currency string
+			hasCost := false
+			for _, span := range inSpans {
+				if span.TraceID != traceID {
+					continue
+				}
+				if span.TotalTokens == nil || *span.TotalTokens == 0 || span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
+					continue
+				}
+				for _, p := range m.pricing {
+					if p.ModelName == *span.GenAIRequestModel {
+						inputT := float64(0)
+						outputT := float64(0)
+						if span.InputTokens != nil {
+							inputT = float64(*span.InputTokens)
+						}
+						if span.OutputTokens != nil {
+							outputT = float64(*span.OutputTokens)
+						}
+						totalCost += (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+						hasCost = true
+						if currency == "" {
+							currency = p.Currency
+						}
+						break
+					}
+				}
+			}
+			if hasCost {
+				trace.Cost = &totalCost
+				trace.CostCurrency = currency
+			}
+		}
+		m.traces[traceID] = trace
+	}
+
 	return nil
+}
+
+func (m *memStore) InsertLogs(ctx context.Context, logs []LogRecord) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logs = append(m.logs, logs...)
+	return nil
+}
+
+func (m *memStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Filter.
+	filtered := make([]LogRecord, 0, len(m.logs))
+	for _, l := range m.logs {
+		if q.Severity != "" && !strings.EqualFold(l.Severity, q.Severity) {
+			continue
+		}
+		if q.EventName != "" && l.EventName != q.EventName {
+			continue
+		}
+		if q.Query != "" && !containsSubstring(l.Body, q.Query) {
+			continue
+		}
+		var zeroTrace [16]byte
+		if q.TraceID != zeroTrace && l.TraceID != q.TraceID {
+			continue
+		}
+		if q.StartTime > 0 && l.Timestamp < q.StartTime {
+			continue
+		}
+		if q.EndTime > 0 && l.Timestamp > q.EndTime {
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+
+	// Sort by timestamp descending.
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Timestamp > filtered[j].Timestamp
+	})
+
+	total := len(filtered)
+
+	// Paginate.
+	start := (q.Page - 1) * q.PageSize
+	if start > total {
+		start = total
+	}
+	end := start + q.PageSize
+	if end > total {
+		end = total
+	}
+	page := filtered[start:end]
+	if page == nil {
+		page = make([]LogRecord, 0)
+	}
+
+	items := make([]LogListItem, len(page))
+	for i, l := range page {
+		items[i] = LogListItem{
+			TraceIDHex: TraceIDToHex(l.TraceID),
+			SpanIDHex:  SpanIDToHex(l.SpanID),
+			Timestamp:  l.Timestamp,
+			Severity:   l.Severity,
+			EventName:  l.EventName,
+			Body:       l.Body,
+			Attributes: l.Attributes,
+		}
+	}
+
+	return &LogListResult{
+		Logs: items,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+func (m *memStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var items []LogListItem
+	for _, l := range m.logs {
+		if l.TraceID == traceID {
+			items = append(items, LogListItem{
+				TraceIDHex: TraceIDToHex(l.TraceID),
+				SpanIDHex:  SpanIDToHex(l.SpanID),
+				Timestamp:  l.Timestamp,
+				Severity:   l.Severity,
+				EventName:  l.EventName,
+				Body:       l.Body,
+				Attributes: l.Attributes,
+			})
+		}
+	}
+
+	// Sort by timestamp ascending.
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Timestamp < items[j].Timestamp
+	})
+
+	return items, nil
+}
+
+func (m *memStore) GetLogEventNames(ctx context.Context) ([]string, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	for _, l := range m.logs {
+		if l.EventName != "" && !seen[l.EventName] {
+			seen[l.EventName] = true
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (m *memStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResult, error) {
@@ -462,21 +638,216 @@ func (m *memStore) GetServices(ctx context.Context) ([]string, error) {
 	return services, nil
 }
 
-func (m *memStore) Close() error {
+func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := uint64(time.Now().UnixMilli())
+	cutoffMS := uint64(0)
+	if maxAge > 0 {
+		cutoffMS = now - uint64(maxAge.Milliseconds())
+	}
+
+	deletedTraces := 0
+	deletedSpans := 0
+
+	// Phase 1: collect trace IDs to keep based on age.
+	keepTraces := make(map[[16]byte]bool)
+	for traceID, trace := range m.traces {
+		if cutoffMS > 0 && trace.StartTimeMS < cutoffMS {
+			continue // too old, skip
+		}
+		keepTraces[traceID] = true
+	}
+
+	// Phase 2: if maxCount > 0, further restrict to newest maxCount traces.
+	if maxCount > 0 && len(keepTraces) > maxCount {
+		type timedTrace struct {
+			id    [16]byte
+			start uint64
+		}
+		sorted := make([]timedTrace, 0, len(keepTraces))
+		for id := range keepTraces {
+			sorted = append(sorted, timedTrace{id, m.traces[id].StartTimeMS})
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].start > sorted[j].start
+		})
+		keepTraces = make(map[[16]byte]bool)
+		for _, tv := range sorted[:maxCount] {
+			keepTraces[tv.id] = true
+		}
+	}
+
+	// Delete traces not in keepTraces.
+	for id := range m.traces {
+		if !keepTraces[id] {
+			delete(m.traces, id)
+			deletedTraces++
+		}
+	}
+
+	// Delete spans belonging to deleted traces.
+	newSpans := make([]Span, 0, len(m.spans))
+	for _, s := range m.spans {
+		if keepTraces[s.TraceID] {
+			newSpans = append(newSpans, s)
+		} else {
+			deletedSpans++
+		}
+	}
+	m.spans = newSpans
+
+	// Delete logs belonging to deleted traces.
+	newLogs := make([]LogRecord, 0, len(m.logs))
+	for _, l := range m.logs {
+		if keepTraces[l.TraceID] {
+			newLogs = append(newLogs, l)
+		}
+	}
+	m.logs = newLogs
+
+	return deletedTraces, deletedSpans, nil
+}
+
+func (m *memStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]ModelPricing, 0, len(m.pricing))
+	for _, p := range m.pricing {
+		result = append(result, p)
+	}
+	return result, nil
+}
+
+func (m *memStore) UpsertModelPricing(ctx context.Context, p ModelPricing) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pricing == nil {
+		m.pricing = make(map[string]ModelPricing)
+	}
+	m.pricing[p.ModelName] = p
 	return nil
 }
 
-// parseJSONArray parses a JSON array string into []interface{}.
-// Returns an empty slice if parsing fails or the string is empty/"[]".
-func parseJSONArray(raw string) []interface{} {
-	if raw == "" || raw == "[]" {
-		return make([]interface{}, 0)
+func (m *memStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.pricing, modelName)
+	return nil
+}
+
+func (m *memStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]LLMConfig, 0, len(m.llmConfigs))
+	for _, c := range m.llmConfigs {
+		result = append(result, c)
 	}
-	var arr []interface{}
-	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
-		return make([]interface{}, 0)
+	return result, nil
+}
+
+func (m *memStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.llmConfigs == nil {
+		m.llmConfigs = make(map[string]LLMConfig)
 	}
-	return arr
+	m.llmConfigs[c.ID] = *c
+	return nil
+}
+
+func (m *memStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.llmConfigs == nil {
+		m.llmConfigs = make(map[string]LLMConfig)
+	}
+	m.llmConfigs[c.ID] = *c
+	return nil
+}
+
+func (m *memStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.llmConfigs, id)
+	return nil
+}
+
+func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	trace, ok := m.traces[traceID]
+	if !ok {
+		return nil
+	}
+
+	// Collect spans for this trace.
+	var traceSpans []Span
+	for _, s := range m.spans {
+		if s.TraceID == traceID {
+			traceSpans = append(traceSpans, s)
+		}
+	}
+
+	// Get pricing table.
+	pricingList := make([]ModelPricing, 0, len(m.pricing))
+	for _, p := range m.pricing {
+		pricingList = append(pricingList, p)
+	}
+
+	// Calculate cost.
+	var totalCost float64
+	var currency string
+	hasCost := false
+	for _, span := range traceSpans {
+		if span.TotalTokens == nil || *span.TotalTokens == 0 {
+			continue
+		}
+		if span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
+			continue
+		}
+		for _, p := range pricingList {
+			if p.ModelName == *span.GenAIRequestModel {
+				inputT := float64(0)
+				outputT := float64(0)
+				if span.InputTokens != nil {
+					inputT = float64(*span.InputTokens)
+				}
+				if span.OutputTokens != nil {
+					outputT = float64(*span.OutputTokens)
+				}
+				c := (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+				totalCost += c
+				hasCost = true
+				if currency == "" {
+					currency = p.Currency
+				}
+				break
+			}
+		}
+	}
+
+	if hasCost {
+		trace.Cost = &totalCost
+		trace.CostCurrency = currency
+		m.traces[traceID] = trace
+	}
+	return nil
+}
+
+func (m *memStore) Close() error {
+	return nil
 }
 
 // containsSubstring does a simple case-insensitive substring match.
