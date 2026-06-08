@@ -380,8 +380,9 @@ func buildLogEventNamesSQL() string {
 
 // --- SQL helpers ---
 
-// escapeSQL escapes single quotes for SQL string literals.
+// escapeSQL escapes backslashes and single quotes for SQL string literals.
 func escapeSQL(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
