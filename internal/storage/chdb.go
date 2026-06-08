@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -386,22 +387,53 @@ func (s *chDBStore) DeleteModelPricing(ctx context.Context, modelName string) er
 
 func (s *chDBStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
 	_ = ctx
-	return nil, fmt.Errorf("chDB LLMConfig not implemented")
+	sql := buildLLMConfigSelectSQL() + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get llm configs: %w", err)
+	}
+	return parseLLMConfigs(result)
 }
 
 func (s *chDBStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
 	_ = ctx
-	return fmt.Errorf("chDB LLMConfig not implemented")
+	if c.IsDefault {
+		if err := s.execSQL(buildLLMConfigClearDefaultSQL()); err != nil {
+			return fmt.Errorf("clear defaults: %w", err)
+		}
+	}
+	sql := buildLLMConfigInsertSQL(*c)
+	return s.execSQL(sql)
 }
 
 func (s *chDBStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
 	_ = ctx
-	return fmt.Errorf("chDB LLMConfig not implemented")
+	// If api_key is the masked sentinel, retain the existing key.
+	if strings.Contains(c.APIKey, "***") {
+		existing, err := s.GetLLMConfigs(ctx)
+		if err != nil {
+			return fmt.Errorf("get existing configs: %w", err)
+		}
+		for _, e := range existing {
+			if e.ID == c.ID {
+				c.APIKey = e.APIKey
+				break
+			}
+		}
+	}
+	if c.IsDefault {
+		if err := s.execSQL(buildLLMConfigClearDefaultSQL()); err != nil {
+			return fmt.Errorf("clear defaults: %w", err)
+		}
+	}
+	sql := buildLLMConfigUpdateSQL(*c)
+	return s.execSQL(sql)
 }
 
 func (s *chDBStore) DeleteLLMConfig(ctx context.Context, id string) error {
 	_ = ctx
-	return fmt.Errorf("chDB LLMConfig not implemented")
+	sql := buildLLMConfigDeleteSQL(id)
+	return s.execSQL(sql)
 }
 
 func (s *chDBStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
@@ -797,6 +829,21 @@ func parseSessionListItems(result string) ([]SessionListItem, error) {
 			FirstActiveMS:   raw.FirstActiveMS,
 			LastActiveMS:    raw.LastActiveMS,
 		})
+	}
+	return items, nil
+}
+
+func parseLLMConfigs(result string) ([]LLMConfig, error) {
+	var items []LLMConfig
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var c LLMConfig
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			return nil, fmt.Errorf("parse llm config: %w (line: %s)", err, line)
+		}
+		items = append(items, c)
 	}
 	return items, nil
 }
