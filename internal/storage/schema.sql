@@ -76,3 +76,16 @@ ORDER BY model_name;
 
 ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost Nullable(Float64);
 ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost_currency String DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS llm_configs (
+    id           String,
+    model_name   String,
+    provider_url String,
+    api_key      String,
+    is_default   UInt8,
+    temperature  Float64,
+    max_tokens   Int32,
+    updated_at   DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY id;

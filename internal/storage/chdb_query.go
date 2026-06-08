@@ -505,3 +505,44 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 func isRootSpan(parentSpanID [8]byte) bool {
 	return parentSpanID == [8]byte{}
 }
+
+// --- LLM config SQL builders ---
+
+// buildLLMConfigSelectSQL builds a query to fetch all LLM config entries.
+func buildLLMConfigSelectSQL() string {
+	return `SELECT id, model_name, provider_url, api_key, is_default, temperature, max_tokens FROM llm_configs ORDER BY model_name`
+}
+
+// buildLLMConfigInsertSQL builds an INSERT for a new LLM config entry.
+func buildLLMConfigInsertSQL(c LLMConfig) string {
+	isDefault := 0
+	if c.IsDefault {
+		isDefault = 1
+	}
+	return fmt.Sprintf(
+		`INSERT INTO llm_configs (id, model_name, provider_url, api_key, is_default, temperature, max_tokens) VALUES ('%s', '%s', '%s', '%s', %d, %f, %d)`,
+		escapeSQL(c.ID), escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens,
+	)
+}
+
+// buildLLMConfigUpdateSQL builds an ALTER TABLE UPDATE for an LLM config entry.
+func buildLLMConfigUpdateSQL(c LLMConfig) string {
+	isDefault := 0
+	if c.IsDefault {
+		isDefault = 1
+	}
+	return fmt.Sprintf(
+		`ALTER TABLE llm_configs UPDATE model_name = '%s', provider_url = '%s', api_key = '%s', is_default = %d, temperature = %f, max_tokens = %d, updated_at = now() WHERE id = '%s'`,
+		escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens, escapeSQL(c.ID),
+	)
+}
+
+// buildLLMConfigClearDefaultSQL returns SQL to set all is_default flags to 0.
+func buildLLMConfigClearDefaultSQL() string {
+	return `ALTER TABLE llm_configs UPDATE is_default = 0 WHERE is_default = 1`
+}
+
+// buildLLMConfigDeleteSQL builds a DELETE for a single LLM config entry.
+func buildLLMConfigDeleteSQL(id string) string {
+	return fmt.Sprintf(`DELETE FROM llm_configs WHERE id = '%s'`, escapeSQL(id))
+}
