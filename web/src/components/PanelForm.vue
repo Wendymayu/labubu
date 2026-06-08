@@ -61,11 +61,12 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { getMetricNames, getLabels, getLabelValues, createDashboard, updateDashboard } from '../api/client'
+import { getMetricNames, getLabels, getLabelValues, createPanel, updatePanel } from '../api/client'
 import type { PanelConfig } from '../api/client'
 
 const props = defineProps<{
   panel?: PanelConfig | null
+  dashboardId?: string
 }>()
 
 const emit = defineEmits<{
@@ -139,16 +140,21 @@ async function handleSubmit() {
     panel.step = form.step
   }
 
+  if (!props.dashboardId) {
+    saveError.value = 'No dashboard selected'
+    return
+  }
+
   saving.value = true
   try {
     let result: PanelConfig
     if (isEdit.value && props.panel) {
-      result = await updateDashboard({
+      result = await updatePanel(props.dashboardId, {
         ...panel,
         id: props.panel.id,
       })
     } else {
-      result = await createDashboard(panel)
+      result = await createPanel(props.dashboardId, panel)
     }
     emit('saved', result)
   } catch (e: any) {
