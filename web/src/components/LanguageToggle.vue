@@ -5,7 +5,7 @@
     :title="locale === 'zh' ? 'Switch to English' : '切换到中文'"
   >
     <span class="lang-icon">🌐</span>
-    <span class="lang-label">{{ locale === 'zh' ? '中文' : 'English' }}</span>
+    <span class="lang-label">{{ locale === 'zh' ? 'English' : '中文' }}</span>
   </button>
 </template>
 
