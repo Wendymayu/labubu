@@ -87,6 +87,46 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 		m.services[svc] = true
 	}
 
+	// Calculate costs inline for traces with token data (lock already held).
+	for traceID, trace := range traceMap {
+		if trace.TotalTokens != nil && *trace.TotalTokens > 0 {
+			var totalCost float64
+			var currency string
+			hasCost := false
+			for _, span := range inSpans {
+				if span.TraceID != traceID {
+					continue
+				}
+				if span.TotalTokens == nil || *span.TotalTokens == 0 || span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
+					continue
+				}
+				for _, p := range m.pricing {
+					if p.ModelName == *span.GenAIRequestModel {
+						inputT := float64(0)
+						outputT := float64(0)
+						if span.InputTokens != nil {
+							inputT = float64(*span.InputTokens)
+						}
+						if span.OutputTokens != nil {
+							outputT = float64(*span.OutputTokens)
+						}
+						totalCost += (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+						hasCost = true
+						if currency == "" {
+							currency = p.Currency
+						}
+						break
+					}
+				}
+			}
+			if hasCost {
+				trace.Cost = &totalCost
+				trace.CostCurrency = currency
+			}
+		}
+		m.traces[traceID] = trace
+	}
+
 	return nil
 }
 
@@ -700,9 +740,66 @@ func (m *memStore) DeleteModelPricing(ctx context.Context, modelName string) err
 }
 
 func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
-	// Cost calculation will be implemented in Task 3.
 	_ = ctx
-	_ = traceID
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	trace, ok := m.traces[traceID]
+	if !ok {
+		return nil
+	}
+
+	// Collect spans for this trace.
+	var traceSpans []Span
+	for _, s := range m.spans {
+		if s.TraceID == traceID {
+			traceSpans = append(traceSpans, s)
+		}
+	}
+
+	// Get pricing table.
+	pricingList := make([]ModelPricing, 0, len(m.pricing))
+	for _, p := range m.pricing {
+		pricingList = append(pricingList, p)
+	}
+
+	// Calculate cost.
+	var totalCost float64
+	var currency string
+	hasCost := false
+	for _, span := range traceSpans {
+		if span.TotalTokens == nil || *span.TotalTokens == 0 {
+			continue
+		}
+		if span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
+			continue
+		}
+		for _, p := range pricingList {
+			if p.ModelName == *span.GenAIRequestModel {
+				inputT := float64(0)
+				outputT := float64(0)
+				if span.InputTokens != nil {
+					inputT = float64(*span.InputTokens)
+				}
+				if span.OutputTokens != nil {
+					outputT = float64(*span.OutputTokens)
+				}
+				c := (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+				totalCost += c
+				hasCost = true
+				if currency == "" {
+					currency = p.Currency
+				}
+				break
+			}
+		}
+	}
+
+	if hasCost {
+		trace.Cost = &totalCost
+		trace.CostCurrency = currency
+		m.traces[traceID] = trace
+	}
 	return nil
 }
 
