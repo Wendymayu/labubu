@@ -4,6 +4,7 @@ import TraceDetail from './views/TraceDetail.vue'
 import SessionList from './views/SessionList.vue'
 import SessionDetail from './views/SessionDetail.vue'
 import Dashboard from './views/Dashboard.vue'
+import LlmConfig from './views/LlmConfig.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -14,5 +15,6 @@ export const router = createRouter({
     { path: '/sessions', name: 'session-list', component: SessionList },
     { path: '/sessions/:sessionId', name: 'session-detail', component: SessionDetail },
     { path: '/dashboards', name: 'dashboards', component: Dashboard },
+    { path: '/settings/llm-configs', name: 'llm-configs', component: LlmConfig },
   ]
 })

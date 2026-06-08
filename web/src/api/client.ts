@@ -186,6 +186,60 @@ export interface QueryResult {
   error?: string
 }
 
+// --- LLM Config types and API ---
+
+export interface LlmConfig {
+  id: string
+  model_name: string
+  provider_url: string
+  api_key: string
+  is_default: boolean
+  temperature: number
+  max_tokens: number
+}
+
+export interface LlmConfigListResponse {
+  configs: LlmConfig[]
+}
+
+export async function listLlmConfigs(): Promise<LlmConfigListResponse> {
+  return get<LlmConfigListResponse>(`${BASE_URL}/llm-configs`)
+}
+
+export async function createLlmConfig(config: Omit<LlmConfig, 'id'>): Promise<LlmConfig> {
+  const res = await fetch(`${BASE_URL}/llm-configs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `API error: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function updateLlmConfig(id: string, config: LlmConfig): Promise<void> {
+  const res = await fetch(`${BASE_URL}/llm-configs/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `API error: ${res.status}`)
+  }
+}
+
+export async function deleteLlmConfig(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/llm-configs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+}
+
 // --- Session types and API ---
 
 export interface SessionListItem {

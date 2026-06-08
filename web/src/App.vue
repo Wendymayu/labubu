@@ -6,6 +6,7 @@
         <router-link to="/traces">{{ t('nav.traces') }}</router-link>
         <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
         <router-link to="/dashboards">{{ t('nav.metrics') }}</router-link>
+        <router-link to="/settings/llm-configs">LLM Configs</router-link>
       </nav>
       <div class="lang-switcher">
         <select v-model="locale" @change="onLocaleChange">
