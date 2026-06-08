@@ -31,6 +31,13 @@
             <span class="summary-label">Total Tokens</span>
             <span class="summary-value token-highlight">{{ formatTokens(computeTotalTokens()) }}</span>
           </div>
+          <div class="summary-item">
+            <span class="summary-label">Cost</span>
+            <span class="summary-value token-highlight">
+              {{ formatCost(trace.cost, trace.cost_currency) }}
+              <span v-if="trace.unpriced_spans" class="unpriced-hint">({{ trace.unpriced_spans }} unpriced)</span>
+            </span>
+          </div>
           <div class="download-group">
             <button class="btn-download" @click="downloadTraceJSON" title="Download as internal JSON">JSON</button>
             <button class="btn-download" @click="downloadTraceOTLP" title="Download as OTLP JSON (importable to Jaeger/Grafana)">OTLP</button>
@@ -123,6 +130,7 @@ import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
 import type { PieSlice } from '../components/TokenPieChart.vue'
+import { formatCost } from '../utils/format'
 
 const route = useRoute()
 const { t } = useI18n()

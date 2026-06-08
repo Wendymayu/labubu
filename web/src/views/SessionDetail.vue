@@ -20,6 +20,10 @@
             <span class="summary-value token-highlight">{{ formatTokens(detail.session.total_tokens) }}</span>
           </div>
           <div class="summary-item">
+            <span class="summary-label">Cost</span>
+            <span class="summary-value token-highlight">{{ formatCost(detail.session.cost, detail.session.cost_currency) }}</span>
+          </div>
+          <div class="summary-item">
             <span class="summary-label">Error Rate</span>
             <span :class="['summary-value', errorRateClass(detail.session.error_rate)]">
               {{ (detail.session.error_rate * 100).toFixed(0) }}%
@@ -95,6 +99,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '../composables/useTheme'
 import { getSession, type SessionDetail, type QueryResult } from '../api/client'
+import { formatCost } from '../utils/format'
 import {
   Chart, LineController, CategoryScale, LinearScale,
   PointElement, LineElement, Tooltip, Legend, Filler

@@ -39,6 +39,7 @@
             <th>{{ t('traceList.spans') }}</th>
             <th>{{ t('traceList.status') }}</th>
             <th>{{ t('traceList.tokens') }}</th>
+            <th>Cost</th>
             <th>{{ t('traceList.time') }}</th>
           </tr>
         </thead>
@@ -59,6 +60,7 @@
               <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
             </td>
             <td @click="goToTrace(trace.trace_id_hex)">{{ formatTokens(trace.total_tokens) }}</td>
+            <td class="cell-cost" @click="goToTrace(trace.trace_id_hex)">{{ formatCost(trace.cost, trace.cost_currency) }}</td>
             <td class="cell-time" @click="goToTrace(trace.trace_id_hex)">{{ formatTime(trace.start_time_ms) }}</td>
           </tr>
         </tbody>
@@ -94,6 +96,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listTraces, getServices, exportTraces, type TraceListItem, type Pagination } from '../api/client'
+import { formatCost } from '../utils/format'
 
 const router = useRouter()
 const { t } = useI18n()

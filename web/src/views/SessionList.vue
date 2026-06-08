@@ -25,6 +25,7 @@
             <th>{{ t('sessionList.sessionId') }}</th>
             <th>{{ t('sessionList.turns') }}</th>
             <th>{{ t('sessionList.totalTokens') }}</th>
+            <th>Cost</th>
             <th>{{ t('sessionList.avgLatency') }}</th>
             <th>{{ t('sessionList.maxLatency') }}</th>
             <th>{{ t('sessionList.errorRate') }}</th>
@@ -41,6 +42,7 @@
             <td class="cell-session-id">{{ session.session_id }}</td>
             <td>{{ session.trace_count }}</td>
             <td class="cell-tokens">{{ formatTokens(session.total_tokens) }}</td>
+            <td class="cell-cost">{{ formatCost(session.cost, session.cost_currency) }}</td>
             <td>{{ formatDuration(session.avg_duration_ms) }}</td>
             <td>{{ formatDuration(session.max_duration_ms) }}</td>
             <td>
@@ -83,6 +85,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listSessions, getServices, type SessionListItem, type Pagination } from '../api/client'
+import { formatCost } from '../utils/format'
 
 const router = useRouter()
 const { t } = useI18n()
