@@ -7,6 +7,17 @@ export default {
     next: '下一页 →',
     pageOf: '第 {page} / {total} 页（共 {count} 条）',
     allServices: '所有服务',
+    cancel: '取消',
+  },
+  dashboard: {
+    newDashboard: '新建仪表盘',
+    dashboardName: '仪表盘名称',
+    createDashboard: '创建仪表盘',
+    renameDashboard: '重命名仪表盘',
+    deleteDashboard: '删除仪表盘',
+    deleteDashboardConfirm: '确定删除仪表盘 "{name}" 及其所有面板？',
+    noDashboards: '暂无仪表盘。',
+    createFirstDashboard: '创建你的第一个仪表盘',
   },
   nav: {
     traces: '链路追踪',

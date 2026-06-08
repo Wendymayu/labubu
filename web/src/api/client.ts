@@ -140,12 +140,53 @@ export interface PanelConfig {
   step?: number
 }
 
-export async function listDashboards(): Promise<{ panels: PanelConfig[] }> {
-  return get<{ panels: PanelConfig[] }>(`${BASE_URL}/dashboards`)
+export interface DashboardItem {
+  id: string
+  name: string
+  created_at: string
+  panels: PanelConfig[]
 }
 
-export async function createDashboard(panel: Omit<PanelConfig, 'id'>): Promise<PanelConfig> {
+export interface DashboardListResponse {
+  dashboards: DashboardItem[]
+}
+
+export async function listDashboards(): Promise<DashboardListResponse> {
+  return get<DashboardListResponse>(`${BASE_URL}/dashboards`)
+}
+
+export async function createDashboard(name: string): Promise<DashboardItem> {
   const res = await fetch(`${BASE_URL}/dashboards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+export async function renameDashboard(id: string, name: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/dashboards/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+}
+
+export async function deleteDashboard(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/dashboards/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+}
+
+export async function createPanel(dashboardId: string, panel: Omit<PanelConfig, 'id'>): Promise<PanelConfig> {
+  const res = await fetch(`${BASE_URL}/dashboards/${dashboardId}/panels`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(panel),
@@ -156,8 +197,8 @@ export async function createDashboard(panel: Omit<PanelConfig, 'id'>): Promise<P
   return res.json()
 }
 
-export async function updateDashboard(panel: PanelConfig): Promise<PanelConfig> {
-  const res = await fetch(`${BASE_URL}/dashboards/${panel.id}`, {
+export async function updatePanel(dashboardId: string, panel: PanelConfig): Promise<PanelConfig> {
+  const res = await fetch(`${BASE_URL}/dashboards/${dashboardId}/panels/${panel.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(panel),
@@ -168,8 +209,8 @@ export async function updateDashboard(panel: PanelConfig): Promise<PanelConfig> 
   return res.json()
 }
 
-export async function deleteDashboard(id: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/dashboards/${id}`, { method: 'DELETE' })
+export async function deletePanel(dashboardId: string, panelId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/dashboards/${dashboardId}/panels/${panelId}`, { method: 'DELETE' })
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`)
   }

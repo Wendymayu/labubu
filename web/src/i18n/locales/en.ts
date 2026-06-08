@@ -7,6 +7,17 @@ export default {
     next: 'Next →',
     pageOf: 'Page {page} of {total} ({count} items)',
     allServices: 'All services',
+    cancel: 'Cancel',
+  },
+  dashboard: {
+    newDashboard: 'New Dashboard',
+    dashboardName: 'Dashboard name',
+    createDashboard: 'Create Dashboard',
+    renameDashboard: 'Rename Dashboard',
+    deleteDashboard: 'Delete Dashboard',
+    deleteDashboardConfirm: 'Delete dashboard "{name}" and all its panels?',
+    noDashboards: 'No dashboards yet.',
+    createFirstDashboard: 'Create your first dashboard',
   },
   nav: {
     traces: 'Trace',
