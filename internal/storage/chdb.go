@@ -384,6 +384,26 @@ func (s *chDBStore) DeleteModelPricing(ctx context.Context, modelName string) er
 	return s.execSQL(sql)
 }
 
+func (s *chDBStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
+	_ = ctx
+	return nil, fmt.Errorf("chDB LLMConfig not implemented")
+}
+
+func (s *chDBStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	return fmt.Errorf("chDB LLMConfig not implemented")
+}
+
+func (s *chDBStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	return fmt.Errorf("chDB LLMConfig not implemented")
+}
+
+func (s *chDBStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	_ = ctx
+	return fmt.Errorf("chDB LLMConfig not implemented")
+}
+
 func (s *chDBStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
 	// Query spans with token/model info.
 	spansSQL := buildSelectSpanTokensSQL(traceID) + " FORMAT JSONEachRow"

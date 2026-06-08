@@ -199,6 +199,17 @@ type ModelPricing struct {
 	Currency    string  `json:"currency"`     // "USD" or "CNY"
 }
 
+// LLMConfig holds configuration for a single LLM model used for trace analysis.
+type LLMConfig struct {
+	ID          string  `json:"id"`
+	ModelName   string  `json:"model_name"`
+	ProviderURL string  `json:"provider_url"`
+	APIKey      string  `json:"api_key"`     // plaintext at rest, masked on GET
+	IsDefault   bool    `json:"is_default"`
+	Temperature float64 `json:"temperature"` // default 0.7
+	MaxTokens   int     `json:"max_tokens"`  // default 4096
+}
+
 // PricingConfig holds the default pricing loaded from YAML.
 type PricingConfig struct {
 	Models []ModelPricing `yaml:"models"`
@@ -248,6 +259,12 @@ type Store interface {
 	GetModelPricing(ctx context.Context) ([]ModelPricing, error)
 	UpsertModelPricing(ctx context.Context, p ModelPricing) error
 	DeleteModelPricing(ctx context.Context, modelName string) error
+
+	// LLMConfig CRUD.
+	GetLLMConfigs(ctx context.Context) ([]LLMConfig, error)
+	CreateLLMConfig(ctx context.Context, c *LLMConfig) error
+	UpdateLLMConfig(ctx context.Context, c *LLMConfig) error
+	DeleteLLMConfig(ctx context.Context, id string) error
 
 	// UpdateTraceCost recalculates and stores cost for a trace.
 	UpdateTraceCost(ctx context.Context, traceID [16]byte) error

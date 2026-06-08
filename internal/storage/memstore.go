@@ -20,7 +20,8 @@ type memStore struct {
 	traces   map[[16]byte]Trace
 	services map[string]bool
 	logs     []LogRecord
-	pricing  map[string]ModelPricing
+	pricing    map[string]ModelPricing
+	llmConfigs map[string]LLMConfig
 }
 
 // NewChDBStore returns an in-memory Store when chDB is not available.
@@ -32,7 +33,8 @@ func NewChDBStore(dataDir string) (Store, error) {
 		traces:   make(map[[16]byte]Trace),
 		services: make(map[string]bool),
 		logs:     make([]LogRecord, 0),
-		pricing:  make(map[string]ModelPricing),
+		pricing:    make(map[string]ModelPricing),
+		llmConfigs: make(map[string]LLMConfig),
 	}, nil
 }
 
@@ -736,6 +738,47 @@ func (m *memStore) DeleteModelPricing(ctx context.Context, modelName string) err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.pricing, modelName)
+	return nil
+}
+
+func (m *memStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]LLMConfig, 0, len(m.llmConfigs))
+	for _, c := range m.llmConfigs {
+		result = append(result, c)
+	}
+	return result, nil
+}
+
+func (m *memStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.llmConfigs == nil {
+		m.llmConfigs = make(map[string]LLMConfig)
+	}
+	m.llmConfigs[c.ID] = *c
+	return nil
+}
+
+func (m *memStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.llmConfigs == nil {
+		m.llmConfigs = make(map[string]LLMConfig)
+	}
+	m.llmConfigs[c.ID] = *c
+	return nil
+}
+
+func (m *memStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.llmConfigs, id)
 	return nil
 }
 
