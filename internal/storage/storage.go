@@ -65,6 +65,8 @@ type Trace struct {
 	StatusCode        int32
 	StatusMessage     string
 	TotalTokens       *uint32
+	Cost              *float64
+	CostCurrency      string
 	SessionID         string
 }
 
@@ -97,7 +99,9 @@ type TraceListItem struct {
 	DurationMS   uint64  `json:"duration_ms"`
 	SpanCount    uint16  `json:"span_count"`
 	Status       string  `json:"status"`
-	TotalTokens  *uint32 `json:"total_tokens"`
+	TotalTokens  *uint32  `json:"total_tokens"`
+	Cost         *float64 `json:"cost"`
+	CostCurrency string   `json:"cost_currency"`
 }
 
 // Pagination holds page metadata.
@@ -121,8 +125,10 @@ type SessionQuery struct {
 type SessionListItem struct {
 	SessionID       string  `json:"session_id"`
 	TraceCount      int     `json:"trace_count"`
-	TotalTokens     *uint32 `json:"total_tokens"`
-	TotalDurationMS uint64  `json:"total_duration_ms"`
+	TotalTokens     *uint32  `json:"total_tokens"`
+	Cost            *float64 `json:"cost"`
+	CostCurrency    string   `json:"cost_currency"`
+	TotalDurationMS uint64   `json:"total_duration_ms"`
 	MaxDurationMS   uint64  `json:"max_duration_ms"`
 	AvgDurationMS   float64 `json:"avg_duration_ms"`
 	ErrorCount      int     `json:"error_count"`
@@ -153,6 +159,9 @@ type TraceDetail struct {
 	ResourceAttrs     map[string]string `json:"resource_attributes"`
 	ResourceSchemaURL string            `json:"resource_schema_url"`
 	Scope             ScopeDetail       `json:"scope"`
+	Cost              *float64          `json:"cost"`
+	CostCurrency      string            `json:"cost_currency"`
+	UnpricedSpans     int               `json:"unpriced_spans"`
 	Spans             []SpanDetail      `json:"spans"`
 }
 
@@ -180,6 +189,19 @@ type SpanDetail struct {
 	OutputTokens        *uint32           `json:"output_tokens"`
 	TotalTokens         *uint32           `json:"total_tokens"`
 	GenAIRequestModel   *string           `json:"gen_ai_request_model"`
+}
+
+// ModelPricing holds pricing configuration for a single model.
+type ModelPricing struct {
+	ModelName   string  `json:"model_name"`
+	InputPrice  float64 `json:"input_price"`  // per 1M input tokens
+	OutputPrice float64 `json:"output_price"` // per 1M output tokens
+	Currency    string  `json:"currency"`     // "USD" or "CNY"
+}
+
+// PricingConfig holds the default pricing loaded from YAML.
+type PricingConfig struct {
+	Models []ModelPricing `yaml:"models"`
 }
 
 // Store is the storage backend interface. All chDB details are hidden behind this.
@@ -221,6 +243,14 @@ type Store interface {
 
 	// GetLogEventNames returns distinct event_name values for the filter dropdown.
 	GetLogEventNames(ctx context.Context) ([]string, error)
+
+	// ModelPricing CRUD.
+	GetModelPricing(ctx context.Context) ([]ModelPricing, error)
+	UpsertModelPricing(ctx context.Context, p ModelPricing) error
+	DeleteModelPricing(ctx context.Context, modelName string) error
+
+	// UpdateTraceCost recalculates and stores cost for a trace.
+	UpdateTraceCost(ctx context.Context, traceID [16]byte) error
 
 	// Close releases resources (e.g., chDB session).
 	Close() error

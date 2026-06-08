@@ -353,6 +353,30 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionD
 }
 
 // Close releases the chDB connection.
+func (s *chDBStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
+	// Will be implemented in Task 2.
+	_ = ctx
+	return []ModelPricing{}, nil
+}
+
+func (s *chDBStore) UpsertModelPricing(ctx context.Context, p ModelPricing) error {
+	_ = ctx
+	_ = p
+	return nil
+}
+
+func (s *chDBStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	_ = ctx
+	_ = modelName
+	return nil
+}
+
+func (s *chDBStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	_ = ctx
+	_ = traceID
+	return nil
+}
+
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
 		C.chdb_close(s.conn)

@@ -10,8 +10,9 @@ import (
 
 // Config is the top-level Labubu configuration loaded from YAML.
 type Config struct {
-	Trace  TraceConfig  `yaml:"trace"`
-	Metric MetricConfig `yaml:"metric"`
+	Trace   TraceConfig   `yaml:"trace"`
+	Metric  MetricConfig  `yaml:"metric"`
+	Pricing PricingConfig `yaml:"pricing"`
 }
 
 // TraceConfig holds trace-specific configuration.
@@ -51,6 +52,14 @@ type yamlConfig struct {
 			MaxAge string `yaml:"max_age"`
 		} `yaml:"retention"`
 	} `yaml:"metric"`
+	Pricing struct {
+		Models []struct {
+			Name        string  `yaml:"name"`
+			InputPrice  float64 `yaml:"input_price"`
+			OutputPrice float64 `yaml:"output_price"`
+			Currency    string  `yaml:"currency"`
+		} `yaml:"models"`
+	} `yaml:"pricing"`
 }
 
 // DefaultConfig returns a Config with production defaults.
@@ -66,6 +75,13 @@ func DefaultConfig() Config {
 		Metric: MetricConfig{
 			Retention: MetricRetentionConfig{
 				MaxAge: 24 * time.Hour,
+			},
+		},
+		Pricing: PricingConfig{
+			Models: []ModelPricing{
+				{ModelName: "claude-opus-4-8", InputPrice: 15.0, OutputPrice: 75.0, Currency: "USD"},
+				{ModelName: "claude-sonnet-4-6", InputPrice: 3.0, OutputPrice: 15.0, Currency: "USD"},
+				{ModelName: "claude-haiku-4-5", InputPrice: 0.80, OutputPrice: 4.0, Currency: "USD"},
 			},
 		},
 	}
@@ -106,6 +122,13 @@ func LoadConfig(path string) Config {
 		if d, err := time.ParseDuration(raw.Metric.Retention.MaxAge); err == nil {
 			cfg.Metric.Retention.MaxAge = d
 		}
+	}
+
+	for _, m := range raw.Pricing.Models {
+		cfg.Pricing.Models = append(cfg.Pricing.Models, ModelPricing{
+			ModelName: m.Name, InputPrice: m.InputPrice,
+			OutputPrice: m.OutputPrice, Currency: m.Currency,
+		})
 	}
 
 	return cfg

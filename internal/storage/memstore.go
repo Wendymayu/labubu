@@ -20,6 +20,7 @@ type memStore struct {
 	traces   map[[16]byte]Trace
 	services map[string]bool
 	logs     []LogRecord
+	pricing  map[string]ModelPricing
 }
 
 // NewChDBStore returns an in-memory Store when chDB is not available.
@@ -31,6 +32,7 @@ func NewChDBStore(dataDir string) (Store, error) {
 		traces:   make(map[[16]byte]Trace),
 		services: make(map[string]bool),
 		logs:     make([]LogRecord, 0),
+		pricing:  make(map[string]ModelPricing),
 	}, nil
 }
 
@@ -665,6 +667,43 @@ func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int
 	m.logs = newLogs
 
 	return deletedTraces, deletedSpans, nil
+}
+
+func (m *memStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]ModelPricing, 0, len(m.pricing))
+	for _, p := range m.pricing {
+		result = append(result, p)
+	}
+	return result, nil
+}
+
+func (m *memStore) UpsertModelPricing(ctx context.Context, p ModelPricing) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pricing == nil {
+		m.pricing = make(map[string]ModelPricing)
+	}
+	m.pricing[p.ModelName] = p
+	return nil
+}
+
+func (m *memStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.pricing, modelName)
+	return nil
+}
+
+func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	// Cost calculation will be implemented in Task 3.
+	_ = ctx
+	_ = traceID
+	return nil
 }
 
 func (m *memStore) Close() error {

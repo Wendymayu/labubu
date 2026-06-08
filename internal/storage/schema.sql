@@ -63,3 +63,16 @@ CREATE TABLE IF NOT EXISTS logs (
 )
 ENGINE = MergeTree
 ORDER BY (trace_id, timestamp);
+
+CREATE TABLE IF NOT EXISTS model_pricing (
+    model_name   String,
+    input_price  Float64,
+    output_price Float64,
+    currency     String,
+    updated_at   DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY model_name;
+
+ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost Nullable(Float64);
+ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost_currency String DEFAULT '';
