@@ -24,6 +24,7 @@ export default {
     sessions: '会话',
     metrics: '指标监控',
     logs: '日志',
+    alerts: '告警',
     settings: '设置',
     modelPricing: '模型定价',
     llmConfigs: 'LLM 配置',

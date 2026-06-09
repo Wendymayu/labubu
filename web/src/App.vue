@@ -10,7 +10,7 @@
         <div class="nav-group">
           <button class="nav-group-title" @click="alertsOpen = !alertsOpen">
             <span class="nav-group-arrow">{{ alertsOpen ? '▼' : '▶' }}</span>
-            Alerts
+            {{ t('nav.alerts') }}
           </button>
           <div v-show="alertsOpen" class="nav-group-items">
             <router-link to="/alerts/rules">{{ t('alerts.rules') }}</router-link>

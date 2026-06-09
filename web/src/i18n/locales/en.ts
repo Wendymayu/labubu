@@ -24,6 +24,7 @@ export default {
     sessions: 'Sessions',
     metrics: 'Metrics',
     logs: 'Logs',
+    alerts: 'Alerts',
     settings: 'Settings',
     modelPricing: 'Model Pricing',
     llmConfigs: 'LLM Configs',
