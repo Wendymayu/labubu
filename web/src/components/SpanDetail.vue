@@ -108,6 +108,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch } from 'vue'
 import type { SpanDetail } from '../api/client'
+import { highlightJSON } from '../utils/format'
 
 const props = defineProps<{
   span: SpanDetail | null
@@ -245,27 +246,6 @@ function isToolIO(attrKey: string): boolean {
   const lower = attrKey.toLowerCase()
   return lower === 'input' || lower === 'output' || lower === 'result' ||
     lower.endsWith('.input') || lower.endsWith('.output') || lower.endsWith('.result')
-}
-
-function highlightJSON(raw: string): string {
-  try {
-    const parsed = JSON.parse(raw)
-    const pretty = JSON.stringify(parsed, null, 2)
-    // Basic syntax highlighting
-    return pretty
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"([^"]+)":/g, '<span class="j-key">"$1"</span>:')
-      .replace(/: "([^"]*)"/g, ': <span class="j-str">"$1"</span>')
-      .replace(/: (\d+\.?\d*)/g, ': <span class="j-num">$1</span>')
-      .replace(/: (true|false|null)/g, ': <span class="j-bool">$1</span>')
-  } catch {
-    return raw
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-  }
 }
 
 function copyText(text: string) {
