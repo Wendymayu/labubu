@@ -103,17 +103,47 @@
               <span class="drawer-span-name">{{ selectedSpan?.name }}</span>
               <span class="drawer-span-id">{{ selectedSpan?.span_id }}</span>
             </div>
+            <div class="drawer-view-toggle">
+              <button
+                :class="['view-toggle-btn', { active: viewMode === 'structured' }]"
+                @click="viewMode = 'structured'"
+              >Structured</button>
+              <button
+                :class="['view-toggle-btn', { active: viewMode === 'json' }]"
+                @click="viewMode = 'json'"
+              >JSON</button>
+            </div>
             <button class="drawer-close" @click="closeDrawer" title="Close (Esc)">✕</button>
           </div>
 
           <div class="drawer-body">
-            <TokenPieChart
-              v-if="selectedSpanTokenSlices.length > 0"
-              :items="selectedSpanTokenSlices"
-              :input-tokens="selectedSpanInputTokens"
-              :output-tokens="selectedSpanOutputTokens"
-            />
-            <SpanDetail :span="selectedSpan" />
+            <template v-if="viewMode === 'structured'">
+              <TokenPieChart
+                v-if="selectedSpanTokenSlices.length > 0"
+                :items="selectedSpanTokenSlices"
+                :input-tokens="selectedSpanInputTokens"
+                :output-tokens="selectedSpanOutputTokens"
+              />
+              <SpanDetail :span="selectedSpan" />
+            </template>
+
+            <div v-else class="json-preview">
+              <div class="json-toolbar">
+                <button class="json-copy-btn" @click="copySpanJSON">
+                  {{ copyLabel }}
+                </button>
+                <input
+                  v-model="jsonSearch"
+                  class="json-search"
+                  type="text"
+                  placeholder="Search..."
+                />
+              </div>
+              <pre
+                class="json-content"
+                v-html="highlightedSpanJSON"
+              ></pre>
+            </div>
           </div>
         </div>
       </div>
@@ -122,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getTrace, getLogsByTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord } from '../api/client'
@@ -130,7 +160,7 @@ import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
 import type { PieSlice } from '../components/TokenPieChart.vue'
-import { formatCost } from '../utils/format'
+import { formatCost, highlightJSON } from '../utils/format'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -146,6 +176,9 @@ const logsLoading = ref(false)
 const activeTab = ref<'spans' | 'logs'>('spans')
 const logSpanFilter = ref('')
 const logExpandedIdx = ref<number | null>(null)
+const viewMode = ref<'structured' | 'json'>('structured')
+const jsonSearch = ref('')
+const copyLabel = ref('📋 Copy')
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
 const CTX_PATTERNS: { key: string; label: string }[] = [
@@ -207,6 +240,37 @@ const rootSpanName = computed(() => {
   if (!trace.value) return 'Trace Detail'
   const root = trace.value.spans.find(s => s.parent_span_id === '')
   return root?.name || 'Trace Detail'
+})
+
+const spanJSON = computed(() => {
+  if (!selectedSpan.value) return ''
+  return JSON.stringify(selectedSpan.value, null, 2)
+})
+
+const highlightedSpanJSON = computed(() => {
+  let raw = spanJSON.value
+  if (!raw) return ''
+  if (jsonSearch.value.trim()) {
+    const term = jsonSearch.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`(${term})`, 'gi')
+    raw = raw.replace(re, '<mark class="json-search-hit">$1</mark>')
+  }
+  return highlightJSON(raw)
+})
+
+function copySpanJSON() {
+  navigator.clipboard?.writeText(spanJSON.value).then(() => {
+    copyLabel.value = '✓ Copied!'
+    setTimeout(() => { copyLabel.value = '📋 Copy' }, 2000)
+  }).catch(() => {
+    copyLabel.value = '✗ Failed'
+    setTimeout(() => { copyLabel.value = '📋 Copy' }, 2000)
+  })
+}
+
+watch(selectedSpan, () => {
+  viewMode.value = 'structured'
+  jsonSearch.value = ''
 })
 
 async function fetchTrace() {
@@ -595,4 +659,108 @@ onUnmounted(() => {
 }
 
 .loading-state, .empty-state { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 13px; }
+
+/* --- Drawer view toggle --- */
+.drawer-view-toggle {
+  display: flex;
+  gap: 0;
+  margin-left: auto;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+.view-toggle-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border-group);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.view-toggle-btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.view-toggle-btn:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.view-toggle-btn.active {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+.view-toggle-btn:not(.active):hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+/* --- JSON preview --- */
+.json-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.json-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.json-copy-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.json-copy-btn:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.json-search {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  background: var(--bg-surface-deep);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.json-search::placeholder {
+  color: var(--text-muted);
+}
+.json-search:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+.json-content {
+  flex: 1;
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-surface-deep);
+  border: 1px solid var(--border-group);
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre;
+  overflow: auto;
+  max-height: calc(100vh - 360px);
+}
+.json-content::-webkit-scrollbar { width: 4px; height: 4px; }
+.json-content::-webkit-scrollbar-track { background: transparent; }
+.json-content::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
+
+/* JSON syntax highlighting */
+.json-content :deep(.j-key) { color: var(--text-secondary); }
+.json-content :deep(.j-str) { color: var(--token-green); }
+.json-content :deep(.j-num) { color: var(--status-warning); }
+.json-content :deep(.j-bool) { color: var(--chart-pie-assistant); }
+.json-content :deep(.json-search-hit) {
+  background: var(--status-warning);
+  color: #000;
+  border-radius: 2px;
+}
 </style>
