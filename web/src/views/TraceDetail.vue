@@ -451,19 +451,11 @@ onUnmounted(() => {
   display: flex;
   gap: 0;
 }
-.detail-layout.drawer-open .waterfall-panel {
-  flex: 1;
-  min-width: 0;
-}
-.detail-layout:not(.drawer-open) .waterfall-panel {
+.waterfall-panel {
   flex: 1;
   width: 100%;
-}
-
-.waterfall-panel {
   position: relative;
   overflow-x: auto;
-  transition: flex 0.3s ease;
 }
 
 .hint-click {
@@ -473,17 +465,31 @@ onUnmounted(() => {
   padding: 24px 0;
 }
 
-/* === Drawer === */
+/* === Drawer (overlay) === */
 .detail-drawer {
-  width: 480px;
-  flex-shrink: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 900px;
+  max-width: 90vw;
+  z-index: 100;
   border-left: 1px solid var(--border-strong);
   background: var(--bg-primary);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 240px);
   overflow: hidden;
   animation: slideIn 0.3s ease;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.3);
+}
+
+/* Backdrop */
+.detail-layout.drawer-open::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.3);
+  z-index: 99;
 }
 
 @keyframes slideIn {
@@ -543,23 +549,10 @@ onUnmounted(() => {
 .drawer-body::-webkit-scrollbar-track { background: transparent; }
 .drawer-body::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 
-@media (max-width: 900px) {
+@media (max-width: 600px) {
   .detail-drawer {
-    position: fixed;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 90vw;
-    max-width: 480px;
-    z-index: 100;
-    max-height: 100vh;
-  }
-  .detail-layout.drawer-open::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: 99;
+    width: 100vw;
+    max-width: 100vw;
   }
 }
 
