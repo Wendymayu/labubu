@@ -7,6 +7,9 @@ import Dashboard from './views/Dashboard.vue'
 import LogList from './views/LogList.vue'
 import PricingManager from './views/PricingManager.vue'
 import LlmConfig from './views/LlmConfig.vue'
+import RuleList from './views/alerts/RuleList.vue'
+import RuleForm from './views/alerts/RuleForm.vue'
+import AlertHistory from './views/alerts/AlertHistory.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -20,5 +23,9 @@ export const router = createRouter({
     { path: '/logs', name: 'log-list', component: LogList },
     { path: '/settings/pricing', name: 'pricing-manager', component: PricingManager },
     { path: '/settings/llm-configs', name: 'llm-configs', component: LlmConfig },
+    { path: '/alerts/rules', name: 'rule-list', component: RuleList },
+    { path: '/alerts/rules/new', name: 'rule-create', component: RuleForm },
+    { path: '/alerts/rules/:id/edit', name: 'rule-edit', component: RuleForm },
+    { path: '/alerts/history', name: 'alert-history', component: AlertHistory },
   ]
 })

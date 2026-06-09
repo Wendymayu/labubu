@@ -8,6 +8,16 @@
         <router-link to="/dashboards">{{ t('nav.metrics') }}</router-link>
         <router-link to="/logs">{{ t('nav.logs') }}</router-link>
         <div class="nav-group">
+          <button class="nav-group-title" @click="alertsOpen = !alertsOpen">
+            <span class="nav-group-arrow">{{ alertsOpen ? '▼' : '▶' }}</span>
+            Alerts
+          </button>
+          <div v-show="alertsOpen" class="nav-group-items">
+            <router-link to="/alerts/rules">{{ t('alerts.rules') }}</router-link>
+            <router-link to="/alerts/history">{{ t('alerts.history') }}</router-link>
+          </div>
+        </div>
+        <div class="nav-group">
           <button class="nav-group-title" @click="settingsOpen = !settingsOpen">
             <span class="nav-group-arrow">{{ settingsOpen ? '▼' : '▶' }}</span>
             {{ t('nav.settings') }}
@@ -39,6 +49,7 @@ import LanguageToggle from './components/LanguageToggle.vue'
 const { t } = useI18n()
 useTheme() // initialize theme
 
+const alertsOpen = ref(false)
 const settingsOpen = ref(false)
 </script>
 
