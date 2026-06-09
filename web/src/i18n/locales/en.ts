@@ -24,6 +24,9 @@ export default {
     sessions: 'Sessions',
     metrics: 'Metrics',
     logs: 'Logs',
+    settings: 'Settings',
+    modelPricing: 'Model Pricing',
+    llmConfigs: 'LLM Configs',
   },
   traceList: {
     searchPlaceholder: 'Search traces...',
