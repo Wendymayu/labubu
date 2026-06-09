@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/labubu/labubu/internal/alerting"
 	"github.com/labubu/labubu/internal/api"
 	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
@@ -170,6 +171,19 @@ func runServe(args []string) {
 		}
 	}()
 
+	// Initialize alerting subsystem.
+	alertDBPath := *dataDir + "/alerting.json"
+	if *dataDir == "" {
+		alertDBPath = "alerting.json"
+	}
+	alertSub, err := alerting.InitAlerting(alertDBPath, store)
+	if err != nil {
+		log.Printf("Warning: alerting disabled: %v", err)
+	}
+	if alertSub != nil {
+		defer alertSub.Shutdown()
+	}
+
 	// Initialize API router.
 	traceHandler := api.NewTraceHandler(store)
 	var metricsHandler *api.MetricsHandler
@@ -181,7 +195,11 @@ func runServe(args []string) {
 	logHandler := api.NewLogHandler(store)
 	pricingHandler := api.NewPricingHandler(store)
 	llmConfigHandler := api.NewLLMConfigHandler(store)
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler)
+	var alertHandler http.Handler
+	if alertSub != nil {
+		alertHandler = alertSub.Handler
+	}
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler, alertHandler)
 
 	httpSrv := &http.Server{
 		Addr:         apiAddr,
