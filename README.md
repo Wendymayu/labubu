@@ -114,40 +114,20 @@ No file? Built-in defaults are used silently — everything still works.
 
 ## API
 
-### Traces
+Full endpoint reference: **[docs/api.md](docs/api.md)**
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/v1/traces` | List traces (page, page_size, service, status, query, start/end time) |
-| `GET /api/v1/traces/:id` | Full trace detail with all spans |
-| `GET /api/v1/services` | List known service names |
+Quick overview:
 
-### Sessions
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/v1/sessions` | List sessions (page, page_size, service, query, time range) |
-| `GET /api/v1/sessions/:id` | Session detail with summary stats and all traces |
-
-### Metrics & Dashboards
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/v1/metrics/query` | Instant PromQL query |
-| `GET /api/v1/metrics/query_range` | Range PromQL query |
-| `GET /api/v1/metrics/labels` | List label names |
-| `GET /api/v1/metrics/label/:name/values` | List label values |
-| `GET /api/v1/metrics/metadata` | Metric metadata |
-| `GET /api/v1/dashboards` | List dashboards |
-| `POST /api/v1/dashboards` | Create dashboard |
-| `PUT /api/v1/dashboards/:name` | Update dashboard |
-| `DELETE /api/v1/dashboards/:name` | Delete dashboard |
-
-### System
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/health` | Health check |
+| Section | Endpoints |
+|---------|-----------|
+| Traces | `GET /api/v1/traces`, `GET /api/v1/traces/:id`, `POST /api/v1/traces/export`, `GET /api/v1/services` |
+| Sessions | `GET /api/v1/sessions`, `GET /api/v1/sessions/:id` |
+| Logs | `GET /api/v1/logs`, `GET /api/v1/logs/:traceId`, `GET /api/v1/log-event-names` |
+| Metrics | `GET /api/v1/query`, `/query_range`, `/labels`, `/label/:name/values`, `/metadata`, `/metric-names` |
+| Dashboards | Full CRUD at `/api/v1/dashboards` + panels sub-resource |
+| Pricing | `GET/POST/DELETE /api/v1/model-pricing`, `POST /api/v1/model-pricing/recalc` |
+| LLM Configs | Full CRUD at `/api/v1/llm-configs` |
+| System | `GET /api/health` |
 
 ## Architecture
 
@@ -159,37 +139,7 @@ OTLP (gRPC/HTTP) → Receiver → Pipeline → Storage (chDB or in-memory)
               (tstorage)          (traces/sessions/metrics/dashboards)
 ```
 
-```
-labubu/
-├── cmd/labubu/main.go           # CLI entry point (serve/version/help)
-├── internal/
-│   ├── receiver/                # OTLP ingestion (gRPC + HTTP, traces + metrics)
-│   ├── pipeline/                # Async batch processing with backpressure
-│   ├── storage/
-│   │   ├── storage.go           # Store interface + model types
-│   │   ├── chdb.go              # chDB CGO implementation
-│   │   ├── memstore.go          # In-memory store (dev fallback)
-│   │   ├── config.go            # YAML config + retention settings
-│   │   ├── chdb_query.go        # SQL query builder
-│   │   └── schema.sql           # chDB DDL (traces + spans)
-│   ├── api/
-│   │   ├── router.go            # HTTP router + SPA serving
-│   │   ├── trace_handler.go     # Trace API handlers
-│   │   ├── session_handler.go   # Session API handlers
-│   │   ├── metrics_handler.go   # Metrics/PromQL API handlers
-│   │   └── dashboard_handler.go # Dashboard CRUD handlers
-│   ├── metrics/                 # tstorage-backed metrics store
-│   └── log/                     # Structured logging
-├── web/                         # Vue 3 + TypeScript SPA
-│   └── src/
-│       ├── views/               # TraceList, TraceDetail, SessionList, ...
-│       ├── components/          # WaterfallChart, TokenPieChart, ...
-│       ├── api/                 # Typed API client
-│       └── i18n/                # Chinese/English translations
-├── labubu-python/               # Python package for pip distribution
-├── Makefile
-└── docs/                        # Specs, plans, roadmap
-```
+Detailed project structure: **[docs/project-structure.md](docs/project-structure.md)**
 
 ## Development
 
