@@ -6,8 +6,7 @@
           class="search-input"
           type="text"
           placeholder="Search spans..."
-          :value="searchQuery"
-          @input="onSearchInput(($event.target as HTMLInputElement).value)"
+          v-model="searchQuery"
         />
         <span v-if="searchQuery" class="search-count">{{ matchCount }}/{{ spans.length }}</span>
       </div>
@@ -123,8 +122,6 @@ const FILTER_OPTIONS = [
   { key: 'tool', label: 'Tool' },
 ] as const
 
-let debounceTimer: ReturnType<typeof setTimeout> | null = null
-
 function matchesSearch(span: SpanDetail): boolean {
   if (!searchQuery.value) return true
   const q = searchQuery.value.toLowerCase()
@@ -173,13 +170,6 @@ function toggleFilter(key: string) {
 
 function clearFilters() {
   activeFilters.value = new Set()
-}
-
-function onSearchInput(value: string) {
-  if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    searchQuery.value = value
-  }, 500)
 }
 
 interface DisplaySpan extends SpanDetail {
@@ -540,10 +530,5 @@ function formatTokens(tokens: number): string {
 .waterfall-row.filter-dimmed:hover {
   opacity: 0.6;
 }
-.match-text {
-  font-weight: 700;
-  background: rgba(251, 191, 36, 0.25);
-  border-radius: 2px;
-  padding: 1px 3px;
-}
+.match-text { font-weight: 700; color: var(--status-error-accent); }
 </style>

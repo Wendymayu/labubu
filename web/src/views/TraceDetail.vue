@@ -104,6 +104,12 @@
               <span class="drawer-span-id">{{ selectedSpan?.span_id }}</span>
             </div>
             <div class="drawer-view-toggle">
+              <input
+                v-model="contentSearch"
+                class="content-search"
+                type="text"
+                placeholder="Search content..."
+              />
               <button
                 :class="['view-toggle-btn', { active: viewMode === 'structured' }]"
                 @click="viewMode = 'structured'"
@@ -124,7 +130,7 @@
                 :input-tokens="selectedSpanInputTokens"
                 :output-tokens="selectedSpanOutputTokens"
               />
-              <SpanDetail :span="selectedSpan" />
+              <SpanDetail :span="selectedSpan" :search="contentSearch" />
             </template>
 
             <div v-else class="json-preview">
@@ -178,6 +184,7 @@ const logSpanFilter = ref('')
 const logExpandedIdx = ref<number | null>(null)
 const viewMode = ref<'structured' | 'json'>('structured')
 const jsonSearch = ref('')
+const contentSearch = ref('')
 const copyLabel = ref('📋 Copy')
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
@@ -271,6 +278,7 @@ function copySpanJSON() {
 watch(selectedSpan, () => {
   viewMode.value = 'structured'
   jsonSearch.value = ''
+  contentSearch.value = ''
 })
 
 async function fetchTrace() {
@@ -669,7 +677,20 @@ onUnmounted(() => {
   font-size: 11px;
   cursor: pointer;
 }
-.view-toggle-btn:first-child {
+.content-search {
+  padding: 4px 10px;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  background: var(--bg-surface-deep);
+  color: var(--text-primary);
+  font-size: 11px;
+  width: 160px;
+  margin-right: 4px;
+}
+.content-search::placeholder { color: var(--text-muted); }
+.content-search:focus { outline: none; border-color: var(--accent-blue); }
+
+.view-toggle-btn:nth-child(2) {
   border-radius: 4px 0 0 4px;
 }
 .view-toggle-btn:last-child {

@@ -16,12 +16,12 @@
       </div>
       <div class="qi-item">
         <div class="qi-label">Model</div>
-        <div class="qi-value qi-model">{{ span.gen_ai_request_model || '-' }}</div>
+        <div class="qi-value qi-model" v-html="highlightText(span.gen_ai_request_model || '-')"></div>
       </div>
     </div>
 
     <!-- Status message (error) -->
-    <div v-if="span.status_message" class="status-msg">{{ span.status_message }}</div>
+    <div v-if="span.status_message" class="status-msg" v-html="highlightText(span.status_message)"></div>
 
     <!-- Token summary line (compact) -->
     <div v-if="span.total_tokens" class="token-summary">
@@ -61,8 +61,8 @@
         </div>
         <div v-if="isGroupExpanded(group.name)" class="attr-group-body">
           <div v-for="item in group.items" :key="item.key" class="attr-row">
-            <span class="attr-key">{{ item.key }}</span>
-            <span class="attr-value" :class="{ 'attr-empty-val': !item.value }">{{ item.value || '(empty)' }}</span>
+            <span class="attr-key" v-html="highlightText(item.key)"></span>
+            <span class="attr-value" :class="{ 'attr-empty-val': !item.value }" v-html="highlightText(item.value || '(empty)')"></span>
           </div>
         </div>
       </div>
@@ -81,21 +81,21 @@
         >
           <div :class="['tl-dot', eventDotClass(evt)]"></div>
           <div class="tl-header">
-            <b :class="eventNameClass(evt)">{{ evt.name }}</b>
+            <b :class="eventNameClass(evt)" v-html="highlightText(evt.name)"></b>
             <span class="tl-time">{{ formatTimeOffset(evt.time_ms, span.start_time_ms) }}</span>
           </div>
           <div v-if="Object.keys(evt.attributes || {}).length > 0" class="tl-attrs">
             <template v-for="(v, k) in evt.attributes" :key="k">
               <div class="tl-attr-row" v-if="isToolIO(k)">
                 <div class="tl-code-toggle" @click="toggleCodeBlock(evt, k, i)">
-                  {{ codeBlockState(evt, k, i).expanded ? '▾' : '▸' }} {{ k }}
+                  {{ codeBlockState(evt, k, i).expanded ? '▾' : '▸' }} <span v-html="highlightText(k)"></span>
                   <span class="tl-copy-inline" @click.stop="copyText(v)">📋</span>
                 </div>
                 <pre v-if="codeBlockState(evt, k, i).expanded" class="tl-code"><code v-html="highlightJSON(v)"></code></pre>
               </div>
               <div v-else class="tl-attr-row">
-                <span class="tl-attr-key">{{ k }}</span>
-                <span class="tl-attr-value">{{ v }}</span>
+                <span class="tl-attr-key" v-html="highlightText(k)"></span>
+                <span class="tl-attr-value" v-html="highlightText(v)"></span>
               </div>
             </template>
           </div>
@@ -112,7 +112,18 @@ import { highlightJSON } from '../utils/format'
 
 const props = defineProps<{
   span: SpanDetail | null
+  search?: string
 }>()
+
+// --- content search highlight ---
+
+function highlightText(text: string): string {
+  if (!props.search || !text) return text
+  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const q = props.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`(${q})`, 'gi')
+  return escaped.replace(re, '<mark class="content-highlight">$1</mark>')
+}
 
 // --- grouping rules ---
 
@@ -596,6 +607,14 @@ function statusClass(status: string): string {
 .tl-code :deep(.j-str) { color: var(--token-green); }
 .tl-code :deep(.j-num) { color: var(--status-warning); }
 .tl-code :deep(.j-bool) { color: var(--chart-pie-assistant); }
+
+/* --- Content search highlight --- */
+:deep(.content-highlight) {
+  background: rgba(251, 191, 36, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
 
 /* --- Scrollbar --- */
 .tl-code::-webkit-scrollbar { width: 3px; height: 3px; }
