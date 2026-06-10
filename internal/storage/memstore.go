@@ -91,43 +91,45 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 	}
 
 	// Calculate costs inline for traces with token data (lock already held).
-	for traceID, trace := range traceMap {
-		if trace.TotalTokens != nil && *trace.TotalTokens > 0 {
-			var totalCost float64
-			var currency string
-			hasCost := false
-			for _, span := range inSpans {
-				if span.TraceID != traceID {
-					continue
-				}
-				if span.TotalTokens == nil || *span.TotalTokens == 0 || span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
-					continue
-				}
-				for _, p := range m.pricing {
-					if p.ModelName == *span.GenAIRequestModel {
-						inputT := float64(0)
-						outputT := float64(0)
-						if span.InputTokens != nil {
-							inputT = float64(*span.InputTokens)
-						}
-						if span.OutputTokens != nil {
-							outputT = float64(*span.OutputTokens)
-						}
-						totalCost += (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
-						hasCost = true
-						if currency == "" {
-							currency = p.Currency
-						}
-						break
-					}
-				}
+	for traceID := range traceMap {
+		merged, ok := m.traces[traceID]
+		if !ok || merged.TotalTokens == nil || *merged.TotalTokens == 0 {
+			continue
+		}
+		var totalCost float64
+		var currency string
+		hasCost := false
+		for _, span := range inSpans {
+			if span.TraceID != traceID {
+				continue
 			}
-			if hasCost {
-				trace.Cost = &totalCost
-				trace.CostCurrency = currency
+			if span.TotalTokens == nil || *span.TotalTokens == 0 || span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
+				continue
+			}
+			for _, p := range m.pricing {
+				if p.ModelName == *span.GenAIRequestModel {
+					inputT := float64(0)
+					outputT := float64(0)
+					if span.InputTokens != nil {
+						inputT = float64(*span.InputTokens)
+					}
+					if span.OutputTokens != nil {
+						outputT = float64(*span.OutputTokens)
+					}
+					totalCost += (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+					hasCost = true
+					if currency == "" {
+						currency = p.Currency
+					}
+					break
+				}
 			}
 		}
-		m.traces[traceID] = trace
+		if hasCost {
+			merged.Cost = &totalCost
+			merged.CostCurrency = currency
+			m.traces[traceID] = merged
+		}
 	}
 
 	return nil

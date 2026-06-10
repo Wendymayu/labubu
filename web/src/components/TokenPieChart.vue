@@ -111,14 +111,8 @@ const segments = computed<Segment[]>(() => {
     }
   }
 
-  // Also add output as a separate segment if present.
-  const outputFound = props.items.find(s => s.name === 'Output (completion)')
-  const outputVal = outputFound ? outputFound.tokens : props.outputTokens
-  if (outputVal > 0 && !out.find(s => s.key === 'output')) {
-    out.push({ key: 'output', label: 'Output Tokens', value: outputVal, color: getColors()['output'], pct: '' })
-  }
-
-  // Compute percentages.
+  // Compute percentages based on input context tokens only.
+  // Output tokens are shown in the summary below, not in the context window pie.
   const total = out.reduce((sum, s) => sum + s.value, 0)
   for (const s of out) {
     s.pct = total > 0 ? ((s.value / total) * 100).toFixed(1) : '0'

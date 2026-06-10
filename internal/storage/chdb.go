@@ -14,6 +14,7 @@ package storage
 import "C"
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -135,6 +136,79 @@ func (s *chDBStore) InsertSpans(ctx context.Context, resource ResourceInfo, scop
 
 	traceMap := aggregateTraces(resource, scope, spans)
 	for _, trace := range traceMap {
+		// Query existing trace rows so we can merge batch-level aggregates
+		// with data already stored from previous InsertSpans calls.
+		selectSQL := buildSelectExistingTraceSQL(trace.TraceID) + " FORMAT JSONEachRow"
+		result, err := s.querySQL(selectSQL)
+		if err != nil {
+			return fmt.Errorf("query existing trace %s: %w", trace.TraceIDHex, err)
+		}
+
+		if result != "" {
+			// Merge span counts, token totals, and time range from every
+			// existing row (there may be >1 if duplicates were created
+			// before this fix).
+			lines := splitLines(result)
+			for _, line := range lines {
+				if line == "" {
+					continue
+				}
+				var existing struct {
+					SpanCount   uint16  `json:"span_count"`
+					TotalTokens *uint32 `json:"total_tokens"`
+					StartTimeMS uint64  `json:"start_time_ms"`
+					EndTimeMS   uint64  `json:"end_time_ms"`
+					RootSpanID  string  `json:"root_span_id"`
+					RootName    string  `json:"root_name"`
+					SessionID   string  `json:"session_id"`
+				}
+				if err := json.Unmarshal([]byte(line), &existing); err != nil {
+					continue
+				}
+
+				// Accumulate span count across batches.
+				trace.SpanCount += existing.SpanCount
+
+				// Accumulate tokens.
+				if existing.TotalTokens != nil {
+					if trace.TotalTokens == nil {
+						v := *existing.TotalTokens
+						trace.TotalTokens = &v
+					} else {
+						sum := *trace.TotalTokens + *existing.TotalTokens
+						trace.TotalTokens = &sum
+					}
+				}
+
+				// Extend time range so the trace envelope covers all batches.
+				if existing.StartTimeMS < trace.StartTimeMS {
+					trace.StartTimeMS = existing.StartTimeMS
+				}
+				if existing.EndTimeMS > trace.EndTimeMS {
+					trace.EndTimeMS = existing.EndTimeMS
+					trace.DurationMS = trace.EndTimeMS - trace.StartTimeMS
+				}
+
+				// Preserve root-span info when the current batch only
+				// carries child spans (root was ingested in a prior batch).
+				if isZeroSpanID(trace.RootSpanID) && existing.RootSpanID != "" {
+					if decoded, err := hex.DecodeString(existing.RootSpanID); err == nil && len(decoded) == 8 {
+						copy(trace.RootSpanID[:], decoded)
+					}
+					trace.RootName = existing.RootName
+					if trace.SessionID == "" {
+						trace.SessionID = existing.SessionID
+					}
+				}
+			}
+
+			// Remove old rows so we can insert a single merged row.
+			deleteSQL := buildDeleteTraceSQL(trace.TraceID)
+			if err := s.execSQL(deleteSQL); err != nil {
+				return fmt.Errorf("delete old trace rows %s: %w", trace.TraceIDHex, err)
+			}
+		}
+
 		sql := buildUpsertTraceSQL(trace)
 		if err := s.execSQL(sql); err != nil {
 			return fmt.Errorf("upsert trace %s: %w", trace.TraceIDHex, err)
