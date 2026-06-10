@@ -10,10 +10,11 @@ import (
 )
 
 // NewRouter creates the HTTP handler with API routes and static file serving.
-func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler, sessionHandler *SessionHandler) http.Handler {
+func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler, sessionHandler *SessionHandler, logHandler *LogHandler, pricingHandler *PricingHandler, llmConfigHandler *LLMConfigHandler, alertHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes.
+	mux.HandleFunc("/api/v1/traces/export", traceHandler.ExportTraces)
 	mux.HandleFunc("/api/v1/traces/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/traces")
 		if path == "" || path == "/" {
@@ -59,6 +60,31 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 			sessionHandler.GetSession(w, r, sessionID)
 		})
 		mux.HandleFunc("/api/v1/sessions", sessionHandler.ListSessions)
+	}
+
+	// API routes — logs.
+	if logHandler != nil {
+		mux.HandleFunc("/api/v1/logs/", logHandler.ServeHTTP)
+		mux.HandleFunc("/api/v1/logs", logHandler.ServeHTTP)
+		mux.HandleFunc("/api/v1/log-event-names", logHandler.GetEventNames)
+	}
+
+	// API routes — model pricing.
+	if pricingHandler != nil {
+		mux.HandleFunc("/api/v1/model-pricing/", pricingHandler.ServeHTTP)
+		mux.HandleFunc("/api/v1/model-pricing", pricingHandler.ServeHTTP)
+	}
+
+	// API routes — LLM configs.
+	if llmConfigHandler != nil {
+		mux.HandleFunc("/api/v1/llm-configs/", llmConfigHandler.ServeHTTP)
+		mux.HandleFunc("/api/v1/llm-configs", llmConfigHandler.ServeHTTP)
+	}
+
+	// API routes — alerting.
+	if alertHandler != nil {
+		mux.HandleFunc("/api/v1/alerts/", alertHandler.ServeHTTP)
+		mux.HandleFunc("/api/v1/alerts", alertHandler.ServeHTTP)
 	}
 
 	// Health check.

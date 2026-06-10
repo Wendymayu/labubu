@@ -10,6 +10,8 @@ export interface TraceListItem {
   span_count: number
   status: string
   total_tokens?: number
+  cost?: number
+  cost_currency?: string
 }
 
 export interface Pagination {
@@ -56,6 +58,9 @@ export interface TraceDetailResponse {
     duration_ms: number
     resource_attributes: Record<string, string>
     scope: ScopeDetail
+    cost?: number
+    cost_currency?: string
+    unpriced_spans?: number
     spans: SpanDetail[]
   }
 }
@@ -111,6 +116,24 @@ export async function getServices(): Promise<string[]> {
   return data.services
 }
 
+export interface ExportRequest {
+  trace_ids: string[]
+  format: string
+}
+
+export async function exportTraces(traceIds: string[], format: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/traces/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trace_ids: traceIds, format } as ExportRequest),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Export failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 // --- Dashboard types and API ---
 
 export interface PanelConfig {
@@ -122,12 +145,53 @@ export interface PanelConfig {
   step?: number
 }
 
-export async function listDashboards(): Promise<{ panels: PanelConfig[] }> {
-  return get<{ panels: PanelConfig[] }>(`${BASE_URL}/dashboards`)
+export interface DashboardItem {
+  id: string
+  name: string
+  created_at: string
+  panels: PanelConfig[]
 }
 
-export async function createDashboard(panel: Omit<PanelConfig, 'id'>): Promise<PanelConfig> {
+export interface DashboardListResponse {
+  dashboards: DashboardItem[]
+}
+
+export async function listDashboards(): Promise<DashboardListResponse> {
+  return get<DashboardListResponse>(`${BASE_URL}/dashboards`)
+}
+
+export async function createDashboard(name: string): Promise<DashboardItem> {
   const res = await fetch(`${BASE_URL}/dashboards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+export async function renameDashboard(id: string, name: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/dashboards/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+}
+
+export async function deleteDashboard(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/dashboards/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+}
+
+export async function createPanel(dashboardId: string, panel: Omit<PanelConfig, 'id'>): Promise<PanelConfig> {
+  const res = await fetch(`${BASE_URL}/dashboards/${dashboardId}/panels`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(panel),
@@ -138,8 +202,8 @@ export async function createDashboard(panel: Omit<PanelConfig, 'id'>): Promise<P
   return res.json()
 }
 
-export async function updateDashboard(panel: PanelConfig): Promise<PanelConfig> {
-  const res = await fetch(`${BASE_URL}/dashboards/${panel.id}`, {
+export async function updatePanel(dashboardId: string, panel: PanelConfig): Promise<PanelConfig> {
+  const res = await fetch(`${BASE_URL}/dashboards/${dashboardId}/panels/${panel.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(panel),
@@ -150,8 +214,8 @@ export async function updateDashboard(panel: PanelConfig): Promise<PanelConfig> 
   return res.json()
 }
 
-export async function deleteDashboard(id: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/dashboards/${id}`, { method: 'DELETE' })
+export async function deletePanel(dashboardId: string, panelId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/dashboards/${dashboardId}/panels/${panelId}`, { method: 'DELETE' })
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}`)
   }
@@ -186,12 +250,108 @@ export interface QueryResult {
   error?: string
 }
 
+// --- Model Pricing types and API ---
+
+export interface ModelPricing {
+  model_name: string
+  input_price: number
+  output_price: number
+  currency: string
+}
+
+export interface ModelPricingListResponse {
+  models: ModelPricing[]
+}
+
+export async function getModelPricing(): Promise<ModelPricingListResponse> {
+  return get<ModelPricingListResponse>(`${BASE_URL}/model-pricing`)
+}
+
+export async function saveModelPricing(p: ModelPricing): Promise<ModelPricing> {
+  const res = await fetch(`${BASE_URL}/model-pricing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+export async function deleteModelPricing(modelName: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/model-pricing/${encodeURIComponent(modelName)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+}
+
+export async function recalcCosts(): Promise<{ status: string; traces_updated: number; sessions_updated: number }> {
+  const res = await fetch(`${BASE_URL}/model-pricing/recalc`, { method: 'POST' })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+// --- LLM Config types and API ---
+
+export interface LlmConfig {
+  id: string
+  model_name: string
+  provider_url: string
+  api_key: string
+  is_default: boolean
+  temperature: number
+  max_tokens: number
+}
+
+export interface LlmConfigListResponse {
+  configs: LlmConfig[]
+}
+
+export async function listLlmConfigs(): Promise<LlmConfigListResponse> {
+  return get<LlmConfigListResponse>(`${BASE_URL}/llm-configs`)
+}
+
+export async function createLlmConfig(config: Omit<LlmConfig, 'id'>): Promise<LlmConfig> {
+  const res = await fetch(`${BASE_URL}/llm-configs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `API error: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function updateLlmConfig(id: string, config: LlmConfig): Promise<void> {
+  const res = await fetch(`${BASE_URL}/llm-configs/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `API error: ${res.status}`)
+  }
+}
+
+export async function deleteLlmConfig(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/llm-configs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`)
+  }
+}
+
 // --- Session types and API ---
 
 export interface SessionListItem {
   session_id: string
   trace_count: number
   total_tokens?: number
+  cost?: number
+  cost_currency?: string
   total_duration_ms: number
   max_duration_ms: number
   avg_duration_ms: number
@@ -233,4 +393,54 @@ export async function listSessions(query: SessionQuery): Promise<SessionListResp
 
 export async function getSession(sessionId: string): Promise<SessionDetail> {
   return get<SessionDetail>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}`)
+}
+
+// --- Log types and API ---
+
+export interface LogRecord {
+  trace_id_hex: string
+  span_id_hex: string
+  timestamp: number
+  severity: string
+  event_name: string
+  body: string
+  attributes: Record<string, string>
+}
+
+export interface LogQuery {
+  page?: number
+  page_size?: number
+  severity?: string
+  event_name?: string
+  q?: string
+  trace_id?: string
+  start?: number
+  end?: number
+}
+
+export interface LogListResponse {
+  logs: LogRecord[]
+  pagination: Pagination
+}
+
+export async function listLogs(query: LogQuery): Promise<LogListResponse> {
+  return get<LogListResponse>(`${BASE_URL}/logs`, {
+    page: query.page,
+    page_size: query.page_size,
+    severity: query.severity,
+    event_name: query.event_name,
+    q: query.q,
+    trace_id: query.trace_id,
+    start: query.start,
+    end: query.end,
+  })
+}
+
+export async function getLogsByTrace(traceIdHex: string): Promise<{ logs: LogRecord[] }> {
+  return get<{ logs: LogRecord[] }>(`${BASE_URL}/logs/${traceIdHex}`)
+}
+
+export async function getLogEventNames(): Promise<string[]> {
+  const data = await get<{ event_names: string[] }>(`${BASE_URL}/log-event-names`)
+  return data.event_names || []
 }

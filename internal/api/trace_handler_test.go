@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/labubu/labubu/internal/storage"
 )
@@ -41,6 +43,48 @@ func (m *handlerMockStore) ListSessions(ctx context.Context, q storage.SessionQu
 
 func (m *handlerMockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
 	return nil, nil
+}
+
+func (m *handlerMockStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	return 0, 0, nil
+}
+
+func (m *handlerMockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
+
+func (m *handlerMockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.LogListResult, error) {
+	return nil, nil
+}
+
+func (m *handlerMockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]storage.LogListItem, error) {
+	return nil, nil
+}
+
+func (m *handlerMockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
+
+func (m *handlerMockStore) GetLLMConfigs(ctx context.Context) ([]storage.LLMConfig, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) CreateLLMConfig(ctx context.Context, c *storage.LLMConfig) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) UpdateLLMConfig(ctx context.Context, c *storage.LLMConfig) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *handlerMockStore) GetModelPricing(ctx context.Context) ([]storage.ModelPricing, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) UpsertModelPricing(ctx context.Context, p storage.ModelPricing) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	return fmt.Errorf("not implemented")
 }
 
 func (m *handlerMockStore) Close() error { return nil }

@@ -31,6 +31,13 @@
             <span class="summary-label">Total Tokens</span>
             <span class="summary-value token-highlight">{{ formatTokens(computeTotalTokens()) }}</span>
           </div>
+          <div class="summary-item">
+            <span class="summary-label">Cost</span>
+            <span class="summary-value token-highlight">
+              {{ formatCost(trace.cost, trace.cost_currency) }}
+              <span v-if="trace.unpriced_spans" class="unpriced-hint">({{ trace.unpriced_spans }} unpriced)</span>
+            </span>
+          </div>
           <div class="download-group">
             <button class="btn-download" @click="downloadTraceJSON" title="Download as internal JSON">JSON</button>
             <button class="btn-download" @click="downloadTraceOTLP" title="Download as OTLP JSON (importable to Jaeger/Grafana)">OTLP</button>
@@ -45,9 +52,49 @@
             :trace-start-ms="trace.start_time_ms"
             :trace-duration-ms="trace.duration_ms"
             :selected-span-id="selectedSpan?.span_id"
+            :log-counts="logCounts"
             @select-span="openDrawer"
+            @filter-logs="filterLogsBySpan"
           />
-          <div v-if="!drawerOpen" class="hint-click">Click any span to view details</div>
+
+        <!-- Tab bar and Log panel -->
+        <div class="detail-panel" v-if="!drawerOpen">
+          <div class="panel-tabs">
+            <button :class="['tab-btn', { active: activeTab === 'spans' }]" @click="switchTab('spans')">
+              Spans
+            </button>
+            <button :class="['tab-btn', { active: activeTab === 'logs' }]" @click="switchTab('logs')">
+              {{ t('logList.logCount', { count: totalLogCount }) }}
+            </button>
+          </div>
+
+          <div v-if="activeTab === 'logs'" class="log-panel">
+            <div v-if="logSpanFilter" class="log-filter-tag">
+              {{ t('logList.filteredBySpan', { name: logSpanFilter }) }}
+              <button class="filter-clear" @click="clearLogFilter">✕</button>
+            </div>
+            <div v-if="logsLoading" class="loading-state">{{ t('common.loading') }}</div>
+            <div v-else-if="filteredLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
+            <div v-else class="log-list-inline">
+              <div
+                v-for="(log, idx) in filteredLogs"
+                :key="idx"
+                :class="['log-item', { expanded: logExpandedIdx === idx }]"
+                @click="logExpandedIdx = logExpandedIdx === idx ? null : idx"
+              >
+                <div class="log-item-header">
+                  <span class="log-item-time">{{ formatLogTime(log.timestamp) }}</span>
+                  <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
+                  <span class="log-item-event">{{ log.event_name || '-' }}</span>
+                  <span class="log-item-expand">{{ logExpandedIdx === idx ? '▼' : '▶' }}</span>
+                </div>
+                <pre v-if="logExpandedIdx === idx" class="log-item-body">{{ formatLogBody(log.body) }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="activeTab === 'spans'" class="hint-click">Click any span to view details</div>
+        </div>
         </div>
 
         <div v-if="drawerOpen" class="detail-drawer">
@@ -56,17 +103,53 @@
               <span class="drawer-span-name">{{ selectedSpan?.name }}</span>
               <span class="drawer-span-id">{{ selectedSpan?.span_id }}</span>
             </div>
+            <div class="drawer-view-toggle">
+              <input
+                v-model="contentSearch"
+                class="content-search"
+                type="text"
+                placeholder="Search content..."
+              />
+              <button
+                :class="['view-toggle-btn', { active: viewMode === 'structured' }]"
+                @click="viewMode = 'structured'"
+              >Structured</button>
+              <button
+                :class="['view-toggle-btn', { active: viewMode === 'json' }]"
+                @click="viewMode = 'json'"
+              >JSON</button>
+            </div>
             <button class="drawer-close" @click="closeDrawer" title="Close (Esc)">✕</button>
           </div>
 
           <div class="drawer-body">
-            <TokenPieChart
-              v-if="selectedSpanTokenSlices.length > 0"
-              :items="selectedSpanTokenSlices"
-              :input-tokens="selectedSpanInputTokens"
-              :output-tokens="selectedSpanOutputTokens"
-            />
-            <SpanDetail :span="selectedSpan" />
+            <template v-if="viewMode === 'structured'">
+              <TokenPieChart
+                v-if="selectedSpanTokenSlices.length > 0"
+                :items="selectedSpanTokenSlices"
+                :input-tokens="selectedSpanInputTokens"
+                :output-tokens="selectedSpanOutputTokens"
+              />
+              <SpanDetail :span="selectedSpan" :search="contentSearch" />
+            </template>
+
+            <div v-else class="json-preview">
+              <div class="json-toolbar">
+                <button class="json-copy-btn" @click="copySpanJSON">
+                  {{ copyLabel }}
+                </button>
+                <input
+                  v-model="jsonSearch"
+                  class="json-search"
+                  type="text"
+                  placeholder="Search..."
+                />
+              </div>
+              <pre
+                class="json-content"
+                v-html="highlightedSpanJSON"
+              ></pre>
+            </div>
           </div>
         </div>
       </div>
@@ -75,15 +158,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType } from '../api/client'
+import { useI18n } from 'vue-i18n'
+import { getTrace, getLogsByTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord } from '../api/client'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
 import type { PieSlice } from '../components/TokenPieChart.vue'
+import { formatCost, highlightJSON } from '../utils/format'
 
 const route = useRoute()
+const { t } = useI18n()
 const traceIdHex = route.params.id as string
 
 const trace = ref<TraceDetailResponse['trace'] | null>(null)
@@ -91,6 +177,15 @@ const loading = ref(true)
 const error = ref('')
 const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
+const traceLogs = ref<LogRecord[]>([])
+const logsLoading = ref(false)
+const activeTab = ref<'spans' | 'logs'>('spans')
+const logSpanFilter = ref('')
+const logExpandedIdx = ref<number | null>(null)
+const viewMode = ref<'structured' | 'json'>('structured')
+const jsonSearch = ref('')
+const contentSearch = ref('')
+const copyLabel = ref('📋 Copy')
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
 const CTX_PATTERNS: { key: string; label: string }[] = [
@@ -131,10 +226,59 @@ const selectedSpanOutputTokens = computed(() => {
   return span.output_tokens ?? 0
 })
 
+const logCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const l of traceLogs.value) {
+    if (l.span_id_hex) {
+      counts[l.span_id_hex] = (counts[l.span_id_hex] || 0) + 1
+    }
+  }
+  return counts
+})
+
+const totalLogCount = computed(() => traceLogs.value.length)
+
+const filteredLogs = computed(() => {
+  if (!logSpanFilter.value) return traceLogs.value
+  return traceLogs.value.filter(l => l.span_id_hex === logSpanFilter.value)
+})
+
 const rootSpanName = computed(() => {
   if (!trace.value) return 'Trace Detail'
   const root = trace.value.spans.find(s => s.parent_span_id === '')
   return root?.name || 'Trace Detail'
+})
+
+const spanJSON = computed(() => {
+  if (!selectedSpan.value) return ''
+  return JSON.stringify(selectedSpan.value, null, 2)
+})
+
+const highlightedSpanJSON = computed(() => {
+  let raw = spanJSON.value
+  if (!raw) return ''
+  if (jsonSearch.value.trim()) {
+    const term = jsonSearch.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`(${term})`, 'gi')
+    raw = raw.replace(re, '<mark class="json-search-hit">$1</mark>')
+  }
+  return highlightJSON(raw)
+})
+
+function copySpanJSON() {
+  navigator.clipboard?.writeText(spanJSON.value).then(() => {
+    copyLabel.value = '✓ Copied!'
+    setTimeout(() => { copyLabel.value = '📋 Copy' }, 2000)
+  }).catch(() => {
+    copyLabel.value = '✗ Failed'
+    setTimeout(() => { copyLabel.value = '📋 Copy' }, 2000)
+  })
+}
+
+watch(selectedSpan, () => {
+  viewMode.value = 'structured'
+  jsonSearch.value = ''
+  contentSearch.value = ''
 })
 
 async function fetchTrace() {
@@ -143,6 +287,7 @@ async function fetchTrace() {
   try {
     const result = await getTrace(traceIdHex)
     trace.value = result.trace
+    fetchTraceLogs()
   } catch (e: any) {
     error.value = e.message || 'Failed to load trace'
   } finally {
@@ -157,6 +302,45 @@ function openDrawer(span: SpanDetailType) {
 
 function closeDrawer() {
   drawerOpen.value = false
+}
+
+async function fetchTraceLogs() {
+  logsLoading.value = true
+  try {
+    const result = await getLogsByTrace(traceIdHex)
+    traceLogs.value = result.logs || []
+  } catch {
+    traceLogs.value = []
+  } finally {
+    logsLoading.value = false
+  }
+}
+
+function filterLogsBySpan(spanId: string) {
+  logSpanFilter.value = spanId
+  activeTab.value = 'logs'
+}
+
+function clearLogFilter() {
+  logSpanFilter.value = ''
+}
+
+function switchTab(tab: 'spans' | 'logs') {
+  activeTab.value = tab
+}
+
+function formatLogTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString()
+}
+
+function formatLogBody(body: string): string {
+  if (!body) return ''
+  try {
+    const parsed = JSON.parse(body)
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return body
+  }
 }
 
 function downloadTraceJSON() {
@@ -233,18 +417,18 @@ onUnmounted(() => {
 <style scoped>
 .trace-detail { max-width: 1600px; }
 .back-link { margin-bottom: 16px; }
-.back-link a { color: #94a3b8; text-decoration: none; font-size: 14px; }
-.back-link a:hover { color: #e2e8f0; }
-.loading, .error { text-align: center; padding: 60px; color: #94a3b8; }
-.error { color: #f87171; }
+.back-link a { color: var(--text-secondary); text-decoration: none; font-size: 14px; }
+.back-link a:hover { color: var(--text-primary); }
+.loading, .error { text-align: center; padding: 60px; color: var(--text-secondary); }
+.error { color: var(--status-error-accent); }
 .trace-summary { margin-bottom: 24px; }
 .trace-summary h2 { font-size: 20px; margin-bottom: 12px; }
 .summary-grid { display: flex; gap: 24px; flex-wrap: wrap; }
 .summary-item { display: flex; flex-direction: column; }
-.summary-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+.summary-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; }
 .summary-value { font-size: 14px; }
 .mono { font-family: 'Courier New', monospace; font-size: 12px; word-break: break-all; }
-.token-highlight { color: #c4b5fd; font-weight: 600; }
+.token-highlight { color: var(--token-highlight); font-weight: 600; }
 
 .download-group {
   display: flex;
@@ -253,9 +437,9 @@ onUnmounted(() => {
 }
 .btn-download {
   padding: 6px 12px;
-  border: 1px solid #333;
-  background: #111;
-  color: #94a3b8;
+  border: 1px solid var(--border-group);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
 }
@@ -266,8 +450,8 @@ onUnmounted(() => {
   border-radius: 0 6px 6px 0;
 }
 .btn-download:hover {
-  border-color: #38bdf8;
-  color: #38bdf8;
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
 }
 
 /* === New drawer layout === */
@@ -275,39 +459,45 @@ onUnmounted(() => {
   display: flex;
   gap: 0;
 }
-.detail-layout.drawer-open .waterfall-panel {
-  flex: 1;
-  min-width: 0;
-}
-.detail-layout:not(.drawer-open) .waterfall-panel {
+.waterfall-panel {
   flex: 1;
   width: 100%;
-}
-
-.waterfall-panel {
   position: relative;
   overflow-x: auto;
-  transition: flex 0.3s ease;
 }
 
 .hint-click {
   text-align: center;
-  color: #64748b;
+  color: var(--text-muted);
   font-size: 12px;
   padding: 24px 0;
 }
 
-/* === Drawer === */
+/* === Drawer (overlay) === */
 .detail-drawer {
-  width: 480px;
-  flex-shrink: 0;
-  border-left: 1px solid #444;
-  background: #000;
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 900px;
+  max-width: 90vw;
+  z-index: 100;
+  border-left: 1px solid var(--border-strong);
+  background: var(--bg-primary);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 240px);
   overflow: hidden;
   animation: slideIn 0.3s ease;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.3);
+}
+
+/* Backdrop */
+.detail-layout.drawer-open::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.3);
+  z-index: 99;
 }
 
 @keyframes slideIn {
@@ -320,7 +510,7 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: flex-start;
   padding: 12px 16px;
-  border-bottom: 1px solid #444;
+  border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
 }
 .drawer-title {
@@ -330,7 +520,7 @@ onUnmounted(() => {
   display: block;
   font-size: 14px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -338,14 +528,14 @@ onUnmounted(() => {
 .drawer-span-id {
   display: block;
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-muted);
   font-family: 'Courier New', monospace;
   margin-top: 2px;
 }
 .drawer-close {
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 18px;
   cursor: pointer;
   padding: 4px 8px;
@@ -353,8 +543,8 @@ onUnmounted(() => {
   line-height: 1;
 }
 .drawer-close:hover {
-  color: #e2e8f0;
-  background: #222;
+  color: var(--text-primary);
+  background: var(--bg-surface-hover-subtle);
 }
 
 .drawer-body {
@@ -363,29 +553,228 @@ onUnmounted(() => {
   flex: 1;
 }
 
-/* Scrollbar for drawer body */
 .drawer-body::-webkit-scrollbar { width: 4px; }
 .drawer-body::-webkit-scrollbar-track { background: transparent; }
-.drawer-body::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+.drawer-body::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 
-/* Responsive: on narrow screens overlay instead of split */
-@media (max-width: 900px) {
+@media (max-width: 600px) {
   .detail-drawer {
-    position: fixed;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 90vw;
-    max-width: 480px;
-    z-index: 100;
-    max-height: 100vh;
+    width: 100vw;
+    max-width: 100vw;
   }
-  .detail-layout.drawer-open::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: 99;
-  }
+}
+
+/* === Tab bar and Log panel === */
+.detail-panel {
+  margin-top: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+.tab-btn {
+  padding: 10px 20px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tab-btn.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+.tab-btn:hover { color: var(--text-primary); }
+
+.log-panel {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.log-filter-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-surface-hover-subtle);
+  border-bottom: 1px solid var(--border-default);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.filter-clear {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+.filter-clear:hover { color: var(--status-error-accent); }
+
+.log-list-inline { }
+.log-item {
+  border-bottom: 1px solid var(--bg-surface-deep);
+  cursor: pointer;
+}
+.log-item:hover { background: var(--bg-surface); }
+.log-item.expanded { background: var(--bg-surface-hover-subtle); }
+.log-item-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.log-item-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.log-item-event { color: var(--text-secondary); font-family: 'Courier New', monospace; font-size: 11px; }
+.log-item-expand { color: var(--text-muted); font-size: 10px; margin-left: auto; }
+
+.severity-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.severity-badge.error { background: var(--status-error-bg); color: var(--status-error-accent); }
+.severity-badge.warn { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
+.severity-badge.info { background: rgba(56, 189, 248, 0.12); color: var(--accent-blue); }
+.severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-muted); }
+
+.log-item-body {
+  margin: 0;
+  padding: 8px 16px 12px;
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-surface-deep);
+}
+
+.loading-state, .empty-state { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 13px; }
+
+/* --- Drawer view toggle --- */
+.drawer-view-toggle {
+  display: flex;
+  gap: 0;
+  margin-left: auto;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+.view-toggle-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border-group);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.content-search {
+  padding: 4px 10px;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  background: var(--bg-surface-deep);
+  color: var(--text-primary);
+  font-size: 11px;
+  width: 160px;
+  margin-right: 4px;
+}
+.content-search::placeholder { color: var(--text-muted); }
+.content-search:focus { outline: none; border-color: var(--accent-blue); }
+
+.view-toggle-btn:nth-child(2) {
+  border-radius: 4px 0 0 4px;
+}
+.view-toggle-btn:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.view-toggle-btn.active {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+.view-toggle-btn:not(.active):hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+/* --- JSON preview --- */
+.json-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.json-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.json-copy-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.json-copy-btn:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.json-search {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  background: var(--bg-surface-deep);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.json-search::placeholder {
+  color: var(--text-muted);
+}
+.json-search:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+.json-content {
+  flex: 1;
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-surface-deep);
+  border: 1px solid var(--border-group);
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre;
+  overflow: auto;
+  max-height: calc(100vh - 360px);
+}
+.json-content::-webkit-scrollbar { width: 4px; height: 4px; }
+.json-content::-webkit-scrollbar-track { background: transparent; }
+.json-content::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
+
+/* JSON syntax highlighting */
+.json-content :deep(.j-key) { color: var(--text-secondary); }
+.json-content :deep(.j-str) { color: var(--token-green); }
+.json-content :deep(.j-num) { color: var(--status-warning); }
+.json-content :deep(.j-bool) { color: var(--chart-pie-assistant); }
+.json-content :deep(.json-search-hit) {
+  background: var(--status-warning);
+  color: #000;
+  border-radius: 2px;
 }
 </style>

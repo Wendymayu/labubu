@@ -105,6 +105,66 @@ func (h *TraceHandler) GetServices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"services": services})
 }
 
+// ExportTraces handles POST /api/v1/traces/export.
+// Accepts a list of trace IDs and returns them as an OTLP JSON array.
+func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "only POST allowed"})
+		return
+	}
+
+	var req struct {
+		TraceIDs []string `json:"trace_ids"`
+		Format   string   `json:"format"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid request body: %v", err)})
+		return
+	}
+
+	if req.Format != "otlp" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "format must be 'otlp'"})
+		return
+	}
+
+	if len(req.TraceIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "trace_ids must not be empty"})
+		return
+	}
+	if len(req.TraceIDs) > 100 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "max 100 traces per export"})
+		return
+	}
+
+	results := make([]otlpTraceResponse, 0, len(req.TraceIDs))
+	for _, hexID := range req.TraceIDs {
+		if len(hexID) != 32 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid trace_id length: %s (must be 32 hex chars)", hexID)})
+			return
+		}
+		traceIDBytes, err := hex.DecodeString(hexID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid hex trace_id %s: %v", hexID, err)})
+			return
+		}
+		var traceID [16]byte
+		copy(traceID[:], traceIDBytes)
+
+		detail, err := h.store.GetTrace(r.Context(), traceID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get trace %s: %v", hexID, err)})
+			return
+		}
+		if detail == nil {
+			continue // silently skip missing traces
+		}
+
+		results = append(results, convertToOTLP(detail))
+	}
+
+	writeJSON(w, http.StatusOK, results)
+}
+
 // writeJSON serializes v as JSON and writes it to the response.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

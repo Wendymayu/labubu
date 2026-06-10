@@ -25,6 +25,7 @@
             <th>{{ t('sessionList.sessionId') }}</th>
             <th>{{ t('sessionList.turns') }}</th>
             <th>{{ t('sessionList.totalTokens') }}</th>
+            <th>Cost</th>
             <th>{{ t('sessionList.avgLatency') }}</th>
             <th>{{ t('sessionList.maxLatency') }}</th>
             <th>{{ t('sessionList.errorRate') }}</th>
@@ -41,6 +42,7 @@
             <td class="cell-session-id">{{ session.session_id }}</td>
             <td>{{ session.trace_count }}</td>
             <td class="cell-tokens">{{ formatTokens(session.total_tokens) }}</td>
+            <td class="cell-cost">{{ formatCost(session.cost, session.cost_currency) }}</td>
             <td>{{ formatDuration(session.avg_duration_ms) }}</td>
             <td>{{ formatDuration(session.max_duration_ms) }}</td>
             <td>
@@ -83,6 +85,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listSessions, getServices, type SessionListItem, type Pagination } from '../api/client'
+import { formatCost } from '../utils/format'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -175,27 +178,27 @@ onMounted(() => {
 <style scoped>
 .session-list { max-width: 1400px; }
 .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.search-input { flex: 1; min-width: 200px; padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
-.filter-select { padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
-.btn { padding: 8px 16px; background: #334155; border: 1px solid #475569; border-radius: 6px; color: #e2e8f0; cursor: pointer; font-size: 14px; }
-.btn:hover { background: #475569; }
+.search-input { flex: 1; min-width: 200px; padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
+.filter-select { padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
+.btn { padding: 8px 16px; background: var(--bg-surface-hover); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-primary); cursor: pointer; font-size: 14px; }
+.btn:hover { background: var(--border-strong); }
 .btn:disabled { opacity: 0.5; cursor: default; }
-.btn-primary { background: #2563eb; border-color: #2563eb; }
-.btn-primary:hover { background: #1d4ed8; }
-.loading, .error, .empty { text-align: center; padding: 60px 20px; color: #94a3b8; }
-.error { color: #f87171; }
+.btn-primary { background: var(--accent-primary); border-color: var(--accent-primary); }
+.btn-primary:hover { background: var(--accent-primary-hover); }
+.loading, .error, .empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+.error { color: var(--status-error-accent); }
 .trace-table { width: 100%; border-collapse: collapse; }
-.trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: #94a3b8; text-transform: uppercase; border-bottom: 1px solid #334155; }
-.trace-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid #1e293b; }
+.trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; border-bottom: 1px solid var(--border-default); }
+.trace-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--border-subtle); }
 .trace-row { cursor: pointer; }
-.trace-row:hover { background: #1e293b; }
-.cell-session-id { font-family: 'Courier New', monospace; font-size: 13px; color: #38bdf8; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cell-tokens { color: #c4b5fd; font-weight: 600; }
-.cell-time { color: #94a3b8; font-size: 13px; white-space: nowrap; }
+.trace-row:hover { background: var(--bg-surface); }
+.cell-session-id { font-family: 'Courier New', monospace; font-size: 13px; color: var(--accent-blue); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-tokens { color: var(--token-highlight); font-weight: 600; }
+.cell-time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .error-rate { font-weight: 600; font-size: 13px; }
-.error-high { color: #fca5a5; }
-.error-medium { color: #fbbf24; }
-.error-none { color: #6ee7b7; }
+.error-high { color: var(--status-error-text); }
+.error-medium { color: var(--status-warning); }
+.error-none { color: var(--status-ok-text); }
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
-.page-info { font-size: 14px; color: #94a3b8; }
+.page-info { font-size: 14px; color: var(--text-secondary); }
 </style>

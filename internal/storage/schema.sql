@@ -51,3 +51,41 @@ CREATE TABLE IF NOT EXISTS spans (
 )
 ENGINE = MergeTree
 ORDER BY (trace_id, start_time_ms);
+
+CREATE TABLE IF NOT EXISTS logs (
+    trace_id    FixedString(16),
+    span_id     FixedString(8),
+    timestamp   UInt64,
+    severity    String,
+    event_name  String,
+    body        String,
+    attributes  Map(String, String)
+)
+ENGINE = MergeTree
+ORDER BY (trace_id, timestamp);
+
+CREATE TABLE IF NOT EXISTS model_pricing (
+    model_name   String,
+    input_price  Float64,
+    output_price Float64,
+    currency     String,
+    updated_at   DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY model_name;
+
+ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost Nullable(Float64);
+ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost_currency String DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS llm_configs (
+    id           String,
+    model_name   String,
+    provider_url String,
+    api_key      String,
+    is_default   UInt8,
+    temperature  Float64,
+    max_tokens   Int32,
+    updated_at   DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY id;

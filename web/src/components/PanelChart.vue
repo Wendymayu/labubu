@@ -16,6 +16,15 @@
         <span class="stat-metric">{{ panel.metric }}</span>
       </div>
       <canvas v-else ref="canvasRef"></canvas>
+      <div
+        v-if="chartDatasets.length > 1"
+        class="chart-legend"
+      >
+        <div v-for="(ds, idx) in chartDatasets" :key="idx" class="legend-item">
+          <span class="legend-color" :style="{ background: ds.borderColor }"></span>
+          <span class="legend-label">{{ ds.label }}</span>
+        </div>
+      </div>
       <div ref="tooltipRef" class="chart-tooltip"></div>
     </div>
   </div>
@@ -28,6 +37,7 @@ import {
   PointElement, LineElement, BarElement, Tooltip, Legend, Filler
 } from 'chart.js'
 import type { PanelConfig, QueryResult } from '../api/client'
+import { useTheme } from '../composables/useTheme'
 
 // Register Chart.js components.
 Chart.register(
@@ -52,6 +62,7 @@ const loading = ref(false)
 const error = ref('')
 const noData = ref(false)
 const statValue = ref(0)
+const chartDatasets = ref<any[]>([])
 let chart: Chart | null = null
 let tooltipHovering = false
 
@@ -117,6 +128,12 @@ async function fetchData() {
   }
 }
 
+function getCSSVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
+
+const { theme } = useTheme()
+
 const COLORS = [
   '#38bdf8', '#f472b6', '#a78bfa', '#fb923c', '#4ade80',
   '#facc15', '#fb7185', '#2dd4bf', '#e2e8f0', '#94a3b8',
@@ -157,7 +174,7 @@ function externalTooltipHandler(context: any) {
   html += '<div class="tt-body">'
   for (const dp of dataPoints) {
     const ds = chart.data.datasets[dp.datasetIndex]
-    html += '<div class="tt-item">'
+    html += `<div class="tt-item" style="border-left:3px solid ${ds.borderColor}">`
     html += `<span class="tt-color" style="background:${ds.borderColor}"></span>`
     html += '<div class="tt-labels">'
     // Show each label key=value pair on its own line.
@@ -220,13 +237,15 @@ function renderChart(results: any[]) {
       label: seriesLabel(r),
       data,
       borderColor: color,
-      backgroundColor: props.panel.chartType === 'bar' ? color + '88' : color + '22',
+      backgroundColor: props.panel.chartType === 'bar' ? color + '88' : 'transparent',
       borderWidth: 2,
-      fill: props.panel.chartType === 'line',
+      fill: props.panel.chartType === 'bar',
       tension: 0.3,
       pointRadius: 0,
     }
   })
+
+  chartDatasets.value = datasets
 
   chart = new Chart(canvasRef.value, {
     type: props.panel.chartType === 'bar' ? 'bar' : 'line',
@@ -240,9 +259,7 @@ function renderChart(results: any[]) {
       animation: false,
       plugins: {
         legend: {
-          display: datasets.length > 1,
-          position: 'bottom',
-          labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 12, padding: 8 },
+          display: false,
         },
         tooltip: {
           enabled: false,
@@ -254,12 +271,12 @@ function renderChart(results: any[]) {
       },
       scales: {
         x: {
-          ticks: { color: '#94a3b8', maxTicksLimit: 8, font: { size: 10 } },
-          grid: { color: '#1a1a1a' },
+          ticks: { color: getCSSVar('--text-secondary'), maxTicksLimit: 8, font: { size: 10 } },
+          grid: { color: getCSSVar('--border-subtle') },
         },
         y: {
-          ticks: { color: '#94a3b8', font: { size: 10 } },
-          grid: { color: '#1a1a1a' },
+          ticks: { color: getCSSVar('--text-secondary'), font: { size: 10 } },
+          grid: { color: getCSSVar('--border-subtle') },
         },
       },
     },
@@ -299,6 +316,14 @@ onMounted(() => {
 })
 watch(() => [props.timeRange, props.panel, props.refreshKey], fetchData, { deep: true })
 
+watch(theme, () => {
+  if (chart) {
+    chart.destroy()
+    chart = null
+  }
+  fetchData()
+})
+
 onUnmounted(() => {
   if (chart) {
     chart.destroy()
@@ -309,8 +334,8 @@ onUnmounted(() => {
 
 <style scoped>
 .panel-chart {
-  background: #000;
-  border: 1px solid #444;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -319,36 +344,36 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #444;
+  border-bottom: 1px solid var(--border-strong);
 }
-.panel-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin: 0; }
+.panel-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin: 0; }
 .panel-actions { display: flex; gap: 4px; }
 .btn-icon {
-  background: none; border: none; color: #64748b; cursor: pointer;
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
   font-size: 14px; padding: 4px; border-radius: 4px; line-height: 1;
 }
-.btn-icon:hover { color: #e2e8f0; background: #222; }
-.panel-body { padding: 16px; height: 280px; position: relative; }
-.panel-body canvas { width: 100% !important; height: 100% !important; }
+.btn-icon:hover { color: var(--text-primary); background: var(--bg-surface-hover-subtle); }
+.panel-body { padding: 16px; height: 280px; position: relative; display: flex; flex-direction: column; }
+.panel-body canvas { width: 100% !important; flex: 1; min-height: 0; }
 .panel-state {
   display: flex; align-items: center; justify-content: center;
-  height: 100%; color: #94a3b8; font-size: 14px;
+  height: 100%; color: var(--text-secondary); font-size: 14px;
 }
-.panel-error { color: #f87171; }
+.panel-error { color: var(--status-error-accent); }
 .stat-value {
   display: flex; flex-direction: column; align-items: center;
   justify-content: center; height: 100%;
 }
-.stat-number { font-size: 48px; font-weight: 700; color: #38bdf8; line-height: 1.2; }
-.stat-metric { font-size: 12px; color: #94a3b8; margin-top: 8px; }
+.stat-number { font-size: 48px; font-weight: 700; color: var(--accent-blue); line-height: 1.2; }
+.stat-metric { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
 
 .chart-tooltip {
   position: fixed;
   pointer-events: auto;
   opacity: 0;
   z-index: 9999;
-  background: #111;
-  border: 1px solid #333;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-group);
   border-radius: 6px;
   padding: 8px 10px;
   min-width: 160px;
@@ -356,29 +381,34 @@ onUnmounted(() => {
   max-height: 220px;
   overflow-y: auto;
   font-size: 12px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 16px var(--shadow-tooltip);
   transition: opacity 0.15s;
 }
 .chart-tooltip::-webkit-scrollbar { width: 4px; }
 .chart-tooltip::-webkit-scrollbar-track { background: transparent; }
-.chart-tooltip::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+.chart-tooltip::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 
 .tt-time {
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 11px;
   margin-bottom: 6px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #222;
+  border-bottom: 1px solid var(--border-group);
 }
 .tt-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
 }
 .tt-item {
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  padding: 6px 6px;
+  border-radius: 4px;
+}
+.tt-item:nth-child(even) {
+  background: var(--bg-surface-hover-subtle);
 }
 .tt-color {
   width: 8px;
@@ -392,14 +422,43 @@ onUnmounted(() => {
   min-width: 0;
 }
 .tt-label {
-  color: #e2e8f0;
+  color: var(--text-primary);
   line-height: 1.5;
   word-break: break-all;
 }
 .tt-value {
-  color: #38bdf8;
+  color: var(--accent-blue);
   font-weight: 600;
   flex-shrink: 0;
   margin-left: auto;
+}
+
+/* Scrollable legend */
+.chart-legend {
+  margin-top: 8px;
+  max-height: 80px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.chart-legend::-webkit-scrollbar { width: 4px; }
+.chart-legend::-webkit-scrollbar-track { background: transparent; }
+.chart-legend::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.legend-color {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.legend-label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

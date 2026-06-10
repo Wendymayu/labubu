@@ -76,25 +76,57 @@ func buildUpsertTraceSQL(trace Trace) string {
 	)
 }
 
+// buildSelectExistingTraceSQL queries trace rows for a given trace_id so
+// InsertSpans can merge batch-level aggregates with previously stored data.
+func buildSelectExistingTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT span_count, total_tokens, start_time_ms, end_time_ms,
+			root_span_id, root_name, session_id
+		FROM traces WHERE trace_id = unhex('%x')`,
+		traceID,
+	)
+}
+
+// buildDeleteTraceSQL removes all rows for a trace_id so a merged row can
+// replace them without leaving duplicates behind.
+func buildDeleteTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(`DELETE FROM traces WHERE trace_id = unhex('%x')`, traceID)
+}
+
 // buildTraceCountSQL builds a count query matching the given filters.
+// Uses DISTINCT to avoid double-counting duplicate trace rows.
 func buildTraceCountSQL(q TraceQuery) string {
-	return "SELECT count(*) AS count FROM traces" + buildTraceWhereClause(q)
+	return "SELECT count(DISTINCT trace_id_hex) AS count FROM traces" + buildTraceWhereClause(q)
 }
 
 // buildTraceListSQL builds a list query with filters, ordering, and pagination.
+// Uses GROUP BY to deduplicate trace rows that arrive across multiple InsertSpans
+// batches (e.g. when spans for one trace are ingested across multiple OTLP requests).
+// Span count and total_tokens use sum() because each duplicate row only holds the
+// partial count/tokens from its own batch. Time range uses min/max to cover every
+// batch. Scalar fields (root_name, status, cost) use any() — all duplicates carry
+// the same values for those columns.
 func buildTraceListSQL(q TraceQuery) string {
 	offset := (q.Page - 1) * q.PageSize
+	where := buildTraceWhereClause(q)
 	return fmt.Sprintf(
 		`SELECT
-			trace_id_hex, root_name, root_span_id,
-			resource_attributes['service.name'] AS root_service,
-			start_time_ms, duration_ms, span_count,
-			toString(status_code) AS status,
-			total_tokens
+			trace_id_hex,
+			any(root_name) AS root_name,
+			any(root_span_id) AS root_span_id,
+			any(resource_attributes['service.name']) AS root_service,
+			min(start_time_ms) AS start_time_ms,
+			max(duration_ms) AS duration_ms,
+			sum(span_count) AS span_count,
+			any(toString(status_code)) AS status,
+			sum(total_tokens) AS total_tokens,
+			any(cost) AS cost,
+			any(cost_currency) AS cost_currency
 		FROM traces%s
+		GROUP BY trace_id_hex
 		ORDER BY start_time_ms DESC
 		LIMIT %d OFFSET %d`,
-		buildTraceWhereClause(q), q.PageSize, offset,
+		where, q.PageSize, offset,
 	)
 }
 
@@ -171,6 +203,23 @@ func buildGetTraceSQL(traceID [16]byte) string {
 	)
 }
 
+// buildGetTraceMetaSQL builds a query to fetch trace-level metadata.
+func buildGetTraceMetaSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT
+			resource_attributes,
+			resource_schema_url,
+			scope_name,
+			scope_version,
+			scope_attributes,
+			cost, cost_currency
+		FROM traces
+		WHERE trace_id = unhex('%x')
+		LIMIT 1`,
+		traceID,
+	)
+}
+
 // buildSessionListWhereClause builds the WHERE clause for session queries.
 func buildSessionListWhereClause(q SessionQuery) string {
 	clauses := []string{"session_id != ''"}
@@ -212,6 +261,8 @@ func buildSessionListSQL(q SessionQuery) string {
 			session_id,
 			count() AS trace_count,
 			sum(total_tokens) AS total_tokens,
+			sum(cost) AS cost,
+			any(cost_currency) AS cost_currency,
 			sum(duration_ms) AS total_duration_ms,
 			max(duration_ms) AS max_duration_ms,
 			round(avg(duration_ms), 1) AS avg_duration_ms,
@@ -234,6 +285,8 @@ func buildSessionSummarySQL(sessionID string) string {
 			session_id,
 			count() AS trace_count,
 			sum(total_tokens) AS total_tokens,
+			sum(cost) AS cost,
+			any(cost_currency) AS cost_currency,
 			sum(duration_ms) AS total_duration_ms,
 			max(duration_ms) AS max_duration_ms,
 			round(avg(duration_ms), 1) AS avg_duration_ms,
@@ -256,7 +309,7 @@ func buildSessionTracesSQL(sessionID string) string {
 			resource_attributes['service.name'] AS root_service,
 			start_time_ms, duration_ms, span_count,
 			toString(status_code) AS status,
-			total_tokens
+			total_tokens, cost, cost_currency
 		FROM traces
 		WHERE session_id = '%s'
 		ORDER BY start_time_ms ASC`,
@@ -264,10 +317,104 @@ func buildSessionTracesSQL(sessionID string) string {
 	)
 }
 
+// buildInsertLogSQL builds an INSERT statement for a single log record.
+func buildInsertLogSQL(l LogRecord) string {
+	return fmt.Sprintf(
+		`INSERT INTO logs (trace_id, span_id, timestamp, severity, event_name, body, attributes) VALUES (
+			unhex('%x'), unhex('%x'), %d, '%s', '%s', '%s', %s
+		)`,
+		l.TraceID, l.SpanID, l.Timestamp,
+		escapeSQL(l.Severity), escapeSQL(l.EventName),
+		escapeSQL(l.Body), mapToSQL(l.Attributes),
+	)
+}
+
+// buildLogCountSQL builds a count query for logs matching the filters.
+func buildLogCountSQL(q LogQuery) string {
+	return "SELECT count(*) AS count FROM logs" + buildLogWhereClause(q)
+}
+
+// buildLogListSQL builds a list query for logs with filters, ordering, and pagination.
+func buildLogListSQL(q LogQuery) string {
+	offset := (q.Page - 1) * q.PageSize
+	return fmt.Sprintf(
+		`SELECT
+			hex(trace_id) AS trace_id_hex,
+			hex(span_id) AS span_id_hex,
+			timestamp, severity, event_name, body, attributes
+		FROM logs%s
+		ORDER BY timestamp DESC
+		LIMIT %d OFFSET %d`,
+		buildLogWhereClause(q), q.PageSize, offset,
+	)
+}
+
+// buildLogWhereClause builds the WHERE clause for log queries.
+func buildLogWhereClause(q LogQuery) string {
+	var clauses []string
+
+	if q.Severity != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"severity = '%s'", escapeSQL(q.Severity),
+		))
+	}
+	if q.EventName != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"event_name = '%s'", escapeSQL(q.EventName),
+		))
+	}
+	if q.Query != "" {
+		clauses = append(clauses, fmt.Sprintf(
+			"body LIKE '%%%s%%'", escapeSQL(q.Query),
+		))
+	}
+	var zeroTrace [16]byte
+	if q.TraceID != zeroTrace {
+		clauses = append(clauses, fmt.Sprintf(
+			"trace_id = unhex('%x')", q.TraceID,
+		))
+	}
+	if q.StartTime > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"timestamp >= %d", q.StartTime,
+		))
+	}
+	if q.EndTime > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"timestamp <= %d", q.EndTime,
+		))
+	}
+
+	if len(clauses) == 0 {
+		return ""
+	}
+	return " WHERE " + strings.Join(clauses, " AND ")
+}
+
+// buildGetLogsByTraceSQL builds a query to fetch all logs for a trace.
+func buildGetLogsByTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT
+			hex(trace_id) AS trace_id_hex,
+			hex(span_id) AS span_id_hex,
+			timestamp, severity, event_name, body, attributes
+		FROM logs
+		WHERE trace_id = unhex('%x')
+		ORDER BY timestamp ASC`,
+		traceID,
+	)
+}
+
+// buildLogEventNamesSQL builds a query to fetch distinct event_name values.
+func buildLogEventNamesSQL() string {
+	return `SELECT DISTINCT event_name FROM logs WHERE event_name != '' ORDER BY event_name`
+}
+
 // --- SQL helpers ---
 
-// escapeSQL escapes single quotes for SQL string literals.
+// escapeSQL escapes backslashes and single quotes for SQL string literals.
 func escapeSQL(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
@@ -297,6 +444,40 @@ func mapToSQL(m map[string]string) string {
 		pairs = append(pairs, fmt.Sprintf("'%s': '%s'", escapeSQL(k), escapeSQL(v)))
 	}
 	return fmt.Sprintf("map(%s)", strings.Join(pairs, ", "))
+}
+
+// buildModelPricingSelectSQL builds a query to fetch all pricing entries.
+func buildModelPricingSelectSQL() string {
+	return `SELECT model_name, input_price, output_price, currency FROM model_pricing ORDER BY model_name`
+}
+
+// buildModelPricingUpsertSQL builds an INSERT to add or replace a pricing entry.
+func buildModelPricingUpsertSQL(p ModelPricing) string {
+	return fmt.Sprintf(
+		`INSERT INTO model_pricing (model_name, input_price, output_price, currency) VALUES ('%s', %f, %f, '%s')`,
+		escapeSQL(p.ModelName), p.InputPrice, p.OutputPrice, escapeSQL(p.Currency),
+	)
+}
+
+// buildModelPricingDeleteSQL builds a DELETE for a single pricing entry.
+func buildModelPricingDeleteSQL(modelName string) string {
+	return fmt.Sprintf(`DELETE FROM model_pricing WHERE model_name = '%s'`, escapeSQL(modelName))
+}
+
+// buildUpdateTraceCostSQL updates cost/cost_currency for a single trace.
+func buildUpdateTraceCostSQL(traceID [16]byte, cost float64, currency string) string {
+	return fmt.Sprintf(
+		`ALTER TABLE traces UPDATE cost = %f, cost_currency = '%s' WHERE trace_id = unhex('%x')`,
+		cost, escapeSQL(currency), traceID,
+	)
+}
+
+// buildSelectSpanTokensSQL fetches tokens + model info for all spans in a trace.
+func buildSelectSpanTokensSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT input_tokens, output_tokens, total_tokens, gen_ai_request_model
+		FROM spans WHERE trace_id = unhex('%x')`, traceID,
+	)
 }
 
 // aggregateTraces groups spans by trace_id and produces Trace aggregates.
@@ -355,4 +536,51 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 
 func isRootSpan(parentSpanID [8]byte) bool {
 	return parentSpanID == [8]byte{}
+}
+
+// isZeroSpanID returns true when the span ID is all zeros (i.e. the current
+// batch did not include a root span, so we should preserve existing data).
+func isZeroSpanID(id [8]byte) bool {
+	return id == [8]byte{}
+}
+
+// --- LLM config SQL builders ---
+
+// buildLLMConfigSelectSQL builds a query to fetch all LLM config entries.
+func buildLLMConfigSelectSQL() string {
+	return `SELECT id, model_name, provider_url, api_key, is_default, temperature, max_tokens FROM llm_configs ORDER BY model_name`
+}
+
+// buildLLMConfigInsertSQL builds an INSERT for a new LLM config entry.
+func buildLLMConfigInsertSQL(c LLMConfig) string {
+	isDefault := 0
+	if c.IsDefault {
+		isDefault = 1
+	}
+	return fmt.Sprintf(
+		`INSERT INTO llm_configs (id, model_name, provider_url, api_key, is_default, temperature, max_tokens) VALUES ('%s', '%s', '%s', '%s', %d, %f, %d)`,
+		escapeSQL(c.ID), escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens,
+	)
+}
+
+// buildLLMConfigUpdateSQL builds an ALTER TABLE UPDATE for an LLM config entry.
+func buildLLMConfigUpdateSQL(c LLMConfig) string {
+	isDefault := 0
+	if c.IsDefault {
+		isDefault = 1
+	}
+	return fmt.Sprintf(
+		`ALTER TABLE llm_configs UPDATE model_name = '%s', provider_url = '%s', api_key = '%s', is_default = %d, temperature = %f, max_tokens = %d, updated_at = now() WHERE id = '%s'`,
+		escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens, escapeSQL(c.ID),
+	)
+}
+
+// buildLLMConfigClearDefaultSQL returns SQL to set all is_default flags to 0.
+func buildLLMConfigClearDefaultSQL() string {
+	return `ALTER TABLE llm_configs UPDATE is_default = 0 WHERE is_default = 1`
+}
+
+// buildLLMConfigDeleteSQL builds a DELETE for a single LLM config entry.
+func buildLLMConfigDeleteSQL(id string) string {
+	return fmt.Sprintf(`DELETE FROM llm_configs WHERE id = '%s'`, escapeSQL(id))
 }

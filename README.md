@@ -1,123 +1,164 @@
 # Labubu
 
-A trace observability platform for AI agents, built on OpenTelemetry and chDB.
+A local-first LLM observability platform. It receives OTLP traces and metrics from instrumented AI agents, stores them locally, and provides a Vue 3 web UI for exploration.
 
-## Overview
+## Features
 
-Labubu receives OTLP trace data from instrumented AI agents, stores it in an embedded ClickHouse database (chDB), and provides a web UI for exploring traces with waterfall visualization.
-
-**Phase 1 features:**
-- OTLP trace ingestion via gRPC (port 4317) and HTTP (port 4318)
-- Embedded chDB storage (no external database required)
-- In-memory storage fallback (no CGO needed for development)
-- Trace list with search, filtering, and pagination
-- Trace detail with waterfall view and span inspection
-- LLM span token tracking (input/output/total tokens)
+- **OTLP Ingestion** — gRPC (port 4317) and HTTP (port 4318) for traces and metrics
+- **Embedded chDB Storage** — ClickHouse-compatible, no external database required (optional, with in-memory fallback)
+- **Trace Explorer** — searchable trace list with service/status/duration filters
+- **Waterfall View** — span-level waterfall chart with slide-in detail drawer
+- **LLM Token Tracking** — capture input/output/total tokens, with context window pie charts
+- **Session Observability** — group traces by session, monitor error rates and token usage
+- **Metrics & Dashboards** — auto-generated charts from OTLP metrics, custom dashboards
+- **Trace Retention** — YAML-configurable max age and max count policies, background cleanup
+- **Internationalization** — Chinese/English UI with vue-i18n
+- **Zero Dependencies** — single binary embeds the entire frontend
 
 ## Quick Start
 
 ### Prerequisites
 
-- Go 1.19+
-- Node.js 18+
-- chDB (`libchdb.so`) on the library path (optional — in-memory store works without it)
+- **Go** 1.19+
+- **Node.js** 18+ (frontend development only)
 
-### Build
+chDB (`libchdb.so`) is optional — the in-memory store works without it for development.
+
+### 1. Clone & install
 
 ```bash
+git clone https://github.com/labubu/labubu.git
+cd labubu
+
 # Install frontend dependencies
 cd web && npm install && cd ..
-
-# Build frontend
-make web-build
-
-# Build backend (without CGO — uses in-memory store)
-make build-nocgo
-
-# Or, with chDB support (requires libchdb):
-# CGO_ENABLED=1 go build -tags "cgo,local_engine" -o bin/labubu ./cmd/labubu
 ```
 
-### Run
+### 2. Start backend
 
 ```bash
-# Start with default settings
-./bin/labubu
-
-# Or run directly with Go
-go run ./cmd/labubu
+# Dev mode (reads frontend from disk, in-memory storage)
+go run -tags dev ./cmd/labubu serve
 ```
 
-Then open http://localhost:8080 to view the UI.
+The backend starts at:
+- **API & UI:** http://localhost:8080
+- **OTLP gRPC:** http://localhost:4317
+- **OTLP HTTP:** http://localhost:4318
 
-### Development
+### 3. Start frontend (optional — for hot-reload dev)
+
+Open a second terminal:
 
 ```bash
-# Terminal 1: Start backend
-go run ./cmd/labubu --data-dir="" --api-addr=0.0.0.0:8080
-
-# Terminal 2: Start frontend dev server (with HMR)
 cd web && npm run dev
 ```
 
-Visit http://localhost:3001 for the Vite dev server (proxies API to :8080).
+Vite dev server starts at http://localhost:3001 and proxies API requests to `:8080`.
+
+> **Alternatively**, skip step 3: `make run` starts the backend with dev tags, serving the full app at http://localhost:8080 without a separate frontend server.
+
+### Build a single binary
+
+```bash
+# Build frontend assets + Go binary
+make build
+
+# Binary at bin/labubu
+./bin/labubu serve
+```
+
+The binary embeds all frontend assets — ship it and run it anywhere.
+
+### Send some test data
+
+```bash
+# Install a demo OTLP exporter (Python example)
+pip install labubu
+
+# Or use any OpenTelemetry SDK configured to export to:
+#   OTLP endpoint: http://localhost:4318
+```
+
+Open http://localhost:8080 to explore traces, sessions, and metrics.
+
+## Configuration
+
+### CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port` | `8080` | API and UI listen port |
+| `--data-dir` | `""` | chDB data directory (empty = in-memory) |
+| `--config` | `labubu.yaml` | YAML config file path |
+| `--buffer-size` | `1000` | Pipeline buffer capacity |
+| `--flush-interval` | `200ms` | Pipeline flush interval |
+| `--metrics-enabled` | `true` | Enable/disable metrics ingestion |
+| `--metrics-data-dir` | `""` | tstorage data directory (empty = memory only) |
+| `--metrics-retention` | `2h` | tstorage retention duration |
+| `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+
+### YAML config (`labubu.yaml`)
+
+Place a `labubu.yaml` in the working directory (or use `--config`):
+
+```yaml
+trace:
+  retention:
+    max_age: 24h          # delete traces older than this (0 = unlimited)
+    max_count: 10000      # keep only the newest N traces (0 = unlimited)
+    cleanup_interval: 5m  # how often the cleanup goroutine runs
+```
+
+No file? Built-in defaults are used silently — everything still works.
+
+## API
+
+Full endpoint reference: **[docs/api.md](docs/api.md)**
+
+Quick overview:
+
+| Section | Endpoints |
+|---------|-----------|
+| Traces | `GET /api/v1/traces`, `GET /api/v1/traces/:id`, `POST /api/v1/traces/export`, `GET /api/v1/services` |
+| Sessions | `GET /api/v1/sessions`, `GET /api/v1/sessions/:id` |
+| Logs | `GET /api/v1/logs`, `GET /api/v1/logs/:traceId`, `GET /api/v1/log-event-names` |
+| Metrics | `GET /api/v1/query`, `/query_range`, `/labels`, `/label/:name/values`, `/metadata`, `/metric-names` |
+| Dashboards | Full CRUD at `/api/v1/dashboards` + panels sub-resource |
+| Pricing | `GET/POST/DELETE /api/v1/model-pricing`, `POST /api/v1/model-pricing/recalc` |
+| LLM Configs | Full CRUD at `/api/v1/llm-configs` |
+| System | `GET /api/health` |
 
 ## Architecture
 
 ```
 OTLP (gRPC/HTTP) → Receiver → Pipeline → Storage (chDB or in-memory)
-                              ↓
-                         REST API ← Vue SPA
+                    │                        │
+                    ▼                        ▼
+               Metric Store           REST API ← Vue 3 SPA
+              (tstorage)          (traces/sessions/metrics/dashboards)
 ```
 
+Detailed project structure: **[docs/project-structure.md](docs/project-structure.md)**
+
+## Development
+
+```bash
+# Run all Go tests
+make test
+
+# Run tests excluding chDB integration tests
+make test-nocgo
+
+# TypeScript type check
+cd web && npx vue-tsc --noEmit
+
+# Build frontend only
+make web-build
+
+# Build without CGO (linting check, no embed)
+make build-nocgo
 ```
-labubu/
-├── cmd/labubu/main.go              # Entry point
-├── internal/
-│   ├── receiver/otlp.go            # OTLP ingestion (gRPC + HTTP)
-│   ├── pipeline/pipeline.go        # Async batch processing
-│   ├── storage/
-│   │   ├── storage.go              # Store interface + model types
-│   │   ├── chdb.go                 # chDB CGO implementation
-│   │   ├── memstore.go             # In-memory store (dev fallback)
-│   │   ├── chdb_query.go           # SQL query builder
-│   │   └── schema.sql              # chDB DDL (traces + spans)
-│   ├── api/
-│   │   ├── router.go               # HTTP router + SPA serving
-│   │   └── trace_handler.go        # Trace API handlers
-│   └── mcp/                        # Reserved for Phase 2 AI integration
-├── web/                            # Vue 3 + TypeScript SPA
-│   └── src/
-│       ├── views/
-│       │   ├── TraceList.vue       # Trace list page
-│       │   └── TraceDetail.vue     # Trace detail + waterfall
-│       ├── components/
-│       │   ├── WaterfallChart.vue  # Waterfall timeline
-│       │   └── SpanDetail.vue      # Span detail panel
-│       └── api/client.ts           # Typed API client
-├── Makefile
-└── docs/superpowers/
-    ├── specs/                      # Design spec
-    └── plans/                      # Implementation plan
-```
-
-## API
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/health` | Health check |
-| `GET /api/v1/traces` | List traces (with filters) |
-| `GET /api/v1/traces/:id` | Trace detail with all spans |
-| `GET /api/v1/services` | List known service names |
-
-## Configuration
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--api-addr` | `0.0.0.0:8080` | API and UI listen address |
-| `--data-dir` | `./data` | chDB data directory (empty = in-memory) |
-| `--buffer-size` | `1000` | Pipeline buffer capacity |
-| `--flush-interval` | `200ms` | Pipeline flush interval |
 
 ## License
 

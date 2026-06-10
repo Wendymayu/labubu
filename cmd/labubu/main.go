@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/labubu/labubu/internal/alerting"
 	"github.com/labubu/labubu/internal/api"
 	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
@@ -79,11 +80,14 @@ func runServe(args []string) {
 
 	metricsEnabled := fs.Bool("metrics-enabled", true, "enable/disable metrics ingestion")
 	metricsDataDir := fs.String("metrics-data-dir", "", "tstorage data directory (empty = pure memory)")
-	metricsRetention := fs.Duration("metrics-retention", 2*time.Hour, "tstorage retention duration")
 
 	logLevel := fs.String("log-level", "info", "log level: debug, info, warn, error")
+	configPath := fs.String("config", "labubu.yaml", "config file path")
 
 	fs.Parse(args)
+
+	// Load YAML config.
+	cfg := storage.LoadConfig(*configPath)
 
 	apiAddr := fmt.Sprintf("0.0.0.0:%d", *port)
 
@@ -113,6 +117,9 @@ func runServe(args []string) {
 	} else {
 		fmt.Printf("  Storage:        %s\n", *dataDir)
 	}
+	fmt.Printf("  Trace retention:  max_age=%s, max_count=%d, cleanup=%s\n",
+		cfg.Trace.Retention.MaxAge, cfg.Trace.Retention.MaxCount, cfg.Trace.Retention.CleanupInterval)
+	fmt.Printf("  Metric retention: max_age=%s\n", cfg.Metric.Retention.MaxAge)
 	fmt.Println()
 
 	// Initialize storage (in-memory for non-CGO builds).
@@ -122,12 +129,17 @@ func runServe(args []string) {
 	}
 	defer store.Close()
 
+	// Start retention cleanup goroutine.
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	defer retentionCancel()
+	go runRetentionCleanup(retentionCtx, store, cfg.Trace.Retention)
+
 	// Initialize metrics store (if enabled).
 	var metricStore metrics.Store
 	if *metricsEnabled {
 		ms, err := metrics.NewTStorageStore(metrics.TStorageConfig{
 			DataDir:   *metricsDataDir,
-			Retention: *metricsRetention,
+			Retention: cfg.Metric.Retention.MaxAge,
 		})
 		if err != nil {
 			log.Fatalf("Failed to initialize metrics store: %v", err)
@@ -147,7 +159,7 @@ func runServe(args []string) {
 	}()
 
 	// Initialize OTLP receiver.
-	recv := receiver.New(pipe, metricStore)
+	recv := receiver.New(pipe, metricStore, store)
 	if err := recv.Start(); err != nil {
 		log.Fatalf("Failed to start OTLP receiver: %v", err)
 	}
@@ -159,6 +171,19 @@ func runServe(args []string) {
 		}
 	}()
 
+	// Initialize alerting subsystem.
+	alertDBPath := *dataDir + "/alerting.json"
+	if *dataDir == "" {
+		alertDBPath = "alerting.json"
+	}
+	alertSub, err := alerting.InitAlerting(alertDBPath, store)
+	if err != nil {
+		log.Printf("Warning: alerting disabled: %v", err)
+	}
+	if alertSub != nil {
+		defer alertSub.Shutdown()
+	}
+
 	// Initialize API router.
 	traceHandler := api.NewTraceHandler(store)
 	var metricsHandler *api.MetricsHandler
@@ -167,7 +192,14 @@ func runServe(args []string) {
 	}
 	dashboardHandler := api.NewDashboardHandler("")
 	sessionHandler := api.NewSessionHandler(store)
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler)
+	logHandler := api.NewLogHandler(store)
+	pricingHandler := api.NewPricingHandler(store)
+	llmConfigHandler := api.NewLLMConfigHandler(store)
+	var alertHandler http.Handler
+	if alertSub != nil {
+		alertHandler = alertSub.Handler
+	}
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler, alertHandler)
 
 	httpSrv := &http.Server{
 		Addr:         apiAddr,
@@ -183,6 +215,13 @@ func runServe(args []string) {
 		}
 	}()
 
+	// Seed default pricing from config on startup.
+	for _, m := range cfg.Pricing.Models {
+		if err := store.UpsertModelPricing(context.Background(), m); err != nil {
+			log.Printf("Warning: failed to seed pricing for %s: %v", m.ModelName, err)
+		}
+	}
+
 	fmt.Println("Press Ctrl+C to stop.")
 
 	// Wait for shutdown signal.
@@ -197,4 +236,23 @@ func runServe(args []string) {
 	}
 
 	log.Println("Labubu stopped.")
+}
+
+func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.RetentionConfig) {
+	ticker := time.NewTicker(ret.CleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			deleted, spans, err := store.Purge(ctx, ret.MaxAge, ret.MaxCount)
+			if err != nil {
+				log.Printf("Trace cleanup error: %v", err)
+			} else if deleted > 0 {
+				log.Printf("Trace cleanup: removed %d traces, %d spans", deleted, spans)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }

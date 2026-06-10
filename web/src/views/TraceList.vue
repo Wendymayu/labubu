@@ -19,6 +19,9 @@
       </select>
       <button @click="search" class="btn btn-primary">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
+      <button v-if="selectedIds.size > 0" @click="downloadSelected" :disabled="exportLoading" class="btn btn-primary">
+        {{ exportLoading ? t('common.loading') : t('traceList.downloadOtlp') + ' (' + selectedIds.size + ')' }}
+      </button>
     </div>
 
     <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
@@ -27,12 +30,16 @@
       <table class="trace-table" v-if="traces.length > 0">
         <thead>
           <tr>
+            <th class="col-checkbox">
+              <input type="checkbox" :checked="selectedIds.size === traces.length && traces.length > 0" @change="toggleSelectAll" />
+            </th>
             <th>{{ t('traceList.name') }}</th>
             <th>{{ t('traceList.service') }}</th>
             <th>{{ t('traceList.duration') }}</th>
             <th>{{ t('traceList.spans') }}</th>
             <th>{{ t('traceList.status') }}</th>
             <th>{{ t('traceList.tokens') }}</th>
+            <th>Cost</th>
             <th>{{ t('traceList.time') }}</th>
           </tr>
         </thead>
@@ -40,18 +47,21 @@
           <tr
             v-for="trace in traces"
             :key="trace.trace_id_hex"
-            @click="goToTrace(trace.trace_id_hex)"
-            class="trace-row"
+            :class="['trace-row', { 'row-selected': isSelected(trace.trace_id_hex) }]"
           >
-            <td class="cell-name">{{ trace.root_name }}</td>
-            <td>{{ trace.root_service }}</td>
-            <td>{{ formatDuration(trace.duration_ms) }}</td>
-            <td>{{ trace.span_count }}</td>
-            <td>
+            <td class="col-checkbox" @click.stop>
+              <input type="checkbox" :checked="isSelected(trace.trace_id_hex)" @change="toggleSelect(trace.trace_id_hex)" />
+            </td>
+            <td class="cell-name" @click="goToTrace(trace.trace_id_hex)">{{ trace.root_name }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ trace.root_service }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ formatDuration(trace.duration_ms) }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ trace.span_count }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">
               <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
             </td>
-            <td>{{ formatTokens(trace.total_tokens) }}</td>
-            <td class="cell-time">{{ formatTime(trace.start_time_ms) }}</td>
+            <td @click="goToTrace(trace.trace_id_hex)">{{ formatTokens(trace.total_tokens) }}</td>
+            <td class="cell-cost" @click="goToTrace(trace.trace_id_hex)">{{ formatCost(trace.cost, trace.cost_currency) }}</td>
+            <td class="cell-time" @click="goToTrace(trace.trace_id_hex)">{{ formatTime(trace.start_time_ms) }}</td>
           </tr>
         </tbody>
       </table>
@@ -82,10 +92,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listTraces, getServices, type TraceListItem, type Pagination } from '../api/client'
+import { listTraces, getServices, exportTraces, type TraceListItem, type Pagination } from '../api/client'
+import { formatCost } from '../utils/format'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -95,6 +106,63 @@ const pagination = ref<Pagination>({ page: 1, page_size: 20, total: 0 })
 const services = ref<string[]>([])
 const loading = ref(true)
 const error = ref('')
+
+// Batch selection state
+const selectedIds = ref<Set<string>>(new Set())
+const exportLoading = ref(false)
+
+function toggleSelect(traceId: string) {
+  const next = new Set(selectedIds.value)
+  if (next.has(traceId)) {
+    next.delete(traceId)
+  } else {
+    next.add(traceId)
+  }
+  selectedIds.value = next
+}
+
+function toggleSelectAll() {
+  if (selectedIds.value.size === traces.value.length) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(traces.value.map(t => t.trace_id_hex))
+  }
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+function isSelected(traceId: string): boolean {
+  return selectedIds.value.has(traceId)
+}
+
+function downloadBlob(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+async function downloadSelected() {
+  const ids = Array.from(selectedIds.value)
+  if (ids.length === 0) return
+
+  exportLoading.value = true
+  try {
+    const data = await exportTraces(ids, 'otlp')
+    downloadBlob(JSON.stringify(data, null, 2), 'labubu-traces-export.json')
+  } catch (e: any) {
+    alert(`${t('traceList.exportFailed')}: ${e.message}`)
+  } finally {
+    exportLoading.value = false
+  }
+}
 
 const filters = ref({
   q: '',
@@ -107,6 +175,7 @@ const totalPages = computed(() => {
 })
 
 async function fetchTraces(page = 1) {
+  clearSelection()
   loading.value = true
   error.value = ''
   try {
@@ -171,6 +240,11 @@ function statusClass(status: string): string {
   }
 }
 
+// Clear selection when page changes
+watch(() => pagination.value.page, () => {
+  clearSelection()
+})
+
 onMounted(() => {
   fetchTraces()
   fetchServices()
@@ -180,25 +254,40 @@ onMounted(() => {
 <style scoped>
 .trace-list { max-width: 1400px; }
 .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.search-input { flex: 1; min-width: 200px; padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
-.filter-select { padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
-.btn { padding: 8px 16px; background: #334155; border: 1px solid #475569; border-radius: 6px; color: #e2e8f0; cursor: pointer; font-size: 14px; }
-.btn:hover { background: #475569; }
+.search-input { flex: 1; min-width: 200px; padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
+.filter-select { padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
+.btn { padding: 8px 16px; background: var(--bg-surface-hover); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-primary); cursor: pointer; font-size: 14px; }
+.btn:hover { background: var(--border-strong); }
 .btn:disabled { opacity: 0.5; cursor: default; }
-.btn-primary { background: #2563eb; border-color: #2563eb; }
-.btn-primary:hover { background: #1d4ed8; }
-.loading, .error, .empty { text-align: center; padding: 60px 20px; color: #94a3b8; }
-.error { color: #f87171; }
+.btn-primary { background: var(--accent-primary); border-color: var(--accent-primary); }
+.btn-primary:hover { background: var(--accent-primary-hover); }
+.loading, .error, .empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+.error { color: var(--status-error-accent); }
 .trace-table { width: 100%; border-collapse: collapse; }
-.trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: #94a3b8; text-transform: uppercase; border-bottom: 1px solid #334155; }
-.trace-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid #1e293b; }
+.trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; border-bottom: 1px solid var(--border-default); }
+.trace-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--border-subtle); }
 .trace-row { cursor: pointer; }
-.trace-row:hover { background: #1e293b; }
-.cell-name { font-weight: 600; color: #38bdf8; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cell-time { color: #94a3b8; font-size: 13px; white-space: nowrap; }
+.trace-row:hover { background: var(--bg-surface); }
+.cell-name { font-weight: 600; color: var(--accent-blue); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-.status-ok { background: #065f46; color: #6ee7b7; }
-.status-error { background: #7f1d1d; color: #fca5a5; }
+.status-ok { background: var(--status-ok-bg); color: var(--status-ok-text); }
+.status-error { background: var(--status-error-bg); color: var(--status-error-text); }
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
-.page-info { font-size: 14px; color: #94a3b8; }
+.page-info { font-size: 14px; color: var(--text-secondary); }
+
+/* Batch selection */
+.col-checkbox {
+  width: 36px;
+  text-align: center;
+}
+.col-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+}
+.row-selected {
+  background: var(--bg-surface) !important;
+}
 </style>

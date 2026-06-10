@@ -1,0 +1,16 @@
+# Labubu 模型定价配置
+# 启动时自动导入 model_pricing 表，不覆盖已有配置
+pricing:
+  models:
+    - name: claude-opus-4-8
+      input_price: 15.0
+      output_price: 75.0
+      currency: USD
+    - name: claude-sonnet-4-6
+      input_price: 3.0
+      output_price: 15.0
+      currency: USD
+    - name: claude-haiku-4-5
+      input_price: 0.80
+      output_price: 4.0
+      currency: USD

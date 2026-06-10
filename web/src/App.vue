@@ -6,12 +6,31 @@
         <router-link to="/traces">{{ t('nav.traces') }}</router-link>
         <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
         <router-link to="/dashboards">{{ t('nav.metrics') }}</router-link>
+        <router-link to="/logs">{{ t('nav.logs') }}</router-link>
+        <div class="nav-group">
+          <button class="nav-group-title" @click="alertsOpen = !alertsOpen">
+            <span class="nav-group-arrow">{{ alertsOpen ? '▼' : '▶' }}</span>
+            {{ t('nav.alerts') }}
+          </button>
+          <div v-show="alertsOpen" class="nav-group-items">
+            <router-link to="/alerts/rules">{{ t('alerts.rules') }}</router-link>
+            <router-link to="/alerts/history">{{ t('alerts.history') }}</router-link>
+          </div>
+        </div>
+        <div class="nav-group">
+          <button class="nav-group-title" @click="settingsOpen = !settingsOpen">
+            <span class="nav-group-arrow">{{ settingsOpen ? '▼' : '▶' }}</span>
+            {{ t('nav.settings') }}
+          </button>
+          <div v-show="settingsOpen" class="nav-group-items">
+            <router-link to="/settings/pricing">{{ t('nav.modelPricing') }}</router-link>
+            <router-link to="/settings/llm-configs">{{ t('nav.llmConfigs') }}</router-link>
+          </div>
+        </div>
       </nav>
-      <div class="lang-switcher">
-        <select v-model="locale" @change="onLocaleChange">
-          <option value="en">English</option>
-          <option value="zh">中文</option>
-        </select>
+      <div class="sidebar-footer">
+        <ThemeToggle />
+        <LanguageToggle />
       </div>
     </aside>
     <main class="app-main">
@@ -21,52 +40,54 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useTheme } from './composables/useTheme'
+import ThemeToggle from './components/ThemeToggle.vue'
+import LanguageToggle from './components/LanguageToggle.vue'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
+useTheme() // initialize theme
 
-function onLocaleChange() {
-  localStorage.setItem('locale', locale.value)
-}
+const alertsOpen = ref(false)
+const settingsOpen = ref(false)
 </script>
 
 <style scoped>
-.app { min-height: 100vh; display: flex; }
+.app { min-height: 100vh; display: flex; align-items: flex-start; }
 .sidebar {
+  position: sticky;
+  top: 0;
   width: 200px;
+  height: 100vh;
   flex-shrink: 0;
-  background: #000;
-  border-right: 1px solid #334155;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-default);
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  overflow-y: auto;
 }
-.app-title { font-size: 18px; font-weight: 700; color: #38bdf8; text-decoration: none; }
+.app-title { font-size: 18px; font-weight: 700; color: var(--accent-blue); text-decoration: none; }
 .app-nav { display: flex; flex-direction: column; gap: 8px; }
-.app-nav a { color: #94a3b8; text-decoration: none; font-size: 14px; padding: 6px 0; }
-.app-nav a:hover { color: #e2e8f0; }
-.app-nav a.router-link-active { color: #38bdf8; }
+.app-nav a { color: var(--text-secondary); text-decoration: none; font-size: 14px; padding: 6px 0; }
+.app-nav a:hover { color: var(--text-primary); }
+.app-nav a.router-link-active { color: var(--accent-blue); }
+.nav-group { display: flex; flex-direction: column; }
+.nav-group-title {
+  background: none; border: none; color: var(--text-secondary); font-size: 14px;
+  padding: 6px 0; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 4px;
+}
+.nav-group-title:hover { color: var(--text-primary); }
+.nav-group-arrow { font-size: 10px; width: 12px; }
+.nav-group-items { display: flex; flex-direction: column; padding-left: 16px; }
 .app-main { flex: 1; padding: 24px; }
-.lang-switcher {
+.sidebar-footer {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.lang-switcher select {
-  width: 100%;
-  padding: 6px 10px;
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  color: #94a3b8;
-  font-size: 13px;
-  cursor: pointer;
-}
-.lang-switcher select:hover {
-  border-color: #475569;
-  color: #e2e8f0;
-}
-.lang-switcher select:focus {
-  outline: none;
-  border-color: #38bdf8;
-}
+
 </style>

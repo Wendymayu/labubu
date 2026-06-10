@@ -47,6 +47,48 @@ func (m *mockStore) GetSession(ctx context.Context, sessionID string) (*storage.
 	return nil, nil
 }
 
+func (m *mockStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
+	return 0, 0, nil
+}
+
+func (m *mockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
+
+func (m *mockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.LogListResult, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]storage.LogListItem, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
+
+func (m *mockStore) GetLLMConfigs(ctx context.Context) ([]storage.LLMConfig, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *mockStore) CreateLLMConfig(ctx context.Context, c *storage.LLMConfig) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockStore) UpdateLLMConfig(ctx context.Context, c *storage.LLMConfig) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *mockStore) GetModelPricing(ctx context.Context) ([]storage.ModelPricing, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *mockStore) UpsertModelPricing(ctx context.Context, p storage.ModelPricing) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	return fmt.Errorf("not implemented")
+}
+func (m *mockStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	return fmt.Errorf("not implemented")
+}
+
 func (m *mockStore) Close() error { return nil }
 
 func TestPipelineIngestAndFlush(t *testing.T) {
