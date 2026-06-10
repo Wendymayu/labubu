@@ -16,6 +16,15 @@
         <span class="stat-metric">{{ panel.metric }}</span>
       </div>
       <canvas v-else ref="canvasRef"></canvas>
+      <div
+        v-if="chartDatasets.length > 1"
+        class="chart-legend"
+      >
+        <div v-for="(ds, idx) in chartDatasets" :key="idx" class="legend-item">
+          <span class="legend-color" :style="{ background: ds.borderColor }"></span>
+          <span class="legend-label">{{ ds.label }}</span>
+        </div>
+      </div>
       <div ref="tooltipRef" class="chart-tooltip"></div>
     </div>
   </div>
@@ -53,6 +62,7 @@ const loading = ref(false)
 const error = ref('')
 const noData = ref(false)
 const statValue = ref(0)
+const chartDatasets = ref<any[]>([])
 let chart: Chart | null = null
 let tooltipHovering = false
 
@@ -164,7 +174,7 @@ function externalTooltipHandler(context: any) {
   html += '<div class="tt-body">'
   for (const dp of dataPoints) {
     const ds = chart.data.datasets[dp.datasetIndex]
-    html += '<div class="tt-item">'
+    html += `<div class="tt-item" style="border-left:3px solid ${ds.borderColor}">`
     html += `<span class="tt-color" style="background:${ds.borderColor}"></span>`
     html += '<div class="tt-labels">'
     // Show each label key=value pair on its own line.
@@ -227,13 +237,15 @@ function renderChart(results: any[]) {
       label: seriesLabel(r),
       data,
       borderColor: color,
-      backgroundColor: props.panel.chartType === 'bar' ? color + '88' : color + '22',
+      backgroundColor: props.panel.chartType === 'bar' ? color + '88' : 'transparent',
       borderWidth: 2,
-      fill: props.panel.chartType === 'line',
+      fill: props.panel.chartType === 'bar',
       tension: 0.3,
       pointRadius: 0,
     }
   })
+
+  chartDatasets.value = datasets
 
   chart = new Chart(canvasRef.value, {
     type: props.panel.chartType === 'bar' ? 'bar' : 'line',
@@ -247,9 +259,7 @@ function renderChart(results: any[]) {
       animation: false,
       plugins: {
         legend: {
-          display: datasets.length > 1,
-          position: 'bottom',
-          labels: { color: getCSSVar('--text-secondary'), font: { size: 10 }, boxWidth: 12, padding: 8 },
+          display: false,
         },
         tooltip: {
           enabled: false,
@@ -343,8 +353,8 @@ onUnmounted(() => {
   font-size: 14px; padding: 4px; border-radius: 4px; line-height: 1;
 }
 .btn-icon:hover { color: var(--text-primary); background: var(--bg-surface-hover-subtle); }
-.panel-body { padding: 16px; height: 280px; position: relative; }
-.panel-body canvas { width: 100% !important; height: 100% !important; }
+.panel-body { padding: 16px; height: 280px; position: relative; display: flex; flex-direction: column; }
+.panel-body canvas { width: 100% !important; flex: 1; min-height: 0; }
 .panel-state {
   display: flex; align-items: center; justify-content: center;
   height: 100%; color: var(--text-secondary); font-size: 14px;
@@ -388,12 +398,17 @@ onUnmounted(() => {
 .tt-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
 }
 .tt-item {
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  padding: 6px 6px;
+  border-radius: 4px;
+}
+.tt-item:nth-child(even) {
+  background: var(--bg-surface-hover-subtle);
 }
 .tt-color {
   width: 8px;
@@ -416,5 +431,34 @@ onUnmounted(() => {
   font-weight: 600;
   flex-shrink: 0;
   margin-left: auto;
+}
+
+/* Scrollable legend */
+.chart-legend {
+  margin-top: 8px;
+  max-height: 80px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.chart-legend::-webkit-scrollbar { width: 4px; }
+.chart-legend::-webkit-scrollbar-track { background: transparent; }
+.chart-legend::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.legend-color {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.legend-label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
