@@ -1,4 +1,5 @@
 """Shared fixtures and sample data for MCP tests."""
+import re
 import pytest
 import httpx
 
@@ -44,6 +45,11 @@ SAMPLE_TRACES = {
         },
     ],
     "pagination": {"page": 1, "page_size": 20, "total": 3},
+}
+
+SAMPLE_TRACES_EMPTY = {
+    "traces": [],
+    "pagination": {"page": 1, "page_size": 20, "total": 0},
 }
 
 SAMPLE_TRACE_DETAIL = {
@@ -157,7 +163,14 @@ SAMPLE_LOGS = {
     "pagination": {"page": 1, "page_size": 20, "total": 2},
 }
 
+SAMPLE_LOGS_EMPTY = {
+    "logs": [],
+    "pagination": {"page": 1, "page_size": 20, "total": 0},
+}
+
 SAMPLE_SERVICES = {"services": ["api-gateway", "embed-svc", "llm-proxy", "auth-service"]}
+
+SAMPLE_SERVICES_EMPTY = {"services": []}
 
 SAMPLE_METRICS_RESPONSE = {
     "status": "success",
@@ -171,69 +184,65 @@ SAMPLE_METRICS_RESPONSE = {
     },
 }
 
+SAMPLE_METRICS_EMPTY = {
+    "status": "success",
+    "data": {"resultType": "vector", "result": []},
+}
+
 SAMPLE_METRICS_ERROR = {
     "status": "error",
     "error": 'parse error at line 1, col 5: unexpected "}"',
 }
 
+# Route patterns for dynamic matching
+TRACE_DETAIL_PATTERN = re.compile(r"^/api/v1/traces/([a-f0-9]{32})$")
 
-# ── Mock fixtures ──
+
+# ── Mock transport handler ──
+
+def _mock_handler(request: httpx.Request) -> httpx.Response:
+    """Route mock requests to appropriate responses based on URL path."""
+    url_path = request.url.path
+    query_str = request.url.query.decode() if request.url.query else ""
+
+    # GET /api/v1/traces/{trace_id}
+    m = TRACE_DETAIL_PATTERN.match(url_path)
+    if m:
+        trace_id = m.group(1)
+        if trace_id == "ffffffffffffffffffffffffffffffff":
+            return httpx.Response(404, json={"error": "trace not found"})
+        return httpx.Response(200, json=SAMPLE_TRACE_DETAIL)
+
+    # GET /api/v1/traces
+    if url_path == "/api/v1/traces":
+        return httpx.Response(200, json=SAMPLE_TRACES)
+
+    # GET /api/v1/logs
+    if url_path == "/api/v1/logs":
+        return httpx.Response(200, json=SAMPLE_LOGS)
+
+    # GET /api/v1/services
+    if url_path == "/api/v1/services":
+        return httpx.Response(200, json=SAMPLE_SERVICES)
+
+    # GET /api/v1/query?query=...
+    if url_path == "/api/v1/query":
+        if "query=BAD" in query_str:
+            return httpx.Response(200, json=SAMPLE_METRICS_ERROR)
+        if "query=empty" in query_str:
+            return httpx.Response(200, json=SAMPLE_METRICS_EMPTY)
+        return httpx.Response(200, json=SAMPLE_METRICS_RESPONSE)
+
+    # Fallback: empty response
+    return httpx.Response(200, json={})
+
+
+# ── Fixtures ──
 
 @pytest.fixture
 def mock_http():
-    """Return an httpx.MockTransport pre-configured with all routes."""
-    transport = httpx.MockTransport()
-
-    # Traces: list
-    transport.add_handler(
-        "GET",
-        httpx.URL("http://localhost:8080/api/v1/traces"),
-        lambda req: httpx.Response(200, json=SAMPLE_TRACES),
-    )
-
-    # Traces: detail (matches any 32-char hex trace id)
-    transport.add_handler(
-        "GET",
-        httpx.URL("http://localhost:8080/api/v1/traces/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-        lambda req: httpx.Response(200, json=SAMPLE_TRACE_DETAIL),
-    )
-
-    # Traces: non-existent trace
-    transport.add_handler(
-        "GET",
-        httpx.URL("http://localhost:8080/api/v1/traces/ffffffffffffffffffffffffffffffff"),
-        lambda req: httpx.Response(404, json={"error": "trace not found"}),
-    )
-
-    # Logs: list
-    transport.add_handler(
-        "GET",
-        httpx.URL("http://localhost:8080/api/v1/logs"),
-        lambda req: httpx.Response(200, json=SAMPLE_LOGS),
-    )
-
-    # Services
-    transport.add_handler(
-        "GET",
-        httpx.URL("http://localhost:8080/api/v1/services"),
-        lambda req: httpx.Response(200, json=SAMPLE_SERVICES),
-    )
-
-    # Metrics: instant query (success)
-    transport.add_handler(
-        "GET",
-        httpx.URL("http://localhost:8080/api/v1/query?query=rate%28http_requests_total%5B5m%5D%29"),
-        lambda req: httpx.Response(200, json=SAMPLE_METRICS_RESPONSE),
-    )
-
-    # Metrics: error query
-    transport.add_handler(
-        "GET",
-        httpx.URL("http://localhost:8080/api/v1/query?query=BAD"),
-        lambda req: httpx.Response(200, json=SAMPLE_METRICS_ERROR),
-    )
-
-    return transport
+    """Return an httpx.MockTransport with a routing handler."""
+    return httpx.MockTransport(_mock_handler)
 
 
 @pytest.fixture
