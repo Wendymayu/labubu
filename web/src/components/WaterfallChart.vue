@@ -5,7 +5,7 @@
         <input
           class="search-input"
           type="text"
-          placeholder="Search span name..."
+          placeholder="Search spans..."
           :value="searchQuery"
           @input="onSearchInput(($event.target as HTMLInputElement).value)"
         />
@@ -127,7 +127,19 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 function matchesSearch(span: SpanDetail): boolean {
   if (!searchQuery.value) return true
-  return span.name.toLowerCase().includes(searchQuery.value.toLowerCase())
+  const q = searchQuery.value.toLowerCase()
+  // Match against span name.
+  if (span.name.toLowerCase().includes(q)) return true
+  // Match against attribute keys and values.
+  if (span.attributes) {
+    for (const [key, val] of Object.entries(span.attributes)) {
+      if (key.toLowerCase().includes(q)) return true
+      if (typeof val === 'string' && val.toLowerCase().includes(q)) return true
+    }
+  }
+  // Match against span ID.
+  if (span.span_id.toLowerCase().includes(q)) return true
+  return false
 }
 
 function matchesFilters(span: SpanDetail): boolean {
@@ -516,10 +528,11 @@ function formatTokens(tokens: number): string {
 
 /* === Search & filter highlights === */
 .waterfall-row.search-match {
-  background: rgba(251, 191, 36, 0.08);
+  background: rgba(251, 191, 36, 0.15);
+  border-left: 3px solid var(--status-warning);
 }
 .waterfall-row.search-match:hover {
-  background: rgba(251, 191, 36, 0.15);
+  background: rgba(251, 191, 36, 0.22);
 }
 .waterfall-row.filter-dimmed {
   opacity: 0.35;
@@ -527,5 +540,10 @@ function formatTokens(tokens: number): string {
 .waterfall-row.filter-dimmed:hover {
   opacity: 0.6;
 }
-.match-text { font-weight: 700; }
+.match-text {
+  font-weight: 700;
+  background: rgba(251, 191, 36, 0.25);
+  border-radius: 2px;
+  padding: 1px 3px;
+}
 </style>
