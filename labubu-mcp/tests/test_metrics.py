@@ -1,7 +1,7 @@
 """Tests for query_metrics MCP tool."""
 import httpx
 import pytest
-from labubu.mcp.tools.metrics import query_metrics
+from labubu_mcp.tools.metrics import query_metrics
 
 pytestmark = pytest.mark.asyncio
 
@@ -20,7 +20,7 @@ class TestQueryMetricsTool:
         transport = httpx.MockTransport(lambda req: httpx.Response(
             200, json={"status": "success", "data": {"resultType": "vector", "result": []}}
         ))
-        from labubu.mcp.api_client import LabubuApiClient
+        from labubu_mcp.api_client import LabubuApiClient
         client = LabubuApiClient("http://localhost:8080", transport=transport)
         result = await query_metrics(client, "empty")
         assert "no data" in result.lower() or "empty" in result.lower()

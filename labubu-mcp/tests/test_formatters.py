@@ -1,6 +1,6 @@
 """Tests for output formatters."""
 import pytest
-from labubu.mcp.formatters import (
+from labubu_mcp.formatters import (
     format_trace_list,
     format_trace_detail,
     format_log_list,

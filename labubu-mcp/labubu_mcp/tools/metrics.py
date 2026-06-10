@@ -1,5 +1,5 @@
 """MCP Tool: query_metrics."""
-from labubu.mcp.formatters import format_metrics_result
+from labubu_mcp.formatters import format_metrics_result
 
 
 async def query_metrics(api_client, query: str, time: str = None):

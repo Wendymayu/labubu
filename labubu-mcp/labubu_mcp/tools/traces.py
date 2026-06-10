@@ -1,5 +1,5 @@
 """MCP Tools: search_traces and get_trace_detail."""
-from labubu.mcp.formatters import format_trace_list, format_trace_detail
+from labubu_mcp.formatters import format_trace_list, format_trace_detail
 
 VALID_STATUSES = {"OK", "ERROR", "UNSET", ""}
 

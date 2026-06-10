@@ -1,13 +1,12 @@
 """MCP Server creation and tool registration."""
 import argparse
-import asyncio
 
 from mcp.server.fastmcp import FastMCP
 
-from labubu.mcp.tools.traces import search_traces, get_trace_detail
-from labubu.mcp.tools.logs import search_logs
-from labubu.mcp.tools.metrics import query_metrics
-from labubu.mcp.tools.services import list_services
+from labubu_mcp.tools.traces import search_traces, get_trace_detail
+from labubu_mcp.tools.logs import search_logs
+from labubu_mcp.tools.metrics import query_metrics
+from labubu_mcp.tools.services import list_services
 
 
 def create_server(api_client):
@@ -21,7 +20,6 @@ def create_server(api_client):
     """
     server = FastMCP("labubu")
 
-    # Register search_traces
     @server.tool(name="search_traces")
     async def _search_traces(
         status: str = "",
@@ -69,7 +67,6 @@ def create_server(api_client):
         kwargs["offset"] = offset
         return await search_traces(api_client, **kwargs)
 
-    # Register get_trace_detail
     @server.tool(name="get_trace_detail")
     async def _get_trace_detail(
         trace_id: str,
@@ -91,7 +88,6 @@ def create_server(api_client):
             include_attributes=include_attributes,
         )
 
-    # Register search_logs
     @server.tool(name="search_logs")
     async def _search_logs(
         trace_id: str = "",
@@ -134,7 +130,6 @@ def create_server(api_client):
         kwargs["offset"] = offset
         return await search_logs(api_client, **kwargs)
 
-    # Register query_metrics
     @server.tool(name="query_metrics")
     async def _query_metrics(
         query: str,
@@ -152,7 +147,6 @@ def create_server(api_client):
         """
         return await query_metrics(api_client, query, time=time if time else None)
 
-    # Register list_services
     @server.tool(name="list_services")
     async def _list_services() -> str:
         """List all known service names from ingested traces.
@@ -175,7 +169,7 @@ def main():
     )
     args = parser.parse_args()
 
-    from labubu.mcp.api_client import LabubuApiClient
+    from labubu_mcp.api_client import LabubuApiClient
 
     api_client = LabubuApiClient(args.api_url)
     server = create_server(api_client)

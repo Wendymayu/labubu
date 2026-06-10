@@ -47,11 +47,6 @@ SAMPLE_TRACES = {
     "pagination": {"page": 1, "page_size": 20, "total": 3},
 }
 
-SAMPLE_TRACES_EMPTY = {
-    "traces": [],
-    "pagination": {"page": 1, "page_size": 20, "total": 0},
-}
-
 SAMPLE_TRACE_DETAIL = {
     "trace": {
         "trace_id_hex": "a" * 32,
@@ -163,14 +158,7 @@ SAMPLE_LOGS = {
     "pagination": {"page": 1, "page_size": 20, "total": 2},
 }
 
-SAMPLE_LOGS_EMPTY = {
-    "logs": [],
-    "pagination": {"page": 1, "page_size": 20, "total": 0},
-}
-
 SAMPLE_SERVICES = {"services": ["api-gateway", "embed-svc", "llm-proxy", "auth-service"]}
-
-SAMPLE_SERVICES_EMPTY = {"services": []}
 
 SAMPLE_METRICS_RESPONSE = {
     "status": "success",
@@ -184,11 +172,6 @@ SAMPLE_METRICS_RESPONSE = {
     },
 }
 
-SAMPLE_METRICS_EMPTY = {
-    "status": "success",
-    "data": {"resultType": "vector", "result": []},
-}
-
 SAMPLE_METRICS_ERROR = {
     "status": "error",
     "error": 'parse error at line 1, col 5: unexpected "}"',
@@ -197,8 +180,6 @@ SAMPLE_METRICS_ERROR = {
 # Route patterns for dynamic matching
 TRACE_DETAIL_PATTERN = re.compile(r"^/api/v1/traces/([a-f0-9]{32})$")
 
-
-# ── Mock transport handler ──
 
 def _mock_handler(request: httpx.Request) -> httpx.Response:
     """Route mock requests to appropriate responses based on URL path."""
@@ -230,10 +211,10 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
         if "query=BAD" in query_str:
             return httpx.Response(200, json=SAMPLE_METRICS_ERROR)
         if "query=empty" in query_str:
-            return httpx.Response(200, json=SAMPLE_METRICS_EMPTY)
+            return httpx.Response(200, json={"status": "success", "data": {"resultType": "vector", "result": []}})
         return httpx.Response(200, json=SAMPLE_METRICS_RESPONSE)
 
-    # Fallback: empty response
+    # Fallback
     return httpx.Response(200, json={})
 
 
@@ -248,6 +229,6 @@ def mock_http():
 @pytest.fixture
 def api_client(mock_http):
     """Return a LabubuApiClient backed by mock HTTP transport."""
-    from labubu.mcp.api_client import LabubuApiClient
+    from labubu_mcp.api_client import LabubuApiClient
 
     return LabubuApiClient("http://localhost:8080", transport=mock_http)

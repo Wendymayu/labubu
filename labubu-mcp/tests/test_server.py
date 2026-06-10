@@ -1,6 +1,6 @@
 """Integration test for the MCP server (tool registration)."""
 import pytest
-from labubu.mcp.server import create_server
+from labubu_mcp.server import create_server
 
 pytestmark = pytest.mark.asyncio
 
@@ -11,11 +11,10 @@ class TestServerCreation:
         assert server is not None
         assert server.name == "labubu"
 
-        # Verify each tool function is importable and callable
-        from labubu.mcp.tools.traces import search_traces, get_trace_detail
-        from labubu.mcp.tools.logs import search_logs
-        from labubu.mcp.tools.metrics import query_metrics
-        from labubu.mcp.tools.services import list_services
+        from labubu_mcp.tools.traces import search_traces, get_trace_detail
+        from labubu_mcp.tools.logs import search_logs
+        from labubu_mcp.tools.metrics import query_metrics
+        from labubu_mcp.tools.services import list_services
 
         assert callable(search_traces)
         assert callable(get_trace_detail)

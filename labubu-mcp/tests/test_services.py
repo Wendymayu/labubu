@@ -1,7 +1,7 @@
 """Tests for list_services MCP tool."""
 import httpx
 import pytest
-from labubu.mcp.tools.services import list_services
+from labubu_mcp.tools.services import list_services
 
 pytestmark = pytest.mark.asyncio
 
@@ -17,7 +17,7 @@ class TestListServicesTool:
         transport = httpx.MockTransport(lambda req: httpx.Response(
             200, json={"services": []}
         ))
-        from labubu.mcp.api_client import LabubuApiClient
+        from labubu_mcp.api_client import LabubuApiClient
         client = LabubuApiClient("http://localhost:8080", transport=transport)
         result = await list_services(client)
         assert "0" in result

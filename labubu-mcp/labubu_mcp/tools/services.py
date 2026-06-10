@@ -1,5 +1,5 @@
 """MCP Tool: list_services."""
-from labubu.mcp.formatters import format_service_list
+from labubu_mcp.formatters import format_service_list
 
 
 async def list_services(api_client):

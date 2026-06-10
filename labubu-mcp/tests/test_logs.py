@@ -1,7 +1,7 @@
 """Tests for search_logs MCP tool."""
 import httpx
 import pytest
-from labubu.mcp.tools.logs import search_logs
+from labubu_mcp.tools.logs import search_logs
 
 pytestmark = pytest.mark.asyncio
 
@@ -18,7 +18,7 @@ class TestSearchLogsTool:
         transport = httpx.MockTransport(lambda req: httpx.Response(
             200, json={"logs": [], "pagination": {"page": 1, "page_size": 20, "total": 0}}
         ))
-        from labubu.mcp.api_client import LabubuApiClient
+        from labubu_mcp.api_client import LabubuApiClient
         client = LabubuApiClient("http://localhost:8080", transport=transport)
         result = await search_logs(client)
         assert "No logs found" in result

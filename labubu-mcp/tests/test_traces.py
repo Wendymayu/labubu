@@ -1,7 +1,7 @@
 """Tests for trace MCP tools."""
 import httpx
 import pytest
-from labubu.mcp.tools.traces import search_traces, get_trace_detail
+from labubu_mcp.tools.traces import search_traces, get_trace_detail
 
 pytestmark = pytest.mark.asyncio
 
@@ -17,7 +17,7 @@ class TestSearchTracesTool:
         transport = httpx.MockTransport(lambda req: httpx.Response(
             200, json={"traces": [], "pagination": {"page": 1, "page_size": 20, "total": 0}}
         ))
-        from labubu.mcp.api_client import LabubuApiClient
+        from labubu_mcp.api_client import LabubuApiClient
         client = LabubuApiClient("http://localhost:8080", transport=transport)
         result = await search_traces(client, status="OK")
         assert "No traces found" in result

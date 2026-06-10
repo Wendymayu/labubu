@@ -1,5 +1,5 @@
 """MCP Tool: search_logs."""
-from labubu.mcp.formatters import format_log_list
+from labubu_mcp.formatters import format_log_list
 
 VALID_SEVERITIES = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}
 

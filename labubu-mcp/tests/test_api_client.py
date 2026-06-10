@@ -1,7 +1,7 @@
 """Tests for LabubuApiClient."""
 import httpx
 import pytest
-from labubu.mcp.api_client import LabubuApiClient
+from labubu_mcp.api_client import LabubuApiClient
 
 pytestmark = pytest.mark.asyncio
 
@@ -14,7 +14,6 @@ class TestSearchTraces:
         assert result["pagination"]["total"] == 3
 
     async def test_passes_query_params(self, mock_http):
-        """Verify query string parameters are sent correctly."""
         client = LabubuApiClient("http://localhost:8080", transport=mock_http)
         result = await client.search_traces(
             status="ERROR", service="api-gateway", limit=10, offset=0
@@ -67,8 +66,6 @@ class TestListServices:
 
 class TestConnectionError:
     async def test_connection_refused(self):
-        """When Labubu is not running, return an error dict."""
-        # Use a mock transport that raises ConnectError
         def error_handler(request):
             raise httpx.ConnectError("Connection refused")
         transport = httpx.MockTransport(error_handler)
