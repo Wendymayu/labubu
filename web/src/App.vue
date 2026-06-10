@@ -54,9 +54,12 @@ const settingsOpen = ref(false)
 </script>
 
 <style scoped>
-.app { min-height: 100vh; display: flex; }
+.app { min-height: 100vh; display: flex; align-items: flex-start; }
 .sidebar {
+  position: sticky;
+  top: 0;
   width: 200px;
+  height: 100vh;
   flex-shrink: 0;
   background: var(--bg-primary);
   border-right: 1px solid var(--border-default);
@@ -64,6 +67,7 @@ const settingsOpen = ref(false)
   display: flex;
   flex-direction: column;
   gap: 20px;
+  overflow-y: auto;
 }
 .app-title { font-size: 18px; font-weight: 700; color: var(--accent-blue); text-decoration: none; }
 .app-nav { display: flex; flex-direction: column; gap: 8px; }
