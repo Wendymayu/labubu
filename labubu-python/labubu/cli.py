@@ -30,3 +30,9 @@ def main():
 
     result = subprocess.run([binary] + sys.argv[1:])
     sys.exit(result.returncode)
+
+
+def mcp_main():
+    """Entry point for labubu-mcp command (MCP Server over stdio)."""
+    from labubu.mcp.server import main as mcp_server_main
+    mcp_server_main()

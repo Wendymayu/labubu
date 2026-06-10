@@ -72,7 +72,11 @@ def format_trace_detail(trace, spans, max_events=100):
     lines.append(f"name: {trace.get('root_name', '') or (spans[0].get('name', '') if spans else '')}")
     lines.append(f"status: {trace.get('status', '') or (spans[0].get('status', '') if spans else '')}")
     lines.append(f"duration_ms: {trace.get('duration_ms', 0)}")
-    lines.append(f"service: {spans[0].get('attributes', {}).get('service.name', '') if spans else ''}")
+    # Try resource_attributes first (trace level), then span attributes
+    service = trace.get('resource_attributes', {}).get('service.name', '')
+    if not service and spans:
+        service = spans[0].get('attributes', {}).get('service.name', '')
+    lines.append(f"service: {service}")
     lines.append(f"span_count: {len(spans)}")
     lines.append("")
 
