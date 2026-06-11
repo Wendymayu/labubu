@@ -349,7 +349,7 @@ function statusClass(status: string): string {
 }
 .qi-label {
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
   margin-bottom: 4px;
 }
@@ -395,7 +395,7 @@ function statusClass(status: string): string {
 .ts-label {
   display: block;
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
 }
 .ts-val {
@@ -441,7 +441,7 @@ function statusClass(status: string): string {
 }
 .attr-empty {
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
   padding: 12px 0;
 }
@@ -468,7 +468,7 @@ function statusClass(status: string): string {
 }
 .attr-group-count {
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .attr-group-body {
   padding: 2px 0;
@@ -483,7 +483,7 @@ function statusClass(status: string): string {
   border-bottom: none;
 }
 .attr-key {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   width: 170px;
   flex-shrink: 0;
   word-break: break-all;
@@ -494,7 +494,7 @@ function statusClass(status: string): string {
   flex: 1;
 }
 .attr-empty-val {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-style: italic;
 }
 
@@ -546,7 +546,7 @@ function statusClass(status: string): string {
 }
 .tl-time {
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 .evt-name-toolcall { color: var(--chart-client); }
@@ -562,7 +562,7 @@ function statusClass(status: string): string {
 .tl-attr-key {
   display: block;
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-bottom: 2px;
 }
 .tl-attr-value {
