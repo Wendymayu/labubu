@@ -349,7 +349,7 @@ onUnmounted(() => {
 .panel-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin: 0; }
 .panel-actions { display: flex; gap: 4px; }
 .btn-icon {
-  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  background: none; border: none; color: var(--text-secondary); cursor: pointer;
   font-size: 14px; padding: 4px; border-radius: 4px; line-height: 1;
 }
 .btn-icon:hover { color: var(--text-primary); background: var(--bg-surface-hover-subtle); }

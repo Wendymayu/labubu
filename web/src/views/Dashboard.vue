@@ -333,7 +333,7 @@ onMounted(loadAll)
 .tab-add {
   font-size: 18px;
   padding: 8px 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .tab-add:hover {
   color: var(--accent-blue);

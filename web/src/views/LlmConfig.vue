@@ -301,7 +301,7 @@ onMounted(loadConfigs)
 
 .empty {
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 40px;
 }
 </style>

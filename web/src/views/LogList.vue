@@ -241,7 +241,7 @@ onMounted(() => {
 .severity-badge.error { background: var(--status-error-bg); color: var(--status-error-accent); }
 .severity-badge.warn { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
 .severity-badge.info { background: rgba(56, 189, 248, 0.12); color: var(--accent-blue); }
-.severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-muted); }
+.severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-secondary); }
 
 .trace-link { color: var(--accent-blue); text-decoration: none; font-family: 'Courier New', monospace; font-size: 12px; }
 .trace-link:hover { text-decoration: underline; }

@@ -95,7 +95,7 @@ const settingsOpen = ref(false)
   display: block;
   width: 100%;
   height: 1.5px;
-  background: var(--text-muted);
+  background: var(--text-secondary);
   border-radius: 1px;
   transition: background 0.2s, transform 0.25s ease;
 }

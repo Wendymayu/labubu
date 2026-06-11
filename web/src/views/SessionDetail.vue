@@ -452,7 +452,7 @@ onUnmounted(() => {
   font-size: 14px;
 }
 .turn-row:hover { background: var(--bg-surface); }
-.turn-number { color: var(--text-muted); font-size: 12px; font-weight: 600; min-width: 32px; }
+.turn-number { color: var(--text-secondary); font-size: 12px; font-weight: 600; min-width: 32px; }
 .turn-name { flex: 1; font-weight: 600; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
 .status-ok { background: var(--status-ok-bg); color: var(--status-ok-text); }
@@ -460,7 +460,7 @@ onUnmounted(() => {
 .turn-duration { color: var(--text-secondary); min-width: 70px; text-align: right; }
 .turn-tokens { color: var(--token-highlight); font-weight: 600; min-width: 60px; text-align: right; }
 .turn-service { color: var(--text-secondary); font-size: 13px; min-width: 100px; }
-.turn-time { color: var(--text-muted); font-size: 13px; min-width: 80px; text-align: right; }
+.turn-time { color: var(--text-secondary); font-size: 13px; min-width: 80px; text-align: right; }
 
 /* Context window chart section */
 .ctx-window-section {

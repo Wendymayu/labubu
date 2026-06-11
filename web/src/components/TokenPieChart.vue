@@ -252,7 +252,7 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
 }
 .legend-pct {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 11px;
   width: 40px;
   text-align: right;
@@ -271,7 +271,7 @@ onUnmounted(() => {
 }
 .s-label {
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }

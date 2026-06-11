@@ -468,7 +468,7 @@ onUnmounted(() => {
 
 .hint-click {
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
   padding: 24px 0;
 }
@@ -528,7 +528,7 @@ onUnmounted(() => {
 .drawer-span-id {
   display: block;
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-family: 'Courier New', monospace;
   margin-top: 2px;
 }
@@ -608,7 +608,7 @@ onUnmounted(() => {
 .filter-clear {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
   padding: 0 4px;
@@ -631,7 +631,7 @@ onUnmounted(() => {
 }
 .log-item-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .log-item-event { color: var(--text-secondary); font-family: 'Courier New', monospace; font-size: 11px; }
-.log-item-expand { color: var(--text-muted); font-size: 10px; margin-left: auto; }
+.log-item-expand { color: var(--text-secondary); font-size: 10px; margin-left: auto; }
 
 .severity-badge {
   display: inline-block;
@@ -644,7 +644,7 @@ onUnmounted(() => {
 .severity-badge.error { background: var(--status-error-bg); color: var(--status-error-accent); }
 .severity-badge.warn { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
 .severity-badge.info { background: rgba(56, 189, 248, 0.12); color: var(--accent-blue); }
-.severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-muted); }
+.severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-secondary); }
 
 .log-item-body {
   margin: 0;
