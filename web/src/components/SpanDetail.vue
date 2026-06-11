@@ -143,9 +143,7 @@ const GROUP_RULES: Omit<AttrGroup, 'items'>[] = [
 // --- attribute search ---
 
 const attrFilter = ref('')
-const groupExpanded = reactive<Record<string, boolean>>({
-  'Gen AI': true,  // expanded by default per spec
-})
+const groupExpanded = reactive<Record<string, boolean>>({})
 
 const totalAttrCount = computed(() => {
   if (!props.span?.attributes) return 0
@@ -210,8 +208,8 @@ const groupedAttributes = computed<AttrGroup[]>(() => {
 
 function isGroupExpanded(name: string): boolean {
   if (name in groupExpanded) return groupExpanded[name]
-  // Other group defaults to collapsed
-  return name === 'Gen AI'
+  // All groups default to expanded
+  return true
 }
 function toggleGroupExpand(name: string) {
   groupExpanded[name] = !isGroupExpanded(name)
