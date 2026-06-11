@@ -186,7 +186,7 @@ function formatTokens(tokens?: number): string {
 }
 
 function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString()
+  return new Date(ms).toLocaleString()
 }
 
 function getCSSVar(name: string): string {
