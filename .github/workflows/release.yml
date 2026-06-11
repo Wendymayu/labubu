@@ -128,7 +128,7 @@ jobs:
           "
 
       - name: Smoke test
-        if: matrix.goarch == 'amd64'
+        if: (matrix.goos == 'linux' && matrix.goarch == 'amd64') || (matrix.goos == 'windows' && matrix.goarch == 'amd64') || (matrix.goos == 'darwin' && matrix.goarch == 'arm64')
         shell: bash
         run: |
           pip install labubu-python/dist/*.whl
