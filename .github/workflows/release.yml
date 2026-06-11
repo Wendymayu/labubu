@@ -105,10 +105,15 @@ jobs:
         shell: bash
         run: |
           python -m build --wheel
-          # Fix Root-Is-Purelib for platform wheel
+          # Fix Root-Is-Purelib for platform wheel (use Python instead of sed for cross-OS compat)
           whl_file=$(ls dist/*.whl)
           wheel unpack "$whl_file" -d dist/unpacked
-          sed -i 's/Root-Is-Purelib: true/Root-Is-Purelib: false/' dist/unpacked/*/WHEEL
+          python -c "
+          import glob, os
+          wheel_file = glob.glob('dist/unpacked/*/WHEEL')[0]
+          with open(wheel_file, 'r') as f: content = f.read()
+          with open(wheel_file, 'w') as f: f.write(content.replace('Root-Is-Purelib: true', 'Root-Is-Purelib: false'))
+          "
           rm "$whl_file"
           wheel pack dist/unpacked/*/ -d dist/
           rm -rf dist/unpacked/
