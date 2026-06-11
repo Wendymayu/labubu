@@ -98,28 +98,34 @@ jobs:
           python-version: '3.12'
 
       - name: Install Python build tools
-        run: pip install build wheel
+        run: pip install build
 
       - name: Build platform-specific wheel
         working-directory: labubu-python
         shell: bash
         run: |
           python -m build --wheel
-          # Fix Root-Is-Purelib for platform wheel (use Python instead of sed for cross-OS compat)
-          whl_file=$(ls dist/*.whl)
-          wheel unpack "$whl_file" -d dist/unpacked
+          # Fix Root-Is-Purelib and platform tag directly in the zip
           python -c "
-          import glob, os
-          wheel_file = glob.glob('dist/unpacked/*/WHEEL')[0]
-          with open(wheel_file, 'r') as f: content = f.read()
-          with open(wheel_file, 'w') as f: f.write(content.replace('Root-Is-Purelib: true', 'Root-Is-Purelib: false'))
+          import glob, zipfile, os, shutil
+          whl = glob.glob('dist/*.whl')[0]
+          tmp = whl + '.tmp'
+          platform_tag = '${{ matrix.platform_tag }}'
+          with zipfile.ZipFile(whl, 'r') as zin:
+              with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zout:
+                  for item in zin.infolist():
+                      data = zin.read(item.filename)
+                      if item.filename.endswith('/WHEEL') and '/METADATA' not in item.filename:
+                          text = data.decode('utf-8')
+                          text = text.replace('Root-Is-Purelib: true', 'Root-Is-Purelib: false')
+                          text = text.replace('Tag: py3-none-any', f'Tag: py3-none-{platform_tag}')
+                          data = text.encode('utf-8')
+                      zout.writestr(item, data)
+          os.remove(whl)
+          # Rename to match the new tag
+          parts = os.path.basename(whl).replace('-py3-none-any.whl', f'-py3-none-{platform_tag}.whl')
+          shutil.move(tmp, os.path.join('dist', parts))
           "
-          rm "$whl_file"
-          wheel pack dist/unpacked/*/ -d dist/
-          rm -rf dist/unpacked/
-          # Tag with platform
-          wheel tags --platform-tag ${{ matrix.platform_tag }} dist/*.whl
-          rm -f dist/*-py3-none-any.whl
 
       - name: Smoke test
         if: matrix.goarch == 'amd64'
