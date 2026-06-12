@@ -1,11 +1,24 @@
 <template>
   <div class="diagnosis-tab">
-    <!-- State 1: Empty -->
-    <div v-if="!loading && !result" class="diagnosis-empty">
+    <!-- State 1: Empty (no result, no error) -->
+    <div v-if="!loading && !result && !error" class="diagnosis-empty">
       <div class="empty-icon">🔍</div>
       <p>{{ t('diagnosis.empty') }}</p>
       <button class="btn-diagnose" :disabled="noModel" @click="emit('diagnose')">
         {{ t('diagnosis.start') }}
+      </button>
+      <p v-if="noModel" class="hint-no-model">
+        <router-link to="/llm-configs">{{ t('diagnosis.noModel') }}</router-link>
+      </p>
+    </div>
+
+    <!-- State 2: Error -->
+    <div v-if="!loading && !result && error" class="diagnosis-error">
+      <div class="error-icon">⚠️</div>
+      <p class="error-title">{{ t('diagnosis.failed') }}</p>
+      <p class="error-detail">{{ error }}</p>
+      <button class="btn-diagnose" :disabled="noModel" @click="emit('diagnose')">
+        {{ t('diagnosis.retry') }}
       </button>
       <p v-if="noModel" class="hint-no-model">
         <router-link to="/llm-configs">{{ t('diagnosis.noModel') }}</router-link>
@@ -86,6 +99,7 @@ const props = defineProps<{
   result: DiagnosisResult | null
   loading: boolean
   noModel: boolean
+  error: string
 }>()
 
 const emit = defineEmits<{
@@ -172,6 +186,36 @@ function onFindingClick(finding: { span_index?: number }) {
 
 .hint-no-model a {
   color: var(--accent-blue);
+}
+
+.diagnosis-error {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary);
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.error-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ef4444;
+  margin-bottom: 8px;
+}
+
+.error-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 500px;
+  margin: 0 auto 20px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 12px 16px;
+  word-break: break-word;
 }
 
 .diagnosis-loading {

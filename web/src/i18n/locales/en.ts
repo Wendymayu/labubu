@@ -139,5 +139,7 @@ export default {
     timeout: 'Diagnosis timed out, please retry',
     formatError: 'Unexpected response format, please retry',
     tooLarge: 'This trace is too large for diagnosis',
+    failed: 'Diagnosis failed',
+    retry: 'Retry Diagnosis',
   },
 }

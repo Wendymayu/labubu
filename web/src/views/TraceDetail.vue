@@ -103,6 +103,7 @@
               :result="diagnosisResult"
               :loading="diagnosisLoading"
               :noModel="diagnosisNoModel"
+              :error="diagnosisError"
               @diagnose="startDiagnosis"
               @navigate-span="onDiagnosisNavigateSpan"
             />
@@ -203,6 +204,7 @@ const copyLabel = ref('📋 Copy')
 const diagnosisResult = ref<DiagnosisResult | null>(null)
 const diagnosisLoading = ref(false)
 const diagnosisNoModel = ref(false)
+const diagnosisError = ref('')
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
 const CTX_PATTERNS: { key: string; label: string }[] = [
@@ -326,13 +328,14 @@ async function fetchDiagnosis() {
 async function startDiagnosis() {
   diagnosisLoading.value = true
   diagnosisNoModel.value = false
+  diagnosisError.value = ''
   try {
     diagnosisResult.value = await diagnoseTrace(traceIdHex, false)
   } catch (e: any) {
     if (e.message === 'no_default_model') {
       diagnosisNoModel.value = true
     } else {
-      alert(e.message || 'Diagnosis failed')
+      diagnosisError.value = e.message || 'Diagnosis failed'
     }
   } finally {
     diagnosisLoading.value = false

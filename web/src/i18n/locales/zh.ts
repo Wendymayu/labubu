@@ -139,5 +139,7 @@ export default {
     timeout: '诊断超时，请重试',
     formatError: '诊断结果格式异常，请重试',
     tooLarge: '此 Trace 规模过大，暂不支持诊断',
+    failed: '诊断失败',
+    retry: '重新诊断',
   },
 }
