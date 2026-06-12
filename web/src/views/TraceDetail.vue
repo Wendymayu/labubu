@@ -335,12 +335,37 @@ async function startDiagnosis() {
   } catch (e: any) {
     if (e.message === 'no_default_model') {
       diagnosisNoModel.value = true
+      diagnosisLoading.value = false
+    } else if (e.message === 'diagnosis_in_flight') {
+      // Already diagnosing — keep loading state and poll for result
+      pollDiagnosisResult()
     } else {
       diagnosisError.value = e.message || 'Diagnosis failed'
+      diagnosisLoading.value = false
     }
-  } finally {
-    diagnosisLoading.value = false
   }
+}
+
+async function pollDiagnosisResult() {
+  // Keep showing loading state. Poll GET endpoint every 3 seconds until result appears.
+  for (let i = 0; i < 20; i++) { // max 60 seconds
+    await new Promise(r => setTimeout(r, 3000))
+    try {
+      diagnosisResult.value = await getDiagnosisResult(traceIdHex)
+      diagnosisLoading.value = false
+      return
+    } catch (e: any) {
+      if (e.message === 'no_diagnosis') {
+        continue // still in progress
+      }
+      diagnosisError.value = e.message || 'Diagnosis failed'
+      diagnosisLoading.value = false
+      return
+    }
+  }
+  // Timeout after polling
+  diagnosisError.value = 'Diagnosis timed out'
+  diagnosisLoading.value = false
 }
 
 function onDiagnosisNavigateSpan(spanIndex: number) {
