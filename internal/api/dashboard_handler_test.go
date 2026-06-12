@@ -409,6 +409,24 @@ func TestDashboardHandler_RatioPanelValidation(t *testing.T) {
 			},
 			http.StatusBadRequest,
 		},
+		{
+			"invalid func value",
+			map[string]interface{}{
+				"title": "Bad Func", "expressionType": "single",
+				"metric": "cpu", "func": "derivative",
+				"aggregation": "none", "chartType": "line",
+			},
+			http.StatusBadRequest,
+		},
+		{
+			"invalid aggregation value",
+			map[string]interface{}{
+				"title": "Bad Agg", "expressionType": "single",
+				"metric": "cpu", "func": "none",
+				"aggregation": "percentile", "chartType": "line",
+			},
+			http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {
