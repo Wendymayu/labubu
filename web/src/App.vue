@@ -5,7 +5,16 @@
       <nav class="app-nav">
         <router-link to="/traces">{{ t('nav.traces') }}</router-link>
         <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
-        <router-link to="/dashboards">{{ t('nav.metrics') }}</router-link>
+        <div class="nav-group">
+          <button class="nav-group-title" @click="metricsOpen = !metricsOpen">
+            <span class="nav-group-arrow">{{ metricsOpen ? '▼' : '▶' }}</span>
+            {{ t('nav.metrics') }}
+          </button>
+          <div v-show="metricsOpen" class="nav-group-items">
+            <router-link to="/dashboards">{{ t('nav.dashboard') }}</router-link>
+            <router-link to="/cost">{{ t('nav.cost') }}</router-link>
+          </div>
+        </div>
         <router-link to="/logs">{{ t('nav.logs') }}</router-link>
         <div class="nav-group">
           <button class="nav-group-title" @click="alertsOpen = !alertsOpen">
@@ -50,6 +59,7 @@ const { t } = useI18n()
 useTheme() // initialize theme
 
 const alertsOpen = ref(false)
+const metricsOpen = ref(true)
 const settingsOpen = ref(false)
 </script>
 
