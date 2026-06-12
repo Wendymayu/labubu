@@ -910,12 +910,6 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 		for _, s := range m.spans {
 			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel != "" {
 				modelName = *s.GenAIRequestModel
-				if s.InputTokens != nil {
-					totalInputTokens += uint64(*s.InputTokens)
-				}
-				if s.OutputTokens != nil {
-					totalOutputTokens += uint64(*s.OutputTokens)
-				}
 				break // use the first span's model
 			}
 		}
@@ -939,9 +933,11 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel == modelName {
 				if s.InputTokens != nil {
 					entry.inputTokens += uint64(*s.InputTokens)
+					totalInputTokens += uint64(*s.InputTokens)
 				}
 				if s.OutputTokens != nil {
 					entry.outputTokens += uint64(*s.OutputTokens)
+					totalOutputTokens += uint64(*s.OutputTokens)
 				}
 			}
 		}
