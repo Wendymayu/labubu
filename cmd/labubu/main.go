@@ -195,11 +195,12 @@ func runServe(args []string) {
 	logHandler := api.NewLogHandler(store)
 	pricingHandler := api.NewPricingHandler(store)
 	llmConfigHandler := api.NewLLMConfigHandler(store)
+		costHandler := api.NewCostHandler(store)
 	var alertHandler http.Handler
 	if alertSub != nil {
 		alertHandler = alertSub.Handler
 	}
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler, alertHandler)
+	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler, alertHandler, costHandler)
 
 	httpSrv := &http.Server{
 		Addr:         apiAddr,
