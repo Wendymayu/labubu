@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,20 @@ type prometheusResult struct {
 	Values [][]interface{}   `json:"values,omitempty"` // range query rows
 }
 
+// parsedQuery holds the result of parsing a PromQL expression with
+// function, aggregation, and ratio support.
+type parsedQuery struct {
+	MetricName    string
+	Labels        map[string]string
+	Func          string // "" | "rate" | "increase"
+	Window        int64  // lookback in ms (300_000 for 5m)
+	Aggregation   string // "" | "sum" | "avg" | "max" | "min"
+	GroupBy       string // label key for aggregation grouping
+	IsRatio       bool
+	NumMetricName string            // numerator metric (ratio only)
+	NumLabels     map[string]string // numerator labels (ratio only)
+}
+
 // MetricsHandler holds HTTP handlers for Prometheus API endpoints.
 type MetricsHandler struct {
 	store metrics.Store
@@ -46,9 +61,10 @@ func NewMetricsHandler(store metrics.Store) *MetricsHandler {
 	return &MetricsHandler{store: store}
 }
 
-// parsePromQL extracts the metric name and label filters from a simple PromQL query.
-// Only supports: metric_name and metric_name{label="value",...} patterns.
-func parsePromQL(query string) (string, map[string]string) {
+// parsePromQLSimple extracts the metric name and label filters from a simple
+// PromQL expression (metric_name and metric_name{label="value",...} patterns).
+// It is used as an inner helper by the extended parser.
+func parsePromQLSimple(query string) (string, map[string]string) {
 	labels := make(map[string]string)
 
 	idx := strings.IndexByte(query, '{')
@@ -80,6 +96,195 @@ func parsePromQL(query string) (string, map[string]string) {
 	return name, labels
 }
 
+// parsePromQLCompat is a backward-compatible wrapper returning the old
+// (string, map[string]string) signature. It uses the new parser but
+// discards the extended fields so that existing handlers continue working
+// until Task 3 updates them.
+func parsePromQLCompat(query string) (string, map[string]string) {
+	q := parsePromQL(query)
+	return q.MetricName, q.Labels
+}
+
+// parsePromQL parses a PromQL expression and returns a parsedQuery struct
+// supporting functions (rate, increase), aggregations (sum, avg, max, min),
+// and ratio expressions (a / b).
+func parsePromQL(query string) parsedQuery {
+	q := parsedQuery{Labels: make(map[string]string)}
+
+	// Check for binary division (ratio expression).
+	if left, right, ok := splitRatio(query); ok {
+		q.IsRatio = true
+		leftQ := parseSingleExpr(left)
+		rightQ := parseSingleExpr(right)
+		q.NumMetricName = leftQ.MetricName
+		q.NumLabels = leftQ.Labels
+		q.Func = leftQ.Func
+		q.Window = leftQ.Window
+		q.MetricName = rightQ.MetricName
+		q.Labels = rightQ.Labels
+		q.Aggregation = leftQ.Aggregation
+		q.GroupBy = leftQ.GroupBy
+		return q
+	}
+
+	sq := parseSingleExpr(query)
+	q.MetricName = sq.MetricName
+	q.Labels = sq.Labels
+	q.Func = sq.Func
+	q.Window = sq.Window
+	q.Aggregation = sq.Aggregation
+	q.GroupBy = sq.GroupBy
+	return q
+}
+
+// parseSingleExpr parses a single (non-ratio) PromQL expression, extracting
+// any aggregation wrapper, function wrapper, time window, and the inner
+// metric{labels} selector.
+func parseSingleExpr(expr string) parsedQuery {
+	q := parsedQuery{Labels: make(map[string]string)}
+	expr = strings.TrimSpace(expr)
+
+	// Known aggregation operators.
+	aggs := []string{"sum", "avg", "max", "min"}
+	for _, agg := range aggs {
+		if inner, groupBy, ok := unwrapAggregation(expr, agg); ok {
+			q.Aggregation = agg
+			q.GroupBy = groupBy
+			expr = strings.TrimSpace(inner)
+			break
+		}
+	}
+
+	// Known function wrappers.
+	fns := []string{"rate", "increase"}
+	for _, fn := range fns {
+		if inner, ok := unwrapFunction(expr, fn); ok {
+			q.Func = fn
+			expr = strings.TrimSpace(inner)
+			// Extract and strip the [5m] window.
+			windowRe := regexp.MustCompile(`\[\d+m\]`)
+			if loc := windowRe.FindStringIndex(expr); loc != nil {
+				windowStr := expr[loc[0]:loc[1]]
+				// Parse the minute value from e.g. "[5m]".
+				minStr := windowStr[1 : len(windowStr)-1]
+				mins, err := strconv.ParseInt(minStr, 10, 64)
+				if err == nil {
+					q.Window = mins * 60 * 1000 // minutes → ms
+				}
+				expr = expr[:loc[0]] + expr[loc[1]:]
+			}
+			break
+		}
+	}
+
+	// Parse the remaining metric{labels} using the simple parser.
+	name, labels := parsePromQLSimple(strings.TrimSpace(expr))
+	q.MetricName = name
+	q.Labels = labels
+	return q
+}
+
+// splitRatio splits a binary division expression (a / b), respecting
+// parentheses depth so that nested functions/aggregations are not broken.
+func splitRatio(query string) (left, right string, ok bool) {
+	query = strings.TrimSpace(query)
+
+	// Find the top-level '/' operator that is not inside parentheses.
+	depth := 0
+	slashIdx := -1
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+		} else if ch == '/' && depth == 0 {
+			slashIdx = i
+			break
+		}
+	}
+	if slashIdx < 0 {
+		return "", "", false
+	}
+	left = strings.TrimSpace(query[:slashIdx])
+	right = strings.TrimSpace(query[slashIdx+1:])
+	if left == "" || right == "" {
+		return "", "", false
+	}
+	return left, right, true
+}
+
+// unwrapAggregation extracts the inner expression and group-by label from
+// an aggregation wrapper like "sum(rate(...)) by (service)".
+// Returns (inner, groupBy, true) if the expression starts with agg(...).
+func unwrapAggregation(expr, agg string) (inner, groupBy string, ok bool) {
+	prefix := agg + "("
+	if !strings.HasPrefix(expr, prefix) {
+		return "", "", false
+	}
+
+	// Find the closing ')' that matches the opening '(' after agg.
+	depth := 1
+	openIdx := len(prefix) - 1 // index of '(' after agg
+	closeIdx := -1
+	for i := openIdx + 1; i < len(expr); i++ {
+		if expr[i] == '(' {
+			depth++
+		} else if expr[i] == ')' {
+			depth--
+			if depth == 0 {
+				closeIdx = i
+				break
+			}
+		}
+	}
+	if closeIdx < 0 {
+		return "", "", false
+	}
+
+	innerExpr := expr[openIdx+1:closeIdx]
+	rest := strings.TrimSpace(expr[closeIdx+1:])
+
+	// Check for "by (label)" or "by(label)" suffix.
+	groupBy = ""
+	byRe := regexp.MustCompile(`^\s*by\s*\(\s*([^)]+)\s*\)`)
+	if m := byRe.FindStringSubmatch(rest); m != nil {
+		groupBy = strings.TrimSpace(m[1])
+	}
+
+	return innerExpr, groupBy, true
+}
+
+// unwrapFunction extracts the inner expression from a function wrapper like
+// "rate(metric{labels}[5m])". Returns (inner, true) if expr starts with fn(...).
+func unwrapFunction(expr, fn string) (inner string, ok bool) {
+	prefix := fn + "("
+	if !strings.HasPrefix(expr, prefix) {
+		return "", false
+	}
+
+	// Find the matching closing ')'.
+	depth := 1
+	openIdx := len(prefix) - 1
+	closeIdx := -1
+	for i := openIdx + 1; i < len(expr); i++ {
+		if expr[i] == '(' {
+			depth++
+		} else if expr[i] == ')' {
+			depth--
+			if depth == 0 {
+				closeIdx = i
+				break
+			}
+		}
+	}
+	if closeIdx < 0 {
+		return "", false
+	}
+
+	return expr[openIdx+1:closeIdx], true
+}
+
 // parseTime parses time from query string (seconds Unix), returns milliseconds.
 func parseTime(r *http.Request, key string) (int64, error) {
 	v := r.URL.Query().Get(key)
@@ -109,7 +314,7 @@ func (h *MetricsHandler) InstantQuery(w http.ResponseWriter, r *http.Request) {
 		ts = time.Now().UnixMilli()
 	}
 
-	metricName, labels := parsePromQL(query)
+	metricName, labels := parsePromQLCompat(query)
 	if metricName == "" {
 		writeJSON(w, http.StatusOK, prometheusResponse{
 			Status: "success",
@@ -209,7 +414,7 @@ func (h *MetricsHandler) RangeQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	stepMS := stepSec * 1000
 
-	metricName, labels := parsePromQL(query)
+	metricName, labels := parsePromQLCompat(query)
 	if metricName == "" {
 		writeJSON(w, http.StatusOK, prometheusResponse{
 			Status: "success",

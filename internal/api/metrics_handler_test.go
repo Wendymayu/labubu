@@ -225,7 +225,7 @@ func TestMetricsHandler_MetricNames(t *testing.T) {
 	}
 }
 
-func TestParsePromQL(t *testing.T) {
+func TestParsePromQLSimple(t *testing.T) {
 	tests := []struct {
 		input         string
 		expectedName  string
@@ -239,14 +239,59 @@ func TestParsePromQL(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		name, labels := parsePromQL(tt.input)
+		name, labels := parsePromQLCompat(tt.input)
 		if name != tt.expectedName {
-			t.Errorf("parsePromQL(%q) name: got %q, want %q", tt.input, name, tt.expectedName)
+			t.Errorf("parsePromQLCompat(%q) name: got %q, want %q", tt.input, name, tt.expectedName)
 		}
 		if tt.expectedLabel != "" {
 			if val, ok := labels[tt.expectedLabel]; !ok || val != tt.expectedValue {
-				t.Errorf("parsePromQL(%q) label %s: got %q, want %q", tt.input, tt.expectedLabel, val, tt.expectedValue)
+				t.Errorf("parsePromQLCompat(%q) label %s: got %q, want %q", tt.input, tt.expectedLabel, val, tt.expectedValue)
 			}
 		}
+	}
+}
+
+func TestParsePromQLExtended(t *testing.T) {
+	tests := []struct {
+		input       string
+		wantName    string
+		wantFunc    string
+		wantAgg     string
+		wantGroupBy string
+		wantRatio   bool
+		wantNumName string
+	}{
+		{"cpu_usage{host=\"a\"}", "cpu_usage", "", "", "", false, ""},
+		{"rate(cpu_usage{host=\"a\"}[5m])", "cpu_usage", "rate", "", "", false, ""},
+		{"increase(cpu_usage[5m])", "cpu_usage", "increase", "", "", false, ""},
+		{"sum(rate(cpu_usage{host=\"a\"}[5m]))", "cpu_usage", "rate", "sum", "", false, ""},
+		{"sum(rate(cpu_usage{host=\"a\"}[5m])) by (service)", "cpu_usage", "rate", "sum", "service", false, ""},
+		{"avg(rate(requests[5m])) by (model)", "requests", "rate", "avg", "model", false, ""},
+		{"rate(success[5m]) / rate(total[5m])", "total", "rate", "", "", true, "success"},
+		{"sum(rate(success[5m])) by (service) / sum(rate(total[5m])) by (service)", "total", "rate", "sum", "service", true, "success"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			q := parsePromQL(tt.input)
+			if q.MetricName != tt.wantName {
+				t.Errorf("MetricName: got %q, want %q", q.MetricName, tt.wantName)
+			}
+			if q.Func != tt.wantFunc {
+				t.Errorf("Func: got %q, want %q", q.Func, tt.wantFunc)
+			}
+			if q.Aggregation != tt.wantAgg {
+				t.Errorf("Aggregation: got %q, want %q", q.Aggregation, tt.wantAgg)
+			}
+			if q.GroupBy != tt.wantGroupBy {
+				t.Errorf("GroupBy: got %q, want %q", q.GroupBy, tt.wantGroupBy)
+			}
+			if q.IsRatio != tt.wantRatio {
+				t.Errorf("IsRatio: got %v, want %v", q.IsRatio, tt.wantRatio)
+			}
+			if q.NumMetricName != tt.wantNumName {
+				t.Errorf("NumMetricName: got %q, want %q", q.NumMetricName, tt.wantNumName)
+			}
+		})
 	}
 }
