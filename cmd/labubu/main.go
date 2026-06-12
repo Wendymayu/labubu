@@ -74,7 +74,7 @@ func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 
 	port := fs.Int("port", 8080, "API and UI listen port")
-	dataDir := fs.String("data-dir", "", "data directory (empty = in-memory)")
+	dataDir := fs.String("data-dir", "data", "data directory for persistence")
 	bufferSize := fs.Int("buffer-size", 1000, "pipeline buffer capacity")
 	flushInterval := fs.Duration("flush-interval", 200*time.Millisecond, "pipeline flush interval")
 
