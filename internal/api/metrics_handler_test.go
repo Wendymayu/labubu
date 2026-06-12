@@ -239,16 +239,141 @@ func TestParsePromQLSimple(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		name, labels := parsePromQLCompat(tt.input)
+		name, labels := parsePromQLSimple(tt.input)
 		if name != tt.expectedName {
-			t.Errorf("parsePromQLCompat(%q) name: got %q, want %q", tt.input, name, tt.expectedName)
+			t.Errorf("parsePromQLSimple(%q) name: got %q, want %q", tt.input, name, tt.expectedName)
 		}
 		if tt.expectedLabel != "" {
 			if val, ok := labels[tt.expectedLabel]; !ok || val != tt.expectedValue {
-				t.Errorf("parsePromQLCompat(%q) label %s: got %q, want %q", tt.input, tt.expectedLabel, val, tt.expectedValue)
+				t.Errorf("parsePromQLSimple(%q) label %s: got %q, want %q", tt.input, tt.expectedLabel, val, tt.expectedValue)
 			}
 		}
 	}
+}
+
+func TestApplyRate(t *testing.T) {
+	points := []metrics.MetricPoint{
+		{Name: "requests", Value: 100, Timestamp: 600_000},
+		{Name: "requests", Value: 110, Timestamp: 900_000},
+		{Name: "requests", Value: 120, Timestamp: 1_200_000},
+		{Name: "requests", Value: 130, Timestamp: 1_500_000},
+	}
+	result := applyRate(points, 300_000)
+	if len(result) < 1 {
+		t.Fatal("expected at least 1 rate point")
+	}
+	approxEqual(t, result[0].Value, 10.0/300.0, 0.001)
+}
+
+func TestApplyIncrease(t *testing.T) {
+	points := []metrics.MetricPoint{
+		{Name: "requests", Value: 100, Timestamp: 600_000},
+		{Name: "requests", Value: 110, Timestamp: 900_000},
+		{Name: "requests", Value: 120, Timestamp: 1_200_000},
+	}
+	result := applyIncrease(points, 300_000)
+	if len(result) < 1 {
+		t.Fatal("expected at least 1 increase point")
+	}
+	approxEqual(t, result[0].Value, 10.0, 0.001)
+}
+
+func TestApplyAggregation(t *testing.T) {
+	series := []metrics.MetricSeries{
+		{Name: "requests", Labels: map[string]string{"service": "api"}, Points: []metrics.MetricPoint{
+			{Value: 10, Timestamp: 1000}, {Value: 20, Timestamp: 2000},
+		}},
+		{Name: "requests", Labels: map[string]string{"service": "web"}, Points: []metrics.MetricPoint{
+			{Value: 30, Timestamp: 1000}, {Value: 40, Timestamp: 2000},
+		}},
+	}
+	sumResult := applyAggregation(series, "sum", "")
+	if len(sumResult) != 1 {
+		t.Fatalf("expected 1 series for sum without groupBy, got %d", len(sumResult))
+	}
+	ts1000 := findPointAt(sumResult[0].Points, 1000)
+	ts2000 := findPointAt(sumResult[0].Points, 2000)
+	approxEqual(t, ts1000, 40.0, 0.001)
+	approxEqual(t, ts2000, 60.0, 0.001)
+
+	sumGrouped := applyAggregation(series, "sum", "service")
+	if len(sumGrouped) != 2 {
+		t.Fatalf("expected 2 series for sum by service, got %d", len(sumGrouped))
+	}
+}
+
+func TestApplyRatio(t *testing.T) {
+	numSeries := []metrics.MetricSeries{
+		{Name: "success", Labels: nil, Points: []metrics.MetricPoint{
+			{Value: 80, Timestamp: 1000}, {Value: 90, Timestamp: 2000},
+		}},
+	}
+	denSeries := []metrics.MetricSeries{
+		{Name: "total", Labels: nil, Points: []metrics.MetricPoint{
+			{Value: 100, Timestamp: 1000}, {Value: 100, Timestamp: 2000},
+		}},
+	}
+	result := applyRatio(numSeries, denSeries)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 ratio series, got %d", len(result))
+	}
+	if len(result[0].Points) != 2 {
+		t.Fatalf("expected 2 ratio points, got %d", len(result[0].Points))
+	}
+	approxEqual(t, result[0].Points[0].Value, 0.8, 0.001)
+	approxEqual(t, result[0].Points[1].Value, 0.9, 0.001)
+}
+
+func TestApplyRatio_DivisionByZero(t *testing.T) {
+	numSeries := []metrics.MetricSeries{
+		{Name: "success", Labels: nil, Points: []metrics.MetricPoint{
+			{Value: 80, Timestamp: 1000}, {Value: 90, Timestamp: 2000},
+		}},
+	}
+	denSeries := []metrics.MetricSeries{
+		{Name: "total", Labels: nil, Points: []metrics.MetricPoint{
+			{Value: 100, Timestamp: 1000}, {Value: 0, Timestamp: 2000},
+		}},
+	}
+	result := applyRatio(numSeries, denSeries)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 ratio series, got %d", len(result))
+	}
+	if len(result[0].Points) != 1 {
+		t.Fatalf("expected 1 ratio point (division by zero skips), got %d", len(result[0].Points))
+	}
+	approxEqual(t, result[0].Points[0].Value, 0.8, 0.001)
+}
+
+func TestImprovedDownsampling(t *testing.T) {
+	points := []metrics.MetricPoint{
+		{Value: 10, Timestamp: 0}, {Value: 20, Timestamp: 1000}, {Value: 30, Timestamp: 2000},
+	}
+	result := downsamplePoints(points, 0, 2000, 2000)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 downsampled points, got %d", len(result))
+	}
+	val0, _ := strconv.ParseFloat(result[0][1].(string), 64)
+	val2, _ := strconv.ParseFloat(result[1][1].(string), 64)
+	approxEqual(t, val0, 15.0, 0.001)
+	approxEqual(t, val2, 25.0, 0.001)
+}
+
+func approxEqual(t *testing.T, got, want, tolerance float64) {
+	t.Helper()
+	diff := got - want
+	if diff < -tolerance || diff > tolerance {
+		t.Errorf("approxEqual: got %f, want %f (tolerance %f)", got, want, tolerance)
+	}
+}
+
+func findPointAt(points []metrics.MetricPoint, ts int64) float64 {
+	for _, p := range points {
+		if p.Timestamp == ts {
+			return p.Value
+		}
+	}
+	return -1
 }
 
 func TestParsePromQLExtended(t *testing.T) {
