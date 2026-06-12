@@ -64,8 +64,16 @@ func callLLMForDiagnosis(ctx context.Context, config *storage.LLMConfig, systemP
 		return nil, "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	// Build URL: provider_url + /v1/chat/completions (OpenAI-compatible)
-	url := strings.TrimRight(config.ProviderURL, "/") + "/v1/chat/completions"
+	var url string
+	// Build URL: provider_url + /chat/completions (OpenAI-compatible).
+	// If provider_url already ends with /v1, just append /chat/completions.
+	// Otherwise append /v1/chat/completions.
+	baseURL := strings.TrimRight(config.ProviderURL, "/")
+	if strings.HasSuffix(baseURL, "/v1") {
+		url = baseURL + "/chat/completions"
+	} else {
+		url = baseURL + "/v1/chat/completions"
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
