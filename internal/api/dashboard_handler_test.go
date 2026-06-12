@@ -361,3 +361,63 @@ func TestDashboardHandler_EmptyDashboardName(t *testing.T) {
 		t.Errorf("expected 400 for empty rename, got %d", rec3.Code)
 	}
 }
+
+func TestDashboardHandler_RatioPanelValidation(t *testing.T) {
+	dir := setupDashboardTestDir(t)
+	handler := NewDashboardHandler(dir)
+
+	// Create dashboard.
+	rec, req := doJSON(t, http.MethodPost, "/api/v1/dashboards", map[string]string{"name": "Test"})
+	handler.ServeHTTP(rec, req)
+	var dash struct{ ID string }
+	json.Unmarshal(rec.Body.Bytes(), &dash)
+
+	tests := []struct {
+		name string
+		body map[string]interface{}
+		code int
+	}{
+		{
+			"valid ratio panel",
+			map[string]interface{}{
+				"title": "Success Rate", "expressionType": "ratio",
+				"metric": "total_requests", "numeratorMetric": "success_requests",
+				"func": "rate", "aggregation": "none", "chartType": "line", "step": 60,
+			},
+			http.StatusOK,
+		},
+		{
+			"ratio missing numeratorMetric",
+			map[string]interface{}{
+				"title": "Bad Ratio", "expressionType": "ratio",
+				"metric": "total_requests", "chartType": "line",
+			},
+			http.StatusBadRequest,
+		},
+		{
+			"single panel defaults",
+			map[string]interface{}{
+				"title": "CPU", "metric": "cpu_usage", "chartType": "line",
+			},
+			http.StatusOK,
+		},
+		{
+			"invalid expressionType",
+			map[string]interface{}{
+				"title": "Bad", "expressionType": "unknown",
+				"metric": "cpu", "chartType": "line",
+			},
+			http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, req := doJSON(t, http.MethodPost, "/api/v1/dashboards/"+dash.ID+"/panels", tt.body)
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.code {
+				t.Errorf("expected %d, got %d: %s", tt.code, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

@@ -15,12 +15,17 @@ import (
 
 // PanelConfig is the stored configuration for a single dashboard panel.
 type PanelConfig struct {
-	ID        string            `json:"id"`
-	Title     string            `json:"title"`
-	Metric    string            `json:"metric"`
-	Labels    map[string]string `json:"labels"`
-	ChartType string            `json:"chartType"`
-	Step      int               `json:"step,omitempty"`
+	ID              string            `json:"id"`
+	Title           string            `json:"title"`
+	ExpressionType  string            `json:"expressionType"`            // "single" | "ratio"
+	Metric          string            `json:"metric"`                    // Single: main metric; Ratio: denominator
+	NumeratorMetric string            `json:"numeratorMetric,omitempty"` // Ratio: numerator
+	Labels          map[string]string `json:"labels"`
+	Func            string            `json:"func"`                      // "none" | "rate" | "increase"
+	Aggregation     string            `json:"aggregation"`               // "none" | "sum" | "avg" | "max" | "min"
+	GroupBy         string            `json:"groupBy,omitempty"`         // label key for aggregation grouping
+	ChartType       string            `json:"chartType"`
+	Step            int               `json:"step,omitempty"`
 }
 
 // Dashboard represents a named container of panels.
@@ -371,6 +376,23 @@ func (h *DashboardHandler) createPanel(w http.ResponseWriter, r *http.Request, d
 	if pc.Metric == "" {
 		http.Error(w, "metric is required", http.StatusBadRequest)
 		return
+	}
+	if pc.ExpressionType == "" {
+		pc.ExpressionType = "single"
+	}
+	if pc.ExpressionType != "single" && pc.ExpressionType != "ratio" {
+		http.Error(w, "expressionType must be single or ratio", http.StatusBadRequest)
+		return
+	}
+	if pc.ExpressionType == "ratio" && pc.NumeratorMetric == "" {
+		http.Error(w, "numeratorMetric is required for ratio expressions", http.StatusBadRequest)
+		return
+	}
+	if pc.Func == "" {
+		pc.Func = "none"
+	}
+	if pc.Aggregation == "" {
+		pc.Aggregation = "none"
 	}
 	if pc.ChartType != "line" && pc.ChartType != "bar" && pc.ChartType != "stat" {
 		http.Error(w, "chartType must be line, bar, or stat", http.StatusBadRequest)
