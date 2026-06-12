@@ -290,6 +290,38 @@ export async function recalcCosts(): Promise<{ status: string; traces_updated: n
   return res.json()
 }
 
+// --- Cost Dashboard types and API ---
+
+export interface CostOverview {
+  total_cost: number
+  total_tokens: number
+  total_input_tokens: number
+  total_output_tokens: number
+  avg_cost_per_trace: number
+  trace_count: number
+}
+
+export interface ModelCost {
+  model: string
+  cost: number
+  tokens: number
+  input_tokens: number
+  output_tokens: number
+  trace_count: number
+  avg_cost: number
+}
+
+export interface CostSummary {
+  period: string
+  currency: string
+  overview: CostOverview
+  by_model: ModelCost[]
+}
+
+export async function getCostSummary(period: string): Promise<CostSummary> {
+  return get<CostSummary>(`${BASE_URL}/cost-summary?period=${period}`)
+}
+
 // --- LLM Config types and API ---
 
 export interface LlmConfig {
