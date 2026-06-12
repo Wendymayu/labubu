@@ -479,10 +479,13 @@ export async function getDiagnosisResult(traceIdHex: string): Promise<DiagnosisR
   return res.json()
 }
 
-export async function diagnoseTrace(traceIdHex: string, force?: boolean): Promise<DiagnosisResult> {
+export async function diagnoseTrace(traceIdHex: string, force?: boolean, locale?: string): Promise<DiagnosisResult> {
   const url = new URL(`${BASE_URL}/traces/${traceIdHex}/diagnose`, window.location.origin)
   if (force) {
     url.searchParams.set('force', 'true')
+  }
+  if (locale) {
+    url.searchParams.set('locale', locale)
   }
   const res = await fetch(url.toString(), { method: 'POST' })
   if (!res.ok) {

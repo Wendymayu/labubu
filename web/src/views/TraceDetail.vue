@@ -329,8 +329,9 @@ async function startDiagnosis() {
   diagnosisLoading.value = true
   diagnosisNoModel.value = false
   diagnosisError.value = ''
+  const currentLocale = localStorage.getItem('locale') || 'en'
   try {
-    diagnosisResult.value = await diagnoseTrace(traceIdHex, false)
+    diagnosisResult.value = await diagnoseTrace(traceIdHex, false, currentLocale)
   } catch (e: any) {
     if (e.message === 'no_default_model') {
       diagnosisNoModel.value = true

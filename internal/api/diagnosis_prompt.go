@@ -8,7 +8,7 @@ import (
 	"github.com/labubu/labubu/internal/storage"
 )
 
-const diagnosisSystemPrompt = `You are an LLM observability expert analyzing OTLP trace data from AI agent applications.
+const diagnosisSystemPromptBase = `You are an LLM observability expert analyzing OTLP trace data from AI agent applications.
 Evaluate the trace across four dimensions on a 0-100 scale:
 
 1. **Latency (延迟):** Is the overall duration acceptable? Are there unnecessary delays or slow spans?
@@ -45,6 +45,18 @@ Return ONLY valid JSON matching this schema — no markdown, no preamble:
     }
   ]
 }`
+
+// buildDiagnosisSystemPrompt returns the system prompt with a language instruction based on locale.
+func buildDiagnosisSystemPrompt(locale string) string {
+	langInstruction := ""
+	switch locale {
+	case "zh", "zh-CN", "zh-TW", "zh-Hans":
+		langInstruction = "\n\nIMPORTANT: You must write ALL text in this response (summary, findings titles, descriptions, suggestions) in Chinese (中文). Use Chinese for every human-readable field. Keep JSON keys and dimension/severity values in English as specified in the schema."
+	default:
+		langInstruction = "\n\nIMPORTANT: Write all human-readable text (summary, findings titles, descriptions, suggestions) in English."
+	}
+	return diagnosisSystemPromptBase + langInstruction
+}
 
 // buildDiagnosisUserPrompt creates the user prompt for trace diagnosis.
 func buildDiagnosisUserPrompt(trace *storage.TraceDetail, logs []storage.LogListItem) string {

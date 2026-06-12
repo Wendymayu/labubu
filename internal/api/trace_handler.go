@@ -229,6 +229,7 @@ func (h *TraceHandler) DiagnoseTrace(w http.ResponseWriter, r *http.Request, tra
 	copy(traceID[:], traceIDBytes)
 
 	force := r.URL.Query().Get("force") == "true"
+	locale := r.URL.Query().Get("locale") // "zh" or "en"
 
 	// Check for cached result (unless force).
 	if !force {
@@ -298,10 +299,11 @@ func (h *TraceHandler) DiagnoseTrace(w http.ResponseWriter, r *http.Request, tra
 	}
 
 	// Build prompt.
+	systemPrompt := buildDiagnosisSystemPrompt(locale)
 	userPrompt := buildDiagnosisUserPrompt(detail, logs)
 
 	// Call LLM.
-	diagResp, rawResponse, err := callLLMForDiagnosis(r.Context(), defaultConfig, diagnosisSystemPrompt, userPrompt)
+	diagResp, rawResponse, err := callLLMForDiagnosis(r.Context(), defaultConfig, systemPrompt, userPrompt)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("llm_call_failed: %v", err)})
 		return
