@@ -66,6 +66,9 @@
             <button :class="['tab-btn', { active: activeTab === 'logs' }]" @click="switchTab('logs')">
               {{ t('logList.logCount', { count: totalLogCount }) }}
             </button>
+            <button :class="['tab-btn', { active: activeTab === 'diagnosis' }]" @click="switchTab('diagnosis')">
+              {{ t('diagnosis.tab') }}
+            </button>
           </div>
 
           <div v-if="activeTab === 'logs'" class="log-panel">
@@ -94,6 +97,16 @@
           </div>
 
           <div v-if="activeTab === 'spans'" class="hint-click">Click any span to view details</div>
+
+          <div v-if="activeTab === 'diagnosis'" class="diagnosis-panel">
+            <DiagnosisTab
+              :result="diagnosisResult"
+              :loading="diagnosisLoading"
+              :noModel="diagnosisNoModel"
+              @diagnose="startDiagnosis"
+              @navigate-span="onDiagnosisNavigateSpan"
+            />
+          </div>
         </div>
         </div>
 
@@ -158,10 +171,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getLogsByTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord } from '../api/client'
+import { getTrace, getLogsByTrace, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
+import DiagnosisTab from '../components/DiagnosisTab.vue'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
@@ -179,13 +193,16 @@ const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
 const traceLogs = ref<LogRecord[]>([])
 const logsLoading = ref(false)
-const activeTab = ref<'spans' | 'logs'>('spans')
+const activeTab = ref<'spans' | 'logs' | 'diagnosis'>('spans')
 const logSpanFilter = ref('')
 const logExpandedIdx = ref<number | null>(null)
 const viewMode = ref<'structured' | 'json'>('structured')
 const jsonSearch = ref('')
 const contentSearch = ref('')
 const copyLabel = ref('📋 Copy')
+const diagnosisResult = ref<DiagnosisResult | null>(null)
+const diagnosisLoading = ref(false)
+const diagnosisNoModel = ref(false)
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
 const CTX_PATTERNS: { key: string; label: string }[] = [
@@ -295,6 +312,44 @@ async function fetchTrace() {
   }
 }
 
+async function fetchDiagnosis() {
+  try {
+    diagnosisResult.value = await getDiagnosisResult(traceIdHex)
+    diagnosisNoModel.value = false
+  } catch (e: any) {
+    if (e.message === 'no_diagnosis') {
+      diagnosisResult.value = null
+    }
+  }
+}
+
+async function startDiagnosis() {
+  diagnosisLoading.value = true
+  diagnosisNoModel.value = false
+  try {
+    diagnosisResult.value = await diagnoseTrace(traceIdHex, false)
+  } catch (e: any) {
+    if (e.message === 'no_default_model') {
+      diagnosisNoModel.value = true
+    } else {
+      alert(e.message || 'Diagnosis failed')
+    }
+  } finally {
+    diagnosisLoading.value = false
+  }
+}
+
+function onDiagnosisNavigateSpan(spanIndex: number) {
+  activeTab.value = 'spans'
+  drawerOpen.value = false
+  nextTick(() => {
+    if (trace.value?.spans && trace.value.spans[spanIndex]) {
+      selectedSpan.value = trace.value.spans[spanIndex]
+      drawerOpen.value = true
+    }
+  })
+}
+
 function openDrawer(span: SpanDetailType) {
   selectedSpan.value = span
   drawerOpen.value = true
@@ -325,7 +380,7 @@ function clearLogFilter() {
   logSpanFilter.value = ''
 }
 
-function switchTab(tab: 'spans' | 'logs') {
+function switchTab(tab: 'spans' | 'logs' | 'diagnosis') {
   activeTab.value = tab
 }
 
@@ -406,6 +461,7 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   fetchTrace()
+  fetchDiagnosis()
   window.addEventListener('keydown', onKeydown)
 })
 
