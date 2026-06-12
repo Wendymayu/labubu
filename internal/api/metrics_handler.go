@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
@@ -304,7 +303,8 @@ func (h *MetricsHandler) InstantQuery(w http.ResponseWriter, r *http.Request) {
 
 	ts, err := parseTime(r, "time")
 	if err != nil {
-		ts = time.Now().UnixMilli()
+		writeJSON(w, http.StatusBadRequest, prometheusResponse{Status: "error", Error: fmt.Sprintf("invalid time: %v", err)})
+		return
 	}
 
 	pq := parsePromQL(query)
@@ -333,13 +333,16 @@ func (h *MetricsHandler) InstantQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if pq.Func == "rate" {
+		if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+		// No valid window parsed; skip function computation.
+		// Return raw data instead.
+	} else if pq.Func == "rate" {
 		for i, s := range series {
-			series[i].Points = applyRate(s.Points, lookbackWindowMS)
+			series[i].Points = applyRate(s.Points, pq.Window)
 		}
 	} else if pq.Func == "increase" {
 		for i, s := range series {
-			series[i].Points = applyIncrease(s.Points, lookbackWindowMS)
+			series[i].Points = applyIncrease(s.Points, pq.Window)
 		}
 	}
 
@@ -376,6 +379,7 @@ func (h *MetricsHandler) computeRatioInstant(r *http.Request, pq parsedQuery, ts
 		}
 		ns, err := h.store.Select(r.Context(), pq.NumMetricName, numLabels, start, end)
 		if err != nil {
+			log.Printf("metrics: ratio instant numerator query error: %v", err)
 			return nil
 		}
 		numSeries = ns
@@ -385,28 +389,31 @@ func (h *MetricsHandler) computeRatioInstant(r *http.Request, pq parsedQuery, ts
 	if pq.MetricName != "" {
 		ds, err := h.store.Select(r.Context(), pq.MetricName, pq.Labels, start, end)
 		if err != nil {
+			log.Printf("metrics: ratio instant denominator query error: %v", err)
 			return nil
 		}
 		denSeries = ds
 	}
 
-	if pq.Func == "rate" {
-		for i, s := range numSeries {
-			numSeries[i].Points = applyRate(s.Points, lookbackWindowMS)
+		if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+			// No valid window parsed; skip function computation.
+		} else if pq.Func == "rate" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+		} else if pq.Func == "increase" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
 		}
-		for i, s := range denSeries {
-			denSeries[i].Points = applyRate(s.Points, lookbackWindowMS)
-		}
-	} else if pq.Func == "increase" {
-		for i, s := range numSeries {
-			numSeries[i].Points = applyIncrease(s.Points, lookbackWindowMS)
-		}
-		for i, s := range denSeries {
-			denSeries[i].Points = applyIncrease(s.Points, lookbackWindowMS)
-		}
-	}
 
-	if pq.Aggregation != "" {
+		if pq.Aggregation != "" {
 		numSeries = applyAggregation(numSeries, pq.Aggregation, pq.GroupBy)
 		denSeries = applyAggregation(denSeries, pq.Aggregation, pq.GroupBy)
 	}
@@ -507,13 +514,16 @@ func (h *MetricsHandler) RangeQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply function.
-	if pq.Func == "rate" {
+	if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+		// No valid window parsed; skip function computation.
+		// Return raw data instead.
+	} else if pq.Func == "rate" {
 		for i, s := range series {
-			series[i].Points = applyRate(s.Points, lookbackWindowMS)
+			series[i].Points = applyRate(s.Points, pq.Window)
 		}
 	} else if pq.Func == "increase" {
 		for i, s := range series {
-			series[i].Points = applyIncrease(s.Points, lookbackWindowMS)
+			series[i].Points = applyIncrease(s.Points, pq.Window)
 		}
 	}
 
@@ -564,23 +574,25 @@ func (h *MetricsHandler) computeRatioRange(r *http.Request, pq parsedQuery, effe
 		denSeries = ds
 	}
 
-	if pq.Func == "rate" {
-		for i, s := range numSeries {
-			numSeries[i].Points = applyRate(s.Points, lookbackWindowMS)
+		if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+			// No valid window parsed; skip function computation.
+		} else if pq.Func == "rate" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+		} else if pq.Func == "increase" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
 		}
-		for i, s := range denSeries {
-			denSeries[i].Points = applyRate(s.Points, lookbackWindowMS)
-		}
-	} else if pq.Func == "increase" {
-		for i, s := range numSeries {
-			numSeries[i].Points = applyIncrease(s.Points, lookbackWindowMS)
-		}
-		for i, s := range denSeries {
-			denSeries[i].Points = applyIncrease(s.Points, lookbackWindowMS)
-		}
-	}
 
-	if pq.Aggregation != "" {
+		if pq.Aggregation != "" {
 		numSeries = applyAggregation(numSeries, pq.Aggregation, pq.GroupBy)
 		denSeries = applyAggregation(denSeries, pq.Aggregation, pq.GroupBy)
 	}
@@ -633,7 +645,7 @@ func downsamplePoints(points []metrics.MetricPoint, start, end, step int64) [][]
 
 const lookbackWindowMS = 300_000 // 5 minutes in ms
 
-func applyRate(points []metrics.MetricPoint, lookbackMS int64) []metrics.MetricPoint {
+func applyDelta(points []metrics.MetricPoint, lookbackMS int64, perSecond bool) []metrics.MetricPoint {
 	if len(points) == 0 {
 		return nil
 	}
@@ -657,47 +669,26 @@ func applyRate(points []metrics.MetricPoint, lookbackMS int64) []metrics.MetricP
 		if delta < 0 {
 			delta = 0 // counter resets
 		}
+		value := delta
+		if perSecond {
+			value = delta / lookbackSec
+		}
 		result = append(result, metrics.MetricPoint{
 			Name:      p.Name,
 			Labels:    p.Labels,
-			Value:     delta / lookbackSec,
+			Value:     value,
 			Timestamp: p.Timestamp,
 		})
 	}
 	return result
 }
 
+func applyRate(points []metrics.MetricPoint, lookbackMS int64) []metrics.MetricPoint {
+	return applyDelta(points, lookbackMS, true)
+}
+
 func applyIncrease(points []metrics.MetricPoint, lookbackMS int64) []metrics.MetricPoint {
-	if len(points) == 0 {
-		return nil
-	}
-	result := make([]metrics.MetricPoint, 0)
-	for _, p := range points {
-		target := p.Timestamp - lookbackMS
-		bestIdx := -1
-		bestDiff := int64(60_000)
-		for i, pp := range points {
-			diff := abs64(pp.Timestamp - target)
-			if diff < bestDiff {
-				bestDiff = diff
-				bestIdx = i
-			}
-		}
-		if bestIdx < 0 {
-			continue
-		}
-		delta := p.Value - points[bestIdx].Value
-		if delta < 0 {
-			delta = 0
-		}
-		result = append(result, metrics.MetricPoint{
-			Name:      p.Name,
-			Labels:    p.Labels,
-			Value:     delta,
-			Timestamp: p.Timestamp,
-		})
-	}
-	return result
+	return applyDelta(points, lookbackMS, false)
 }
 
 func applyAggregation(series []metrics.MetricSeries, agg string, groupBy string) []metrics.MetricSeries {
@@ -795,16 +786,17 @@ func applyRatio(numSeries, denSeries []metrics.MetricSeries) []metrics.MetricSer
 	}
 	results := make([]metrics.MetricSeries, 0)
 	for _, ns := range numSeries {
-		var matchedDen *metrics.MetricSeries
-		for _, ds := range denSeries {
+		matchedDenIdx := -1
+		for i, ds := range denSeries {
 			if labelsMatchForRatio(ns.Labels, ds.Labels) {
-				matchedDen = &ds
+				matchedDenIdx = i
 				break
 			}
 		}
-		if matchedDen == nil {
+		if matchedDenIdx < 0 {
 			continue
 		}
+		matchedDen := denSeries[matchedDenIdx]
 		denByTS := make(map[int64]float64)
 		for _, dp := range matchedDen.Points {
 			denByTS[dp.Timestamp] = dp.Value
