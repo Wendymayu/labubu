@@ -139,8 +139,13 @@ export async function exportTraces(traceIds: string[], format: string): Promise<
 export interface PanelConfig {
   id: string
   title: string
-  metric: string
+  expressionType: 'single' | 'ratio'
+  metric: string                       // Single: main metric; Ratio: denominator
+  numeratorMetric?: string             // Ratio: numerator (only when expressionType='ratio')
   labels: Record<string, string>
+  func: 'none' | 'rate' | 'increase'
+  aggregation: 'none' | 'sum' | 'avg' | 'max' | 'min'
+  groupBy?: string                     // label key for grouping
   chartType: 'line' | 'bar' | 'stat'
   step?: number
 }

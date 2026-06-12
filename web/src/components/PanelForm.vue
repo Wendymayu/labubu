@@ -1,21 +1,48 @@
 <template>
   <div class="modal-overlay" @click.self="$emit('cancel')">
     <div class="modal-content">
-      <h3 class="modal-title">{{ isEdit ? 'Edit Panel' : 'New Panel' }}</h3>
+      <h3 class="modal-title">{{ isEdit ? t('dashboard.renameDashboard') : t('dashboard.newDashboard') }} — {{ t('panelForm.expressionType') }}</h3>
 
       <form @submit.prevent="handleSubmit">
         <div class="form-group">
           <label for="pf-title">Title</label>
-          <input id="pf-title" v-model="form.title" type="text" required placeholder="e.g. Token Usage" />
+          <input id="pf-title" v-model="form.title" type="text" required placeholder="e.g. Request Rate" />
         </div>
 
         <div class="form-group">
+          <label for="pf-exprtype">{{ t('panelForm.expressionType') }}</label>
+          <select id="pf-exprtype" v-model="form.expressionType">
+            <option value="single">{{ t('panelForm.single') }}</option>
+            <option value="ratio">{{ t('panelForm.ratio') }}</option>
+          </select>
+        </div>
+
+        <!-- Single mode -->
+        <div v-if="form.expressionType === 'single'" class="form-group">
           <label for="pf-metric">Metric</label>
           <select id="pf-metric" v-model="form.metric" required>
             <option value="" disabled>Select a metric...</option>
             <option v-for="m in metricNames" :key="m" :value="m">{{ m }}</option>
           </select>
         </div>
+
+        <!-- Ratio mode -->
+        <template v-if="form.expressionType === 'ratio'">
+          <div class="form-group">
+            <label for="pf-numerator">{{ t('panelForm.numerator') }}</label>
+            <select id="pf-numerator" v-model="form.numeratorMetric" required>
+              <option value="" disabled>Select numerator metric...</option>
+              <option v-for="m in metricNames" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="pf-denominator">{{ t('panelForm.denominator') }}</label>
+            <select id="pf-denominator" v-model="form.metric" required>
+              <option value="" disabled>Select denominator metric...</option>
+              <option v-for="m in metricNames" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+        </template>
 
         <div class="form-group">
           <label>Labels (optional)</label>
@@ -31,6 +58,34 @@
             <button type="button" class="btn-remove" @click="removeLabel(idx)">x</button>
           </div>
           <button type="button" class="btn-add-label" @click="addLabel">+ Add label</button>
+        </div>
+
+        <div class="form-group">
+          <label for="pf-func">{{ t('panelForm.func') }}</label>
+          <select id="pf-func" v-model="form.func">
+            <option value="none">{{ t('panelForm.funcNone') }}</option>
+            <option value="rate">{{ t('panelForm.funcRate') }}</option>
+            <option value="increase">{{ t('panelForm.funcIncrease') }}</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="pf-aggregation">{{ t('panelForm.aggregation') }}</label>
+          <select id="pf-aggregation" v-model="form.aggregation">
+            <option value="none">{{ t('panelForm.aggNone') }}</option>
+            <option value="sum">{{ t('panelForm.aggSum') }}</option>
+            <option value="avg">{{ t('panelForm.aggAvg') }}</option>
+            <option value="max">{{ t('panelForm.aggMax') }}</option>
+            <option value="min">{{ t('panelForm.aggMin') }}</option>
+          </select>
+        </div>
+
+        <div v-if="form.aggregation !== 'none'" class="form-group">
+          <label for="pf-groupby">{{ t('panelForm.groupBy') }}</label>
+          <select id="pf-groupby" v-model="form.groupBy">
+            <option value="">{{ t('panelForm.groupByNone') }}</option>
+            <option v-for="ln in sortedLabelNames" :key="ln" :value="ln">{{ ln }}</option>
+          </select>
         </div>
 
         <div class="form-group">
@@ -61,8 +116,11 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { getMetricNames, getLabels, getLabelValues, createPanel, updatePanel } from '../api/client'
 import type { PanelConfig } from '../api/client'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   panel?: PanelConfig | null
@@ -78,8 +136,13 @@ const isEdit = computed(() => !!props.panel)
 
 const form = reactive({
   title: props.panel?.title || '',
+  expressionType: (props.panel?.expressionType || 'single') as 'single' | 'ratio',
   metric: props.panel?.metric || '',
+  numeratorMetric: props.panel?.numeratorMetric || '',
   labelEntries: [] as Array<{ key: string; value: string }>,
+  func: (props.panel?.func || 'none') as 'none' | 'rate' | 'increase',
+  aggregation: (props.panel?.aggregation || 'none') as 'none' | 'sum' | 'avg' | 'max' | 'min',
+  groupBy: props.panel?.groupBy || '',
   chartType: (props.panel?.chartType || 'line') as 'line' | 'bar' | 'stat',
   step: props.panel?.step || 60,
 })
@@ -121,7 +184,14 @@ async function onLabelKeyChange(idx: number) {
 
 async function handleSubmit() {
   saveError.value = ''
-  if (!form.title || !form.metric) return
+
+  // Validate required fields.
+  if (!form.title) { saveError.value = 'Title is required'; return }
+  if (!form.metric) { saveError.value = 'Metric is required'; return }
+  if (form.expressionType === 'ratio' && !form.numeratorMetric) {
+    saveError.value = 'Numerator metric is required for ratio'
+    return
+  }
 
   const labels: Record<string, string> = {}
   for (const entry of form.labelEntries) {
@@ -132,8 +202,13 @@ async function handleSubmit() {
 
   const panel: Omit<PanelConfig, 'id'> = {
     title: form.title,
+    expressionType: form.expressionType,
     metric: form.metric,
+    numeratorMetric: form.expressionType === 'ratio' ? form.numeratorMetric : undefined,
     labels,
+    func: form.func,
+    aggregation: form.aggregation,
+    groupBy: form.aggregation !== 'none' ? form.groupBy : undefined,
     chartType: form.chartType,
   }
   if (form.chartType !== 'stat') {
