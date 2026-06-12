@@ -83,6 +83,41 @@ type TraceQuery struct {
 	MaxDuration uint64
 }
 
+// CostQuery defines filters for cost summary aggregation.
+type CostQuery struct {
+	StartTimeMS uint64
+	EndTimeMS   uint64
+}
+
+// CostOverview holds aggregated cost totals.
+type CostOverview struct {
+	TotalCost         float64 `json:"total_cost"`
+	TotalTokens       uint64  `json:"total_tokens"`
+	TotalInputTokens  uint64  `json:"total_input_tokens"`
+	TotalOutputTokens uint64  `json:"total_output_tokens"`
+	AvgCostPerTrace   float64 `json:"avg_cost_per_trace"`
+	TraceCount        int     `json:"trace_count"`
+}
+
+// ModelCostItem holds cost aggregation for a single model.
+type ModelCostItem struct {
+	Model        string  `json:"model"`
+	Cost         float64 `json:"cost"`
+	Tokens       uint64  `json:"tokens"`
+	InputTokens  uint64  `json:"input_tokens"`
+	OutputTokens uint64  `json:"output_tokens"`
+	TraceCount   int     `json:"trace_count"`
+	AvgCost      float64 `json:"avg_cost"`
+}
+
+// CostSummaryResult holds the full cost dashboard response.
+type CostSummaryResult struct {
+	Period   string          `json:"period"`
+	Currency string          `json:"currency"`
+	Overview CostOverview    `json:"overview"`
+	ByModel  []ModelCostItem `json:"by_model"`
+}
+
 // TraceListResult holds a page of trace summaries.
 type TraceListResult struct {
 	Traces     []TraceListItem `json:"traces"`
@@ -277,6 +312,9 @@ type Store interface {
 
 	// UpdateTraceCost recalculates and stores cost for a trace.
 	UpdateTraceCost(ctx context.Context, traceID [16]byte) error
+
+	// GetCostSummary returns aggregated cost data for the given time range.
+	GetCostSummary(ctx context.Context, q CostQuery) (*CostSummaryResult, error)
 
 	// Close releases resources (e.g., chDB session).
 	Close() error
