@@ -195,7 +195,7 @@ func runServe(args []string) {
 	logHandler := api.NewLogHandler(store)
 	pricingHandler := api.NewPricingHandler(store)
 	llmConfigHandler := api.NewLLMConfigHandler(store)
-		costHandler := api.NewCostHandler(store)
+	costHandler := api.NewCostHandler(store)
 	var alertHandler http.Handler
 	if alertSub != nil {
 		alertHandler = alertSub.Handler

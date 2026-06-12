@@ -83,6 +83,69 @@ func TestCostSummaryTodayPeriod(t *testing.T) {
 	}
 }
 
+func TestCostSummary30dPeriod(t *testing.T) {
+	store := &handlerMockStore{
+		costSummary: &storage.CostSummaryResult{
+			Period:   "30d",
+			Currency: "USD",
+			Overview: storage.CostOverview{TotalCost: 50.0, TraceCount: 100},
+		},
+	}
+	handler := NewCostHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cost-summary?period=30d", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result storage.CostSummaryResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if result.Period != "30d" {
+		t.Errorf("expected period '30d', got '%s'", result.Period)
+	}
+}
+
+func TestCostSummaryZeroValues(t *testing.T) {
+	store := &handlerMockStore{
+		costSummary: &storage.CostSummaryResult{
+			Period:   "7d",
+			Currency: "",
+			Overview: storage.CostOverview{},
+			ByModel:  []storage.ModelCostItem{},
+		},
+	}
+	handler := NewCostHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cost-summary", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result storage.CostSummaryResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if result.Overview.TotalCost != 0 {
+		t.Errorf("expected total_cost 0, got %f", result.Overview.TotalCost)
+	}
+	if result.Overview.TraceCount != 0 {
+		t.Errorf("expected trace_count 0, got %d", result.Overview.TraceCount)
+	}
+	if len(result.ByModel) != 0 {
+		t.Errorf("expected 0 models, got %d", len(result.ByModel))
+	}
+}
+
 func TestCostSummaryInvalidPeriod(t *testing.T) {
 	store := &handlerMockStore{}
 	handler := NewCostHandler(store)
