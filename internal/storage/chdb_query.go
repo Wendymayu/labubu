@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -583,4 +584,34 @@ func buildLLMConfigClearDefaultSQL() string {
 // buildLLMConfigDeleteSQL builds a DELETE for a single LLM config entry.
 func buildLLMConfigDeleteSQL(id string) string {
 	return fmt.Sprintf(`DELETE FROM llm_configs WHERE id = '%s'`, escapeSQL(id))
+}
+
+// --- Diagnosis result SQL builders ---
+
+func buildDiagnosisResultSelectSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT hex(trace_id) AS trace_id_hex, model_name, scores, overall_score, findings, summary, spans_snapshot, raw_response, created_at FROM diagnosis_results WHERE trace_id = unhex('%x')`,
+		traceID,
+	)
+}
+
+func buildDiagnosisResultDeleteSQL(traceID [16]byte) string {
+	return fmt.Sprintf(`ALTER TABLE diagnosis_results DELETE WHERE trace_id = unhex('%x')`, traceID)
+}
+
+func buildDiagnosisResultInsertSQL(r DiagnosisResult) string {
+	scoresJSON, _ := json.Marshal(r.Scores)
+	findingsJSON, _ := json.Marshal(r.Findings)
+	return fmt.Sprintf(
+		`INSERT INTO diagnosis_results (trace_id, model_name, scores, overall_score, findings, summary, spans_snapshot, raw_response, created_at) VALUES (unhex('%s'), '%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')`,
+		r.TraceIDHex,
+		escapeSQL(r.ModelName),
+		escapeSQL(string(scoresJSON)),
+		r.OverallScore,
+		escapeSQL(string(findingsJSON)),
+		escapeSQL(r.Summary),
+		escapeSQL(r.SpansSnapshot),
+		escapeSQL(r.RawResponse),
+		r.CreatedAt.Format("2006-01-02 15:04:05.999"),
+	)
 }

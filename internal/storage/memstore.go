@@ -23,6 +23,7 @@ type memStore struct {
 	logs     []LogRecord
 	pricing    map[string]ModelPricing
 	llmConfigs map[string]LLMConfig
+	diagnosisResults map[[16]byte]*DiagnosisResult
 }
 
 // NewChDBStore returns an in-memory Store when chDB is not available.
@@ -36,6 +37,7 @@ func NewChDBStore(dataDir string) (Store, error) {
 		logs:     make([]LogRecord, 0),
 		pricing:    make(map[string]ModelPricing),
 		llmConfigs: make(map[string]LLMConfig),
+		diagnosisResults: make(map[[16]byte]*DiagnosisResult),
 	}, nil
 }
 
@@ -867,6 +869,25 @@ func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error 
 }
 
 func (m *memStore) Close() error {
+	return nil
+}
+
+func (m *memStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*DiagnosisResult, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result, ok := m.diagnosisResults[traceID]
+	if !ok {
+		return nil, nil
+	}
+	return result, nil
+}
+
+func (m *memStore) UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.diagnosisResults[result.TraceID] = result
 	return nil
 }
 
