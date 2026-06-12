@@ -14,11 +14,13 @@ import (
 
 // mockStore is a minimal Store implementation for handler testing.
 type handlerMockStore struct {
-	traces    *storage.TraceListResult
-	detail    *storage.TraceDetail
-	services  []string
-	listErr   error
-	detailErr error
+	traces        *storage.TraceListResult
+	detail        *storage.TraceDetail
+	services      []string
+	listErr       error
+	detailErr     error
+	costSummary   *storage.CostSummaryResult
+	costSummaryErr error
 }
 
 func (m *handlerMockStore) InsertSpans(ctx context.Context, r storage.ResourceInfo, s storage.ScopeInfo, spans []storage.Span) error {
@@ -85,6 +87,9 @@ func (m *handlerMockStore) DeleteModelPricing(ctx context.Context, modelName str
 }
 func (m *handlerMockStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
 	return fmt.Errorf("not implemented")
+}
+func (m *handlerMockStore) GetCostSummary(ctx context.Context, q storage.CostQuery) (*storage.CostSummaryResult, error) {
+	return m.costSummary, m.costSummaryErr
 }
 
 func (m *handlerMockStore) Close() error { return nil }
