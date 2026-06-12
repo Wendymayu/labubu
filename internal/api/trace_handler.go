@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -302,8 +303,11 @@ func (h *TraceHandler) DiagnoseTrace(w http.ResponseWriter, r *http.Request, tra
 	systemPrompt := buildDiagnosisSystemPrompt(locale)
 	userPrompt := buildDiagnosisUserPrompt(detail, logs)
 
-	// Call LLM.
-	diagResp, rawResponse, err := callLLMForDiagnosis(r.Context(), defaultConfig, systemPrompt, userPrompt)
+	// Call LLM with a detached context so the call completes even if the client disconnects.
+	// This avoids wasting an LLM API call when the user navigates away mid-diagnosis.
+	llmCtx, llmCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer llmCancel()
+	diagResp, rawResponse, err := callLLMForDiagnosis(llmCtx, defaultConfig, systemPrompt, userPrompt)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("llm_call_failed: %v", err)})
 		return

@@ -92,6 +92,13 @@ func (m *mockStore) GetCostSummary(ctx context.Context, q storage.CostQuery) (*s
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (m *mockStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*storage.DiagnosisResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (m *mockStore) UpsertDiagnosisResult(ctx context.Context, r *storage.DiagnosisResult) error {
+	return fmt.Errorf("not implemented")
+}
+
 func (m *mockStore) Close() error { return nil }
 
 func TestPipelineIngestAndFlush(t *testing.T) {
