@@ -18,6 +18,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// Regexes for PromQL parsing, compiled once at package init.
+var (
+	windowRe   = regexp.MustCompile(`\[\d+m\]`)
+	byClauseRe = regexp.MustCompile(`^\s*by\s*\(\s*([^)]+)\s*\)`)
+)
+
 // Prometheus-compatible API response types.
 
 type prometheusResponse struct {
@@ -162,11 +168,10 @@ func parseSingleExpr(expr string) parsedQuery {
 			q.Func = fn
 			expr = strings.TrimSpace(inner)
 			// Extract and strip the [5m] window.
-			windowRe := regexp.MustCompile(`\[\d+m\]`)
 			if loc := windowRe.FindStringIndex(expr); loc != nil {
 				windowStr := expr[loc[0]:loc[1]]
-				// Parse the minute value from e.g. "[5m]".
-				minStr := windowStr[1 : len(windowStr)-1]
+				// windowStr is like "[5m]" — strip brackets and "m" suffix to get "5".
+				minStr := strings.TrimSuffix(windowStr[1:len(windowStr)-1], "m")
 				mins, err := strconv.ParseInt(minStr, 10, 64)
 				if err == nil {
 					q.Window = mins * 60 * 1000 // minutes → ms
@@ -247,8 +252,7 @@ func unwrapAggregation(expr, agg string) (inner, groupBy string, ok bool) {
 
 	// Check for "by (label)" or "by(label)" suffix.
 	groupBy = ""
-	byRe := regexp.MustCompile(`^\s*by\s*\(\s*([^)]+)\s*\)`)
-	if m := byRe.FindStringSubmatch(rest); m != nil {
+	if m := byClauseRe.FindStringSubmatch(rest); m != nil {
 		groupBy = strings.TrimSpace(m[1])
 	}
 

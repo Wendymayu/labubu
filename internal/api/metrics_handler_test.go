@@ -253,22 +253,25 @@ func TestParsePromQLSimple(t *testing.T) {
 
 func TestParsePromQLExtended(t *testing.T) {
 	tests := []struct {
-		input       string
-		wantName    string
-		wantFunc    string
-		wantAgg     string
-		wantGroupBy string
-		wantRatio   bool
-		wantNumName string
+		input          string
+		wantName       string
+		wantFunc       string
+		wantWindow     int64
+		wantAgg        string
+		wantGroupBy    string
+		wantRatio      bool
+		wantNumName    string
+		wantNumLabels  map[string]string
 	}{
-		{"cpu_usage{host=\"a\"}", "cpu_usage", "", "", "", false, ""},
-		{"rate(cpu_usage{host=\"a\"}[5m])", "cpu_usage", "rate", "", "", false, ""},
-		{"increase(cpu_usage[5m])", "cpu_usage", "increase", "", "", false, ""},
-		{"sum(rate(cpu_usage{host=\"a\"}[5m]))", "cpu_usage", "rate", "sum", "", false, ""},
-		{"sum(rate(cpu_usage{host=\"a\"}[5m])) by (service)", "cpu_usage", "rate", "sum", "service", false, ""},
-		{"avg(rate(requests[5m])) by (model)", "requests", "rate", "avg", "model", false, ""},
-		{"rate(success[5m]) / rate(total[5m])", "total", "rate", "", "", true, "success"},
-		{"sum(rate(success[5m])) by (service) / sum(rate(total[5m])) by (service)", "total", "rate", "sum", "service", true, "success"},
+		{"cpu_usage{host=\"a\"}", "cpu_usage", "", 0, "", "", false, "", nil},
+		{"rate(cpu_usage{host=\"a\"}[5m])", "cpu_usage", "rate", 300000, "", "", false, "", nil},
+		{"increase(cpu_usage[5m])", "cpu_usage", "increase", 300000, "", "", false, "", nil},
+		{"sum(rate(cpu_usage{host=\"a\"}[5m]))", "cpu_usage", "rate", 300000, "sum", "", false, "", nil},
+		{"sum(rate(cpu_usage{host=\"a\"}[5m])) by (service)", "cpu_usage", "rate", 300000, "sum", "service", false, "", nil},
+		{"avg(rate(requests[5m])) by (model)", "requests", "rate", 300000, "avg", "model", false, "", nil},
+		{"rate(success[5m]) / rate(total[5m])", "total", "rate", 300000, "", "", true, "success", nil},
+		{"sum(rate(success[5m])) by (service) / sum(rate(total[5m])) by (service)", "total", "rate", 300000, "sum", "service", true, "success", nil},
+		{"rate(success{service=\"api\"}[5m]) / rate(total{service=\"api\"}[5m])", "total", "rate", 300000, "", "", true, "success", map[string]string{"service": "api"}},
 	}
 
 	for _, tt := range tests {
@@ -279,6 +282,9 @@ func TestParsePromQLExtended(t *testing.T) {
 			}
 			if q.Func != tt.wantFunc {
 				t.Errorf("Func: got %q, want %q", q.Func, tt.wantFunc)
+			}
+			if q.Window != tt.wantWindow {
+				t.Errorf("Window: got %d, want %d", q.Window, tt.wantWindow)
 			}
 			if q.Aggregation != tt.wantAgg {
 				t.Errorf("Aggregation: got %q, want %q", q.Aggregation, tt.wantAgg)
@@ -292,6 +298,17 @@ func TestParsePromQLExtended(t *testing.T) {
 			if q.NumMetricName != tt.wantNumName {
 				t.Errorf("NumMetricName: got %q, want %q", q.NumMetricName, tt.wantNumName)
 			}
+			if tt.wantNumLabels != nil {
+				if len(q.NumLabels) != len(tt.wantNumLabels) {
+					t.Errorf("NumLabels: got %d keys, want %d keys", len(q.NumLabels), len(tt.wantNumLabels))
+				}
+				for k, v := range tt.wantNumLabels {
+					if got, ok := q.NumLabels[k]; !ok || got != v {
+						t.Errorf("NumLabels[%q]: got %q, want %q", k, got, v)
+					}
+				}
+			}
 		})
 	}
 }
+
