@@ -1,4 +1,4 @@
-.PHONY: build build-embed build-nocgo test test-nocgo run dev clean web-build build-all dev-setup wheel
+.PHONY: build build-embed build-nocgo build-mem test test-nocgo run dev clean web-build build-all dev-setup wheel
 
 # Binary name
 BINARY=labubu
@@ -15,17 +15,21 @@ build: web-build
 # Alias for build (explicit name for embedded frontend)
 build-embed: build
 
-# Build without CGO (for linting/analysis — no embed, no storage CGO)
+# Build without CGO (uses SQLite Store by default)
 build-nocgo:
-	CGO_ENABLED=0 go build -tags "nocgo dev" -o /dev/null ./cmd/labubu
+	CGO_ENABLED=0 go build -tags "dev" -o /dev/null ./cmd/labubu
+
+# Build without CGO and without SQLite (uses memStore, pure in-memory)
+build-mem:
+	CGO_ENABLED=0 go build -tags "nosqlite dev" -o /dev/null ./cmd/labubu
 
 # Run all tests
 test:
 	go test -v ./internal/... ./web/... ./cmd/...
 
-# Run tests excluding chDB integration tests
+# Run tests (SQLite Store by default on non-CGO)
 test-nocgo:
-	go test -v -tags nocgo ./internal/...
+	go test -v ./internal/...
 
 # Run with dev mode (reads frontend from disk, no embed)
 run:

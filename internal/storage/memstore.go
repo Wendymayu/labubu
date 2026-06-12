@@ -1,8 +1,8 @@
-//go:build !cgo || !local_engine
+//go:build !cgo && nosqlite
 
-// Package storage provides an in-memory Store implementation for non-CGO builds.
-// When compiling without CGO (or without the local_engine tag), NewChDBStore
-// returns this in-memory store so the binary compiles and runs for development.
+// Package storage provides an in-memory Store implementation for non-CGO builds
+// with nosqlite tag. By default, non-CGO builds use SQLite Store instead.
+// This memStore is kept as a minimal fallback when SQLite is explicitly disabled.
 package storage
 
 import (
