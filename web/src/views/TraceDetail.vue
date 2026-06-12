@@ -66,6 +66,9 @@
             <button :class="['tab-btn', { active: activeTab === 'logs' }]" @click="switchTab('logs')">
               {{ t('logList.logCount', { count: totalLogCount }) }}
             </button>
+            <button :class="['tab-btn', { active: activeTab === 'diagnosis' }]" @click="switchTab('diagnosis')">
+              {{ t('diagnosis.tab') }}
+            </button>
           </div>
 
           <div v-if="activeTab === 'logs'" class="log-panel">
@@ -94,6 +97,17 @@
           </div>
 
           <div v-if="activeTab === 'spans'" class="hint-click">Click any span to view details</div>
+
+          <div v-if="activeTab === 'diagnosis'" class="diagnosis-panel">
+            <DiagnosisTab
+              :result="diagnosisResult"
+              :loading="diagnosisLoading"
+              :noModel="diagnosisNoModel"
+              :error="diagnosisError"
+              @diagnose="startDiagnosis"
+              @navigate-span="onDiagnosisNavigateSpan"
+            />
+          </div>
         </div>
         </div>
 
@@ -104,6 +118,12 @@
               <span class="drawer-span-id">{{ selectedSpan?.span_id }}</span>
             </div>
             <div class="drawer-view-toggle">
+              <input
+                v-model="contentSearch"
+                class="content-search"
+                type="text"
+                placeholder="Search content..."
+              />
               <button
                 :class="['view-toggle-btn', { active: viewMode === 'structured' }]"
                 @click="viewMode = 'structured'"
@@ -124,7 +144,7 @@
                 :input-tokens="selectedSpanInputTokens"
                 :output-tokens="selectedSpanOutputTokens"
               />
-              <SpanDetail :span="selectedSpan" />
+              <SpanDetail :span="selectedSpan" :search="contentSearch" />
             </template>
 
             <div v-else class="json-preview">
@@ -152,10 +172,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getLogsByTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord } from '../api/client'
+import { getTrace, getLogsByTrace, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
+import DiagnosisTab from '../components/DiagnosisTab.vue'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
@@ -173,12 +194,17 @@ const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
 const traceLogs = ref<LogRecord[]>([])
 const logsLoading = ref(false)
-const activeTab = ref<'spans' | 'logs'>('spans')
+const activeTab = ref<'spans' | 'logs' | 'diagnosis'>('spans')
 const logSpanFilter = ref('')
 const logExpandedIdx = ref<number | null>(null)
 const viewMode = ref<'structured' | 'json'>('structured')
 const jsonSearch = ref('')
+const contentSearch = ref('')
 const copyLabel = ref('📋 Copy')
+const diagnosisResult = ref<DiagnosisResult | null>(null)
+const diagnosisLoading = ref(false)
+const diagnosisNoModel = ref(false)
+const diagnosisError = ref('')
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
 const CTX_PATTERNS: { key: string; label: string }[] = [
@@ -271,6 +297,7 @@ function copySpanJSON() {
 watch(selectedSpan, () => {
   viewMode.value = 'structured'
   jsonSearch.value = ''
+  contentSearch.value = ''
 })
 
 async function fetchTrace() {
@@ -285,6 +312,46 @@ async function fetchTrace() {
   } finally {
     loading.value = false
   }
+}
+
+async function fetchDiagnosis() {
+  try {
+    diagnosisResult.value = await getDiagnosisResult(traceIdHex)
+    diagnosisNoModel.value = false
+  } catch (e: any) {
+    if (e.message === 'no_diagnosis') {
+      diagnosisResult.value = null
+    }
+  }
+}
+
+async function startDiagnosis() {
+  diagnosisLoading.value = true
+  diagnosisNoModel.value = false
+  diagnosisError.value = ''
+  const currentLocale = localStorage.getItem('locale') || 'en'
+  try {
+    diagnosisResult.value = await diagnoseTrace(traceIdHex, false, currentLocale)
+  } catch (e: any) {
+    if (e.message === 'no_default_model') {
+      diagnosisNoModel.value = true
+    } else {
+      diagnosisError.value = e.message || 'Diagnosis failed'
+    }
+  } finally {
+    diagnosisLoading.value = false
+  }
+}
+
+function onDiagnosisNavigateSpan(spanIndex: number) {
+  activeTab.value = 'spans'
+  drawerOpen.value = false
+  nextTick(() => {
+    if (trace.value?.spans && trace.value.spans[spanIndex]) {
+      selectedSpan.value = trace.value.spans[spanIndex]
+      drawerOpen.value = true
+    }
+  })
 }
 
 function openDrawer(span: SpanDetailType) {
@@ -317,7 +384,7 @@ function clearLogFilter() {
   logSpanFilter.value = ''
 }
 
-function switchTab(tab: 'spans' | 'logs') {
+function switchTab(tab: 'spans' | 'logs' | 'diagnosis') {
   activeTab.value = tab
 }
 
@@ -398,6 +465,7 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   fetchTrace()
+  fetchDiagnosis()
   window.addEventListener('keydown', onKeydown)
 })
 
@@ -460,7 +528,7 @@ onUnmounted(() => {
 
 .hint-click {
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
   padding: 24px 0;
 }
@@ -520,7 +588,7 @@ onUnmounted(() => {
 .drawer-span-id {
   display: block;
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-family: 'Courier New', monospace;
   margin-top: 2px;
 }
@@ -600,7 +668,7 @@ onUnmounted(() => {
 .filter-clear {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
   padding: 0 4px;
@@ -623,7 +691,7 @@ onUnmounted(() => {
 }
 .log-item-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .log-item-event { color: var(--text-secondary); font-family: 'Courier New', monospace; font-size: 11px; }
-.log-item-expand { color: var(--text-muted); font-size: 10px; margin-left: auto; }
+.log-item-expand { color: var(--text-secondary); font-size: 10px; margin-left: auto; }
 
 .severity-badge {
   display: inline-block;
@@ -636,7 +704,7 @@ onUnmounted(() => {
 .severity-badge.error { background: var(--status-error-bg); color: var(--status-error-accent); }
 .severity-badge.warn { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
 .severity-badge.info { background: rgba(56, 189, 248, 0.12); color: var(--accent-blue); }
-.severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-muted); }
+.severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-secondary); }
 
 .log-item-body {
   margin: 0;
@@ -669,7 +737,20 @@ onUnmounted(() => {
   font-size: 11px;
   cursor: pointer;
 }
-.view-toggle-btn:first-child {
+.content-search {
+  padding: 4px 10px;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  background: var(--bg-surface-deep);
+  color: var(--text-primary);
+  font-size: 11px;
+  width: 160px;
+  margin-right: 4px;
+}
+.content-search::placeholder { color: var(--text-muted); }
+.content-search:focus { outline: none; border-color: var(--accent-blue); }
+
+.view-toggle-btn:nth-child(2) {
   border-radius: 4px 0 0 4px;
 }
 .view-toggle-btn:last-child {

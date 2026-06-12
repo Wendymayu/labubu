@@ -14,6 +14,7 @@ package storage
 import "C"
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -135,6 +136,79 @@ func (s *chDBStore) InsertSpans(ctx context.Context, resource ResourceInfo, scop
 
 	traceMap := aggregateTraces(resource, scope, spans)
 	for _, trace := range traceMap {
+		// Query existing trace rows so we can merge batch-level aggregates
+		// with data already stored from previous InsertSpans calls.
+		selectSQL := buildSelectExistingTraceSQL(trace.TraceID) + " FORMAT JSONEachRow"
+		result, err := s.querySQL(selectSQL)
+		if err != nil {
+			return fmt.Errorf("query existing trace %s: %w", trace.TraceIDHex, err)
+		}
+
+		if result != "" {
+			// Merge span counts, token totals, and time range from every
+			// existing row (there may be >1 if duplicates were created
+			// before this fix).
+			lines := splitLines(result)
+			for _, line := range lines {
+				if line == "" {
+					continue
+				}
+				var existing struct {
+					SpanCount   uint16  `json:"span_count"`
+					TotalTokens *uint32 `json:"total_tokens"`
+					StartTimeMS uint64  `json:"start_time_ms"`
+					EndTimeMS   uint64  `json:"end_time_ms"`
+					RootSpanID  string  `json:"root_span_id"`
+					RootName    string  `json:"root_name"`
+					SessionID   string  `json:"session_id"`
+				}
+				if err := json.Unmarshal([]byte(line), &existing); err != nil {
+					continue
+				}
+
+				// Accumulate span count across batches.
+				trace.SpanCount += existing.SpanCount
+
+				// Accumulate tokens.
+				if existing.TotalTokens != nil {
+					if trace.TotalTokens == nil {
+						v := *existing.TotalTokens
+						trace.TotalTokens = &v
+					} else {
+						sum := *trace.TotalTokens + *existing.TotalTokens
+						trace.TotalTokens = &sum
+					}
+				}
+
+				// Extend time range so the trace envelope covers all batches.
+				if existing.StartTimeMS < trace.StartTimeMS {
+					trace.StartTimeMS = existing.StartTimeMS
+				}
+				if existing.EndTimeMS > trace.EndTimeMS {
+					trace.EndTimeMS = existing.EndTimeMS
+					trace.DurationMS = trace.EndTimeMS - trace.StartTimeMS
+				}
+
+				// Preserve root-span info when the current batch only
+				// carries child spans (root was ingested in a prior batch).
+				if isZeroSpanID(trace.RootSpanID) && existing.RootSpanID != "" {
+					if decoded, err := hex.DecodeString(existing.RootSpanID); err == nil && len(decoded) == 8 {
+						copy(trace.RootSpanID[:], decoded)
+					}
+					trace.RootName = existing.RootName
+					if trace.SessionID == "" {
+						trace.SessionID = existing.SessionID
+					}
+				}
+			}
+
+			// Remove old rows so we can insert a single merged row.
+			deleteSQL := buildDeleteTraceSQL(trace.TraceID)
+			if err := s.execSQL(deleteSQL); err != nil {
+				return fmt.Errorf("delete old trace rows %s: %w", trace.TraceIDHex, err)
+			}
+		}
+
 		sql := buildUpsertTraceSQL(trace)
 		if err := s.execSQL(sql); err != nil {
 			return fmt.Errorf("upsert trace %s: %w", trace.TraceIDHex, err)
@@ -510,6 +584,25 @@ func (s *chDBStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error
 	return s.execSQL(updateSQL)
 }
 
+func (s *chDBStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*DiagnosisResult, error) {
+	_ = ctx
+	sql := buildDiagnosisResultSelectSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get diagnosis result: %w", err)
+	}
+	return parseDiagnosisResult(result)
+}
+
+func (s *chDBStore) UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error {
+	_ = ctx
+	// Delete existing row first (MergeTree doesn't support real UPSERT).
+	deleteSQL := buildDiagnosisResultDeleteSQL(result.TraceID)
+	s.execSQL(deleteSQL) // ignore error — row may not exist
+	insertSQL := buildDiagnosisResultInsertSQL(*result)
+	return s.execSQL(insertSQL)
+}
+
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
 		C.chdb_close(s.conn)
@@ -861,6 +954,59 @@ func parseModelPricing(result string) ([]ModelPricing, error) {
 		items = append(items, p)
 	}
 	return items, nil
+}
+
+func parseDiagnosisResult(result string) (*DiagnosisResult, error) {
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			TraceIDHex    string    `json:"trace_id_hex"`
+			ModelName     string    `json:"model_name"`
+			Scores        string    `json:"scores"`
+			OverallScore  uint8     `json:"overall_score"`
+			Findings      string    `json:"findings"`
+			Summary       string    `json:"summary"`
+			SpansSnapshot string    `json:"spans_snapshot"`
+			RawResponse   string    `json:"raw_response"`
+			CreatedAt     time.Time `json:"created_at"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			return nil, fmt.Errorf("parse diagnosis result: %w (line: %s)", err, line)
+		}
+
+		var scores DiagnosisScores
+		if err := json.Unmarshal([]byte(raw.Scores), &scores); err != nil {
+			return nil, fmt.Errorf("parse diagnosis scores: %w", err)
+		}
+
+		var findings []DiagnosisFinding
+		if err := json.Unmarshal([]byte(raw.Findings), &findings); err != nil {
+			return nil, fmt.Errorf("parse diagnosis findings: %w", err)
+		}
+
+		traceIDBytes, err := hex.DecodeString(raw.TraceIDHex)
+		if err != nil {
+			return nil, fmt.Errorf("decode trace_id: %w", err)
+		}
+		var traceID [16]byte
+		copy(traceID[:], traceIDBytes)
+
+		return &DiagnosisResult{
+			TraceID:       traceID,
+			TraceIDHex:    raw.TraceIDHex,
+			ModelName:     raw.ModelName,
+			Scores:        scores,
+			OverallScore:  raw.OverallScore,
+			Findings:      findings,
+			Summary:       raw.Summary,
+			SpansSnapshot: raw.SpansSnapshot,
+			RawResponse:   raw.RawResponse,
+			CreatedAt:     raw.CreatedAt,
+		}, nil
+	}
+	return nil, nil // no diagnosis found
 }
 
 func mapToSpanDetail(raw map[string]interface{}) SpanDetail {

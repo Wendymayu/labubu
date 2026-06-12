@@ -7,8 +7,8 @@
         <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
         <div class="nav-group">
           <button class="nav-group-title" @click="metricsOpen = !metricsOpen">
-            <span class="nav-group-arrow">{{ metricsOpen ? '▼' : '▶' }}</span>
             {{ t('nav.metrics') }}
+            <span class="nav-group-toggle" :class="{ open: metricsOpen }"><i></i><i></i><i></i></span>
           </button>
           <div v-show="metricsOpen" class="nav-group-items">
             <router-link to="/dashboards">{{ t('nav.dashboard') }}</router-link>
@@ -18,8 +18,8 @@
         <router-link to="/logs">{{ t('nav.logs') }}</router-link>
         <div class="nav-group">
           <button class="nav-group-title" @click="alertsOpen = !alertsOpen">
-            <span class="nav-group-arrow">{{ alertsOpen ? '▼' : '▶' }}</span>
             {{ t('nav.alerts') }}
+            <span class="nav-group-toggle" :class="{ open: alertsOpen }"><i></i><i></i><i></i></span>
           </button>
           <div v-show="alertsOpen" class="nav-group-items">
             <router-link to="/alerts/rules">{{ t('alerts.rules') }}</router-link>
@@ -28,8 +28,8 @@
         </div>
         <div class="nav-group">
           <button class="nav-group-title" @click="settingsOpen = !settingsOpen">
-            <span class="nav-group-arrow">{{ settingsOpen ? '▼' : '▶' }}</span>
             {{ t('nav.settings') }}
+            <span class="nav-group-toggle" :class="{ open: settingsOpen }"><i></i><i></i><i></i></span>
           </button>
           <div v-show="settingsOpen" class="nav-group-items">
             <router-link to="/settings/pricing">{{ t('nav.modelPricing') }}</router-link>
@@ -90,7 +90,27 @@ const settingsOpen = ref(false)
   padding: 6px 0; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 4px;
 }
 .nav-group-title:hover { color: var(--text-primary); }
-.nav-group-arrow { font-size: 10px; width: 12px; }
+.nav-group-arrow { font-size: 10px; margin-left: auto; }
+.nav-group-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  margin-left: 6px;
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+.nav-group-toggle i {
+  display: block;
+  width: 100%;
+  height: 1.5px;
+  background: var(--text-secondary);
+  border-radius: 1px;
+  transition: background 0.2s, transform 0.25s ease;
+}
+.nav-group-toggle:hover i { background: var(--text-primary); }
+.nav-group-toggle.open { transform: rotate(90deg); }
 .nav-group-items { display: flex; flex-direction: column; padding-left: 16px; }
 .app-main { flex: 1; padding: 24px; }
 .sidebar-footer {

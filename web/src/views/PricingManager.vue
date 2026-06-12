@@ -145,5 +145,5 @@ onMounted(fetchModels)
 .btn-danger { color: var(--status-error-accent); border-color: var(--status-error-accent); }
 .btn-sm { padding: 3px 8px; font-size: 12px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.empty { text-align: center; color: var(--text-muted); padding: 40px; }
+.empty { text-align: center; color: var(--text-secondary); padding: 40px; }
 </style>

@@ -472,6 +472,61 @@ export async function getLogsByTrace(traceIdHex: string): Promise<{ logs: LogRec
   return get<{ logs: LogRecord[] }>(`${BASE_URL}/logs/${traceIdHex}`)
 }
 
+// --- Diagnosis types and API ---
+
+export interface DiagnosisFinding {
+  severity: 'error' | 'warning' | 'info'
+  dimension: 'latency' | 'cost' | 'error' | 'efficiency'
+  title: string
+  description: string
+  suggestion: string
+  span_name?: string
+  span_index?: number
+}
+
+export interface DiagnosisScores {
+  latency: number
+  cost: number
+  error: number
+  efficiency: number
+}
+
+export interface DiagnosisResult {
+  trace_id_hex: string
+  model_name: string
+  overall_score: number
+  scores: DiagnosisScores
+  findings: DiagnosisFinding[]
+  summary: string
+  created_at: string
+  stale: boolean
+}
+
+export async function getDiagnosisResult(traceIdHex: string): Promise<DiagnosisResult> {
+  const res = await fetch(`${BASE_URL}/traces/${traceIdHex}/diagnosis`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Failed to get diagnosis: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function diagnoseTrace(traceIdHex: string, force?: boolean, locale?: string): Promise<DiagnosisResult> {
+  const url = new URL(`${BASE_URL}/traces/${traceIdHex}/diagnose`, window.location.origin)
+  if (force) {
+    url.searchParams.set('force', 'true')
+  }
+  if (locale) {
+    url.searchParams.set('locale', locale)
+  }
+  const res = await fetch(url.toString(), { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Diagnosis failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function getLogEventNames(): Promise<string[]> {
   const data = await get<{ event_names: string[] }>(`${BASE_URL}/log-event-names`)
   return data.event_names || []

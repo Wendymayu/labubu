@@ -73,8 +73,11 @@ The binary embeds all frontend assets — ship it and run it anywhere.
 ### Send some test data
 
 ```bash
-# Install a demo OTLP exporter (Python example)
-pip install labubu
+# Install from GitHub Release (replace <version> and <platform> as needed)
+pip install https://github.com/Wendymayu/labubu/releases/download/v0.1.0/labubu-0.1.0-py3-none-<platform>.whl
+
+# Or download the standalone binary from:
+# https://github.com/Wendymayu/labubu/releases
 
 # Or use any OpenTelemetry SDK configured to export to:
 #   OTLP endpoint: http://localhost:4318

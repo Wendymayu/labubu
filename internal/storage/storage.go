@@ -259,6 +259,40 @@ type PricingConfig struct {
 	Models []ModelPricing `yaml:"models"`
 }
 
+// DiagnosisFinding is a single issue found by the LLM during trace diagnosis.
+type DiagnosisFinding struct {
+	Severity    string `json:"severity"`              // "error" | "warning" | "info"
+	Dimension   string `json:"dimension"`             // "latency" | "cost" | "error" | "efficiency"
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Suggestion  string `json:"suggestion"`
+	SpanName    string `json:"span_name,omitempty"`
+	SpanIndex   int    `json:"span_index,omitempty"`
+}
+
+// DiagnosisScores holds the four dimension scores from a trace diagnosis.
+type DiagnosisScores struct {
+	Latency    int `json:"latency"`
+	Cost       int `json:"cost"`
+	Error      int `json:"error"`
+	Efficiency int `json:"efficiency"`
+}
+
+// DiagnosisResult holds a complete LLM diagnosis for a single trace.
+type DiagnosisResult struct {
+	TraceID       [16]byte          `json:"trace_id"`
+	TraceIDHex    string            `json:"trace_id_hex"`
+	ModelName     string            `json:"model_name"`
+	Scores        DiagnosisScores   `json:"scores"`
+	OverallScore  uint8             `json:"overall_score"`
+	Findings      []DiagnosisFinding `json:"findings"`
+	Summary       string            `json:"summary"`
+	SpansSnapshot string            `json:"-"`
+	RawResponse   string            `json:"-"`
+	CreatedAt     time.Time         `json:"created_at"`
+	Stale         bool              `json:"stale"`
+}
+
 // Store is the storage backend interface. All chDB details are hidden behind this.
 type Store interface {
 	// InsertSpans writes a batch of spans and aggregates trace-level data
@@ -315,6 +349,12 @@ type Store interface {
 
 	// GetCostSummary returns aggregated cost data for the given time range.
 	GetCostSummary(ctx context.Context, q CostQuery) (*CostSummaryResult, error)
+
+	// GetDiagnosisResult returns the stored diagnosis for a trace, or nil if none exists.
+	GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*DiagnosisResult, error)
+
+	// UpsertDiagnosisResult inserts or replaces the diagnosis result for a trace.
+	UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error
 
 	// Close releases resources (e.g., chDB session).
 	Close() error

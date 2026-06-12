@@ -5,9 +5,8 @@
         <input
           class="search-input"
           type="text"
-          placeholder="Search span name..."
-          :value="searchQuery"
-          @input="onSearchInput(($event.target as HTMLInputElement).value)"
+          placeholder="Search spans..."
+          v-model="searchQuery"
         />
         <span v-if="searchQuery" class="search-count">{{ matchCount }}/{{ spans.length }}</span>
       </div>
@@ -123,11 +122,21 @@ const FILTER_OPTIONS = [
   { key: 'tool', label: 'Tool' },
 ] as const
 
-let debounceTimer: ReturnType<typeof setTimeout> | null = null
-
 function matchesSearch(span: SpanDetail): boolean {
   if (!searchQuery.value) return true
-  return span.name.toLowerCase().includes(searchQuery.value.toLowerCase())
+  const q = searchQuery.value.toLowerCase()
+  // Match against span name.
+  if (span.name.toLowerCase().includes(q)) return true
+  // Match against attribute keys and values.
+  if (span.attributes) {
+    for (const [key, val] of Object.entries(span.attributes)) {
+      if (key.toLowerCase().includes(q)) return true
+      if (typeof val === 'string' && val.toLowerCase().includes(q)) return true
+    }
+  }
+  // Match against span ID.
+  if (span.span_id.toLowerCase().includes(q)) return true
+  return false
 }
 
 function matchesFilters(span: SpanDetail): boolean {
@@ -161,13 +170,6 @@ function toggleFilter(key: string) {
 
 function clearFilters() {
   activeFilters.value = new Set()
-}
-
-function onSearchInput(value: string) {
-  if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    searchQuery.value = value
-  }, 500)
 }
 
 interface DisplaySpan extends SpanDetail {
@@ -381,9 +383,9 @@ function formatTokens(tokens: number): string {
 .col-name { flex: 0 0 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-timeline { flex: 1; position: relative; height: 20px; }
 .col-duration { flex: 0 0 80px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
-.col-children { flex: 0 0 70px; text-align: right; font-size: 11px; color: var(--text-muted); }
+.col-children { flex: 0 0 70px; text-align: right; font-size: 11px; color: var(--text-secondary); }
 .col-tokens { flex: 0 0 100px; text-align: right; }
-.toggle-icon { cursor: pointer; margin-right: 4px; font-size: 10px; color: var(--text-muted); }
+.toggle-icon { cursor: pointer; margin-right: 4px; font-size: 10px; color: var(--text-secondary); }
 .toggle-placeholder { display: inline-block; width: 14px; }
 .kind-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .dot-server { background: var(--chart-server); }
@@ -446,7 +448,7 @@ function formatTokens(tokens: number): string {
 }
 .search-count {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 .toolbar-filters {
@@ -501,7 +503,7 @@ function formatTokens(tokens: number): string {
   color: var(--text-secondary);
   border-bottom: 1px solid var(--bg-surface-deep);
 }
-.stats-sep { color: var(--text-muted); }
+.stats-sep { color: var(--text-secondary); }
 .stats-link {
   cursor: pointer;
   color: var(--accent-blue);
@@ -516,10 +518,11 @@ function formatTokens(tokens: number): string {
 
 /* === Search & filter highlights === */
 .waterfall-row.search-match {
-  background: rgba(251, 191, 36, 0.08);
+  background: rgba(251, 191, 36, 0.15);
+  border-left: 3px solid var(--status-warning);
 }
 .waterfall-row.search-match:hover {
-  background: rgba(251, 191, 36, 0.15);
+  background: rgba(251, 191, 36, 0.22);
 }
 .waterfall-row.filter-dimmed {
   opacity: 0.35;
@@ -527,5 +530,5 @@ function formatTokens(tokens: number): string {
 .waterfall-row.filter-dimmed:hover {
   opacity: 0.6;
 }
-.match-text { font-weight: 700; }
+.match-text { font-weight: 700; color: var(--status-error-accent); }
 </style>

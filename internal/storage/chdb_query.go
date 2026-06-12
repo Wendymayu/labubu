@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -76,25 +77,57 @@ func buildUpsertTraceSQL(trace Trace) string {
 	)
 }
 
+// buildSelectExistingTraceSQL queries trace rows for a given trace_id so
+// InsertSpans can merge batch-level aggregates with previously stored data.
+func buildSelectExistingTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT span_count, total_tokens, start_time_ms, end_time_ms,
+			root_span_id, root_name, session_id
+		FROM traces WHERE trace_id = unhex('%x')`,
+		traceID,
+	)
+}
+
+// buildDeleteTraceSQL removes all rows for a trace_id so a merged row can
+// replace them without leaving duplicates behind.
+func buildDeleteTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(`DELETE FROM traces WHERE trace_id = unhex('%x')`, traceID)
+}
+
 // buildTraceCountSQL builds a count query matching the given filters.
+// Uses DISTINCT to avoid double-counting duplicate trace rows.
 func buildTraceCountSQL(q TraceQuery) string {
-	return "SELECT count(*) AS count FROM traces" + buildTraceWhereClause(q)
+	return "SELECT count(DISTINCT trace_id_hex) AS count FROM traces" + buildTraceWhereClause(q)
 }
 
 // buildTraceListSQL builds a list query with filters, ordering, and pagination.
+// Uses GROUP BY to deduplicate trace rows that arrive across multiple InsertSpans
+// batches (e.g. when spans for one trace are ingested across multiple OTLP requests).
+// Span count and total_tokens use sum() because each duplicate row only holds the
+// partial count/tokens from its own batch. Time range uses min/max to cover every
+// batch. Scalar fields (root_name, status, cost) use any() — all duplicates carry
+// the same values for those columns.
 func buildTraceListSQL(q TraceQuery) string {
 	offset := (q.Page - 1) * q.PageSize
+	where := buildTraceWhereClause(q)
 	return fmt.Sprintf(
 		`SELECT
-			trace_id_hex, root_name, root_span_id,
-			resource_attributes['service.name'] AS root_service,
-			start_time_ms, duration_ms, span_count,
-			toString(status_code) AS status,
-			total_tokens, cost, cost_currency
+			trace_id_hex,
+			any(root_name) AS root_name,
+			any(root_span_id) AS root_span_id,
+			any(resource_attributes['service.name']) AS root_service,
+			min(start_time_ms) AS start_time_ms,
+			max(duration_ms) AS duration_ms,
+			sum(span_count) AS span_count,
+			any(toString(status_code)) AS status,
+			sum(total_tokens) AS total_tokens,
+			any(cost) AS cost,
+			any(cost_currency) AS cost_currency
 		FROM traces%s
+		GROUP BY trace_id_hex
 		ORDER BY start_time_ms DESC
 		LIMIT %d OFFSET %d`,
-		buildTraceWhereClause(q), q.PageSize, offset,
+		where, q.PageSize, offset,
 	)
 }
 
@@ -506,6 +539,12 @@ func isRootSpan(parentSpanID [8]byte) bool {
 	return parentSpanID == [8]byte{}
 }
 
+// isZeroSpanID returns true when the span ID is all zeros (i.e. the current
+// batch did not include a root span, so we should preserve existing data).
+func isZeroSpanID(id [8]byte) bool {
+	return id == [8]byte{}
+}
+
 // --- LLM config SQL builders ---
 
 // buildLLMConfigSelectSQL builds a query to fetch all LLM config entries.
@@ -545,4 +584,34 @@ func buildLLMConfigClearDefaultSQL() string {
 // buildLLMConfigDeleteSQL builds a DELETE for a single LLM config entry.
 func buildLLMConfigDeleteSQL(id string) string {
 	return fmt.Sprintf(`DELETE FROM llm_configs WHERE id = '%s'`, escapeSQL(id))
+}
+
+// --- Diagnosis result SQL builders ---
+
+func buildDiagnosisResultSelectSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT hex(trace_id) AS trace_id_hex, model_name, scores, overall_score, findings, summary, spans_snapshot, raw_response, created_at FROM diagnosis_results WHERE trace_id = unhex('%x')`,
+		traceID,
+	)
+}
+
+func buildDiagnosisResultDeleteSQL(traceID [16]byte) string {
+	return fmt.Sprintf(`ALTER TABLE diagnosis_results DELETE WHERE trace_id = unhex('%x')`, traceID)
+}
+
+func buildDiagnosisResultInsertSQL(r DiagnosisResult) string {
+	scoresJSON, _ := json.Marshal(r.Scores)
+	findingsJSON, _ := json.Marshal(r.Findings)
+	return fmt.Sprintf(
+		`INSERT INTO diagnosis_results (trace_id, model_name, scores, overall_score, findings, summary, spans_snapshot, raw_response, created_at) VALUES (unhex('%s'), '%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')`,
+		r.TraceIDHex,
+		escapeSQL(r.ModelName),
+		escapeSQL(string(scoresJSON)),
+		r.OverallScore,
+		escapeSQL(string(findingsJSON)),
+		escapeSQL(r.Summary),
+		escapeSQL(r.SpansSnapshot),
+		escapeSQL(r.RawResponse),
+		r.CreatedAt.Format("2006-01-02 15:04:05.999"),
+	)
 }
