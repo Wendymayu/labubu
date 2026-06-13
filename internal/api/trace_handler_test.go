@@ -97,6 +97,10 @@ func (m *handlerMockStore) GetCostSummary(ctx context.Context, q storage.CostQue
 	return m.costSummary, m.costSummaryErr
 }
 
+func (m *handlerMockStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*storage.AgentStats, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (m *handlerMockStore) Close() error { return nil }
 
 func (m *handlerMockStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*storage.DiagnosisResult, error) {

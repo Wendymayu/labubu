@@ -327,6 +327,16 @@ func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDet
 		if genAIModel.Valid {
 			sd.GenAIRequestModel = &genAIModel.String
 		}
+		// Extract GenAI semantic attributes.
+		if sd.Attributes != nil {
+			if v, ok := sd.Attributes["gen_ai.system"]; ok {
+				sd.GenAISystem = &v
+			}
+			if v, ok := sd.Attributes["gen_ai.tool.name"]; ok {
+				sd.ToolName = &v
+				sd.IsToolCall = true
+			}
+		}
 		// Count spans with tokens but no model pricing
 		if sd.GenAIRequestModel != nil && sd.TotalTokens != nil {
 			// Will check pricing later
@@ -1211,6 +1221,10 @@ func (s *sqliteStore) Purge(ctx context.Context, maxAge time.Duration, maxCount 
 }
 
 // --- Close ---
+
+func (s *sqliteStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error) {
+	return nil, fmt.Errorf("not implemented")
+}
 
 func (s *sqliteStore) Close() error {
 	return s.db.Close()

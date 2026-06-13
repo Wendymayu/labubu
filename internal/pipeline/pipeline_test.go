@@ -99,6 +99,10 @@ func (m *mockStore) UpsertDiagnosisResult(ctx context.Context, r *storage.Diagno
 	return fmt.Errorf("not implemented")
 }
 
+func (m *mockStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*storage.AgentStats, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (m *mockStore) Close() error { return nil }
 
 func TestPipelineIngestAndFlush(t *testing.T) {

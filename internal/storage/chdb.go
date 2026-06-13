@@ -603,6 +603,10 @@ func (s *chDBStore) UpsertDiagnosisResult(ctx context.Context, result *Diagnosis
 	return s.execSQL(insertSQL)
 }
 
+func (s *chDBStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
 		C.chdb_close(s.conn)
@@ -1066,7 +1070,7 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 	events := parseJSONArray(getStr("events"))
 	links := parseJSONArray(getStr("links"))
 
-	return SpanDetail{
+	sd := SpanDetail{
 		SpanID:            getStr("span_id"),
 		ParentSpanID:      getStr("parent_span_id"),
 		Name:              getStr("name"),
@@ -1083,6 +1087,19 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 		TotalTokens:       getNullableUint32("total_tokens"),
 		GenAIRequestModel: getNullableString("gen_ai_request_model"),
 	}
+
+	// Extract GenAI semantic attributes.
+	if attrs != nil {
+		if v, ok := attrs["gen_ai.system"]; ok {
+			sd.GenAISystem = &v
+		}
+		if v, ok := attrs["gen_ai.tool.name"]; ok {
+			sd.ToolName = &v
+			sd.IsToolCall = true
+		}
+	}
+
+	return sd
 }
 
 func splitLines(s string) []string {

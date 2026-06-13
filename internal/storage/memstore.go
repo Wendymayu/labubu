@@ -419,6 +419,17 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 			GenAIRequestModel: s.GenAIRequestModel,
 		}
 
+		// Extract GenAI semantic attributes.
+		if s.Attributes != nil {
+			if v, ok := s.Attributes["gen_ai.system"]; ok {
+				detailSpans[i].GenAISystem = &v
+			}
+			if v, ok := s.Attributes["gen_ai.tool.name"]; ok {
+				detailSpans[i].ToolName = &v
+				detailSpans[i].IsToolCall = true
+			}
+		}
+
 		if s.ParentSpanID == [8]byte{} {
 			rootSpanID = s.SpanID
 			rootIdx = i
