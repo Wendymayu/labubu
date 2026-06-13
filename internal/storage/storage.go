@@ -224,6 +224,32 @@ type SpanDetail struct {
 	OutputTokens        *uint32           `json:"output_tokens"`
 	TotalTokens         *uint32           `json:"total_tokens"`
 	GenAIRequestModel   *string           `json:"gen_ai_request_model"`
+	GenAISystem         *string           `json:"gen_ai_system"`        // Attributes["gen_ai.system"]
+	ToolName            *string           `json:"tool_name"`            // Attributes["gen_ai.tool.name"]
+	IsToolCall          bool              `json:"is_tool_call"`         // ToolName != nil
+}
+
+// ToolUsageItem holds statistics for a single tool across a session.
+type ToolUsageItem struct {
+	ToolName    string  `json:"tool_name"`
+	CallCount   int     `json:"call_count"`
+	SuccessRate float64 `json:"success_rate"`
+	AvgRetries  float64 `json:"avg_retries"`
+	MaxLoop     int     `json:"max_loop"`
+}
+
+// AgentStats holds aggregate agent behavior statistics for a session.
+type AgentStats struct {
+	TraceSuccessRate    float64        `json:"trace_success_rate"`
+	AvgToolSuccessRate  float64        `json:"avg_tool_success_rate"`
+	AvgRetries          float64        `json:"avg_retries"`
+	AvgLoopDepth        float64        `json:"avg_loop_depth"`
+	MaxLoopDepth        int            `json:"max_loop_depth"`
+	SpanPerTrace        float64        `json:"span_per_trace"`
+	TotalToolCalls      int            `json:"total_tool_calls"`
+	SuccessfulToolCalls int            `json:"successful_tool_calls"`
+	ToolUsage           []ToolUsageItem `json:"tool_usage"`
+	Insights            []string       `json:"insights"`
 }
 
 // ModelPricing holds pricing configuration for a single model.
@@ -355,6 +381,9 @@ type Store interface {
 
 	// UpsertDiagnosisResult inserts or replaces the diagnosis result for a trace.
 	UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error
+
+	// GetSessionAgentStats computes agent behavior statistics for a session.
+	GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error)
 
 	// Close releases resources (e.g., chDB session).
 	Close() error
