@@ -1,0 +1,1335 @@
+//go:build !cgo && !nosqlite
+
+// Package storage provides a pure-Go SQLite Store implementation for non-CGO builds.
+// Uses modernc.org/sqlite (no CGO required) with WAL mode for concurrent reads.
+package storage
+
+import (
+	"context"
+	"database/sql"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+//go:embed sqlite_schema.sql
+var sqliteSchemaSQL string
+
+// sqliteStore implements the Store interface using SQLite with WAL mode.
+type sqliteStore struct {
+	mu  sync.Mutex // protects write operations
+	db  *sql.DB
+	dir string
+}
+
+// NewChDBStore creates a SQLite-backed Store for non-CGO builds.
+// On CGO builds, this function is replaced by the chDB implementation.
+func NewChDBStore(dataDir string) (Store, error) {
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+	dbPath := filepath.Join(dataDir, "labubu.db")
+
+	// WAL mode enables concurrent reads while writes are serialized.
+	// busy_timeout prevents immediate failures on write contention.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+
+	// Apply schema (embedded at compile time)
+	if _, err := db.Exec(sqliteSchemaSQL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create schema: %w", err)
+	}
+
+	s := &sqliteStore{db: db, dir: dataDir}
+
+	// Seed default pricing from config (same as memStore/chDB)
+	cfg := LoadConfig("")
+	for _, m := range cfg.Pricing.Models {
+		s.UpsertModelPricing(context.Background(), m)
+	}
+
+	return s, nil
+}
+
+// --- Trace methods ---
+
+func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope ScopeInfo, inSpans []Span) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Insert each span
+	for _, sp := range inSpans {
+		attrsJSON, _ := json.Marshal(sp.Attributes)
+		_, err := tx.Exec(
+			`INSERT OR REPLACE INTO spans (
+				trace_id_hex, span_id_hex, parent_span_id_hex, trace_state, name, kind,
+				start_time_ms, end_time_ms, duration_ms, attributes,
+				dropped_attributes_count, events, dropped_events_count,
+				links, dropped_links_count, status_code, status_message,
+				input_tokens, output_tokens, total_tokens, gen_ai_request_model
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			TraceIDToHex(sp.TraceID), SpanIDToHex(sp.SpanID), SpanIDToHex(sp.ParentSpanID),
+			sp.TraceState, sp.Name, KindToString(sp.Kind),
+			sp.StartTimeMS, sp.EndTimeMS, sp.DurationMS, string(attrsJSON),
+			0, sp.Events, 0, sp.Links, 0,
+			StatusCodeToString(sp.StatusCode), sp.StatusMessage,
+			sp.InputTokens, sp.OutputTokens, sp.TotalTokens, sp.GenAIRequestModel,
+		)
+		if err != nil {
+			return fmt.Errorf("insert span: %w", err)
+		}
+	}
+
+	// Aggregate traces from spans
+	traceMap := aggregateTraces(resource, scope, inSpans)
+
+	for traceID, trace := range traceMap {
+		traceIDHex := TraceIDToHex(traceID)
+
+		// Check if trace already exists — merge with existing data
+		var existingSpanCount, existingStartMS, existingEndMS int
+		var existingRootSpanID, existingRootName, existingSessionID string
+		var existingTotalTokens sql.NullInt32
+		var existingCost sql.NullFloat64
+		var existingCostCurrency string
+
+		row := tx.QueryRow(
+			`SELECT span_count, start_time_ms, end_time_ms, root_span_id_hex, root_name,
+			        total_tokens, cost, cost_currency, session_id
+			 FROM traces WHERE trace_id_hex = ?`,
+			traceIDHex,
+		)
+		err := row.Scan(
+			&existingSpanCount, &existingStartMS, &existingEndMS,
+			&existingRootSpanID, &existingRootName,
+			&existingTotalTokens, &existingCost, &existingCostCurrency,
+			&existingSessionID,
+		)
+		if err == sql.ErrNoRows {
+			// New trace, insert directly
+		} else if err != nil {
+			return fmt.Errorf("select existing trace: %w", err)
+		} else {
+			// Merge: update counts, time range, tokens
+			trace.SpanCount += uint16(existingSpanCount)
+			if uint64(existingStartMS) < trace.StartTimeMS && existingStartMS != 0 {
+				trace.StartTimeMS = uint64(existingStartMS)
+			}
+			if uint64(existingEndMS) > trace.EndTimeMS {
+				trace.EndTimeMS = uint64(existingEndMS)
+			}
+			trace.DurationMS = trace.EndTimeMS - trace.StartTimeMS
+			if existingRootSpanID != "" && trace.RootSpanID == [8]byte{} {
+				trace.RootName = existingRootName
+			}
+			if existingSessionID != "" && trace.SessionID == "" {
+				trace.SessionID = existingSessionID
+			}
+			if trace.TotalTokens == nil && existingTotalTokens.Valid {
+				v := uint32(existingTotalTokens.Int32)
+				trace.TotalTokens = &v
+			}
+			if trace.Cost == nil && existingCost.Valid {
+				v := existingCost.Float64
+				trace.Cost = &v
+			}
+			if trace.CostCurrency == "" && existingCostCurrency != "" {
+				trace.CostCurrency = existingCostCurrency
+			}
+		}
+
+		// Insert or replace trace
+		resAttrsJSON, _ := json.Marshal(trace.ResourceAttrs)
+		scopeAttrsJSON, _ := json.Marshal(trace.ScopeAttrs)
+		_, err = tx.Exec(
+			`INSERT OR REPLACE INTO traces (
+				trace_id_hex, root_span_id_hex, root_name, span_count,
+				start_time_ms, end_time_ms, duration_ms,
+				resource_attributes, resource_schema_url,
+				scope_name, scope_version, scope_attributes, scope_schema_url,
+				trace_state, dropped_span_count,
+				status_code, status_message,
+				total_tokens, session_id, cost, cost_currency
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			traceIDHex, SpanIDToHex(trace.RootSpanID), trace.RootName, trace.SpanCount,
+			trace.StartTimeMS, trace.EndTimeMS, trace.DurationMS,
+			string(resAttrsJSON), trace.ResourceSchemaURL,
+			trace.ScopeName, trace.ScopeVersion, string(scopeAttrsJSON), trace.ScopeSchemaURL,
+			"", 0,
+			StatusCodeToString(trace.StatusCode), trace.StatusMessage,
+			trace.TotalTokens, trace.SessionID, trace.Cost, trace.CostCurrency,
+		)
+		if err != nil {
+			return fmt.Errorf("upsert trace: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+
+	// Async cost calculation for traces with token data (same pattern as chDB)
+	go func() {
+		for traceID := range traceMap {
+			s.UpdateTraceCost(context.Background(), traceID)
+		}
+	}()
+
+	return nil
+}
+
+func (s *sqliteStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	where, args := buildSqliteTraceWhereClause(q)
+
+	// Count total
+	var total int
+	countSQL := `SELECT count(*) FROM traces` + where
+	err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count traces: %w", err)
+	}
+
+	// Fetch page
+	offset := (q.Page - 1) * q.PageSize
+	listSQL := `SELECT trace_id_hex, root_span_id_hex, root_name,
+	               json_extract(resource_attributes, '$.service.name') AS root_service,
+	               start_time_ms, duration_ms, span_count, status_code,
+	               total_tokens, cost, cost_currency
+	        FROM traces` + where + ` ORDER BY start_time_ms DESC LIMIT ? OFFSET ?`
+
+	rows, err := s.db.QueryContext(ctx, listSQL, append(args, q.PageSize, offset)...)
+	if err != nil {
+		return nil, fmt.Errorf("list traces: %w", err)
+	}
+	defer rows.Close()
+
+	var traces []TraceListItem
+	for rows.Next() {
+		var t TraceListItem
+		var rootService sql.NullString
+		var totalTokens sql.NullInt32
+		var cost sql.NullFloat64
+		var costCurrency sql.NullString
+		err := rows.Scan(
+			&t.TraceIDHex, &t.RootSpanID, &t.RootName, &rootService,
+			&t.StartTimeMS, &t.DurationMS, &t.SpanCount, &t.Status,
+			&totalTokens, &cost, &costCurrency,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan trace: %w", err)
+		}
+		if rootService.Valid {
+			t.RootService = rootService.String
+		}
+		if totalTokens.Valid {
+			v := uint32(totalTokens.Int32)
+			t.TotalTokens = &v
+		}
+		if cost.Valid {
+			v := cost.Float64
+			t.Cost = &v
+		}
+		if costCurrency.Valid {
+			t.CostCurrency = costCurrency.String
+		}
+		traces = append(traces, t)
+	}
+
+	if traces == nil {
+		traces = []TraceListItem{}
+	}
+
+	return &TraceListResult{
+		Traces: traces,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	traceIDHex := TraceIDToHex(traceID)
+
+	// Fetch spans
+	spanRows, err := s.db.QueryContext(ctx,
+		`SELECT span_id_hex, parent_span_id_hex, name, kind, start_time_ms, duration_ms,
+		        attributes, events, links, status_code, status_message,
+		        input_tokens, output_tokens, total_tokens, gen_ai_request_model
+		 FROM spans WHERE trace_id_hex = ? ORDER BY start_time_ms`,
+		traceIDHex,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query spans: %w", err)
+	}
+	defer spanRows.Close()
+
+	var spans []SpanDetail
+	var unpricedSpans int
+	for spanRows.Next() {
+		var sd SpanDetail
+		var kind, status string
+		var attrsJSON, eventsJSON, linksJSON string
+		var inputTokens, outputTokens, totalTokens sql.NullInt32
+		var genAIModel sql.NullString
+		err := spanRows.Scan(
+			&sd.SpanID, &sd.ParentSpanID, &sd.Name, &kind, &sd.StartTimeMS, &sd.DurationMS,
+			&attrsJSON, &eventsJSON, &linksJSON, &status, &sd.StatusMessage,
+			&inputTokens, &outputTokens, &totalTokens, &genAIModel,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan span: %w", err)
+		}
+		sd.Kind = kind
+		sd.Status = status
+		sd.Attributes = jsonToMap(attrsJSON)
+		sd.Events = parseJSONArray(eventsJSON)
+		sd.Links = parseJSONArray(linksJSON)
+		if inputTokens.Valid {
+			v := uint32(inputTokens.Int32)
+			sd.InputTokens = &v
+		}
+		if outputTokens.Valid {
+			v := uint32(outputTokens.Int32)
+			sd.OutputTokens = &v
+		}
+		if totalTokens.Valid {
+			v := uint32(totalTokens.Int32)
+			sd.TotalTokens = &v
+		}
+		if genAIModel.Valid {
+			sd.GenAIRequestModel = &genAIModel.String
+		}
+		// Count spans with tokens but no model pricing
+		if sd.GenAIRequestModel != nil && sd.TotalTokens != nil {
+			// Will check pricing later
+		} else if sd.TotalTokens != nil && sd.GenAIRequestModel == nil {
+			unpricedSpans++
+		}
+		spans = append(spans, sd)
+	}
+
+	if spans == nil {
+		spans = []SpanDetail{}
+	}
+
+	// Fetch trace metadata
+	var detail TraceDetail
+	var resAttrsJSON, scopeAttrsJSON string
+	var cost sql.NullFloat64
+	var costCurrency sql.NullString
+	var scopeName, scopeVersion, resSchemaURL string
+
+	err = s.db.QueryRowContext(ctx,
+		`SELECT trace_id_hex, root_span_id_hex, span_count, start_time_ms, duration_ms,
+		        resource_attributes, resource_schema_url,
+		        scope_name, scope_version, scope_attributes,
+		        cost, cost_currency
+		 FROM traces WHERE trace_id_hex = ?`,
+		traceIDHex,
+	).Scan(
+		&detail.TraceIDHex, &detail.RootSpanID, &detail.SpanCount, &detail.StartTimeMS, &detail.DurationMS,
+		&resAttrsJSON, &resSchemaURL,
+		&scopeName, &scopeVersion, &scopeAttrsJSON,
+		&cost, &costCurrency,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query trace meta: %w", err)
+	}
+
+	detail.ResourceAttrs = jsonToMap(resAttrsJSON)
+	detail.ResourceSchemaURL = resSchemaURL
+	detail.Scope = ScopeDetail{
+		Name:       scopeName,
+		Version:    scopeVersion,
+		Attributes: jsonToMap(scopeAttrsJSON),
+	}
+	if cost.Valid {
+		v := cost.Float64
+		detail.Cost = &v
+	}
+	if costCurrency.Valid {
+		detail.CostCurrency = costCurrency.String
+	}
+	detail.Spans = spans
+	detail.UnpricedSpans = unpricedSpans
+
+	return &detail, nil
+}
+
+func (s *sqliteStore) GetServices(ctx context.Context) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT json_extract(resource_attributes, '$.service.name') AS service
+		 FROM traces
+		 WHERE json_extract(resource_attributes, '$.service.name') IS NOT NULL
+		   AND json_extract(resource_attributes, '$.service.name') != ''
+		 ORDER BY service`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query services: %w", err)
+	}
+	defer rows.Close()
+
+	var services []string
+	for rows.Next() {
+		var svc string
+		if err := rows.Scan(&svc); err != nil {
+			return nil, fmt.Errorf("scan service: %w", err)
+		}
+		services = append(services, svc)
+	}
+	return services, nil
+}
+
+// --- Session methods ---
+
+func (s *sqliteStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionListResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	where, args := buildSqliteSessionWhereClause(q)
+
+	// Count
+	var total int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(DISTINCT session_id) FROM traces WHERE session_id != ''`+where,
+		args...,
+	).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count sessions: %w", err)
+	}
+
+	// List
+	offset := (q.Page - 1) * q.PageSize
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT session_id,
+		        count(*) AS trace_count,
+		        sum(duration_ms) AS total_duration_ms,
+		        max(duration_ms) AS max_duration_ms,
+		        round(avg(duration_ms)) AS avg_duration_ms,
+		        min(start_time_ms) AS first_active_ms,
+		        max(start_time_ms) AS last_active_ms,
+		        sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END) AS error_count,
+		        round(sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END)*100.0/count(*)) AS error_rate,
+		        sum(total_tokens) AS total_tokens,
+		        sum(cost) AS cost,
+		        CASE WHEN count(DISTINCT cost_currency) > 1 THEN 'mixed' ELSE max(cost_currency) END AS cost_currency
+		 FROM traces WHERE session_id != ''`+where+
+			` GROUP BY session_id ORDER BY last_active_ms DESC LIMIT ? OFFSET ?`,
+		append(args, q.PageSize, offset)...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []SessionListItem
+	for rows.Next() {
+		var sl SessionListItem
+		var totalTokens sql.NullInt64
+		var cost sql.NullFloat64
+		var costCurrency sql.NullString
+		err := rows.Scan(
+			&sl.SessionID, &sl.TraceCount, &sl.TotalDurationMS, &sl.MaxDurationMS, &sl.AvgDurationMS,
+			&sl.FirstActiveMS, &sl.LastActiveMS, &sl.ErrorCount, &sl.ErrorRate,
+			&totalTokens, &cost, &costCurrency,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		if totalTokens.Valid {
+			v := uint32(totalTokens.Int64)
+			sl.TotalTokens = &v
+		}
+		if cost.Valid {
+			v := cost.Float64
+			sl.Cost = &v
+		}
+		if costCurrency.Valid {
+			sl.CostCurrency = costCurrency.String
+		}
+		sessions = append(sessions, sl)
+	}
+
+	if sessions == nil {
+		sessions = []SessionListItem{}
+	}
+
+	return &SessionListResult{
+		Sessions: sessions,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+func (s *sqliteStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Session summary
+	var sl SessionListItem
+	var totalTokens sql.NullInt64
+	var cost sql.NullFloat64
+	var costCurrency sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT session_id,
+		        count(*) AS trace_count,
+		        sum(duration_ms) AS total_duration_ms,
+		        max(duration_ms) AS max_duration_ms,
+		        round(avg(duration_ms)) AS avg_duration_ms,
+		        min(start_time_ms) AS first_active_ms,
+		        max(start_time_ms) AS last_active_ms,
+		        sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END) AS error_count,
+		        round(sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END)*100.0/count(*)) AS error_rate,
+		        sum(total_tokens) AS total_tokens,
+		        sum(cost) AS cost,
+		        CASE WHEN count(DISTINCT cost_currency) > 1 THEN 'mixed' ELSE max(cost_currency) END AS cost_currency
+		 FROM traces WHERE session_id = ? GROUP BY session_id`,
+		sessionID,
+	).Scan(
+		&sl.SessionID, &sl.TraceCount, &sl.TotalDurationMS, &sl.MaxDurationMS, &sl.AvgDurationMS,
+		&sl.FirstActiveMS, &sl.LastActiveMS, &sl.ErrorCount, &sl.ErrorRate,
+		&totalTokens, &cost, &costCurrency,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session: %w", err)
+	}
+	if totalTokens.Valid {
+		v := uint32(totalTokens.Int64)
+		sl.TotalTokens = &v
+	}
+	if cost.Valid {
+		v := cost.Float64
+		sl.Cost = &v
+	}
+	if costCurrency.Valid {
+		sl.CostCurrency = costCurrency.String
+	}
+
+	// Session traces
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, root_span_id_hex, root_name,
+		        json_extract(resource_attributes, '$.service.name') AS root_service,
+		        start_time_ms, duration_ms, span_count, status_code,
+		        total_tokens, cost, cost_currency
+		 FROM traces WHERE session_id = ? ORDER BY start_time_ms ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session traces: %w", err)
+	}
+	defer rows.Close()
+
+	var traces []TraceListItem
+	for rows.Next() {
+		var t TraceListItem
+		var rootService sql.NullString
+		var totalTokens sql.NullInt32
+		var cost sql.NullFloat64
+		var costCurrency sql.NullString
+		err := rows.Scan(
+			&t.TraceIDHex, &t.RootSpanID, &t.RootName, &rootService,
+			&t.StartTimeMS, &t.DurationMS, &t.SpanCount, &t.Status,
+			&totalTokens, &cost, &costCurrency,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan session trace: %w", err)
+		}
+		if rootService.Valid {
+			t.RootService = rootService.String
+		}
+		if totalTokens.Valid {
+			v := uint32(totalTokens.Int32)
+			t.TotalTokens = &v
+		}
+		if cost.Valid {
+			v := cost.Float64
+			t.Cost = &v
+		}
+		if costCurrency.Valid {
+			t.CostCurrency = costCurrency.String
+		}
+		traces = append(traces, t)
+	}
+
+	if traces == nil {
+		traces = []TraceListItem{}
+	}
+
+	return &SessionDetail{Session: sl, Traces: traces}, nil
+}
+
+// --- Log methods ---
+
+func (s *sqliteStore) InsertLogs(ctx context.Context, logs []LogRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, l := range logs {
+		attrsJSON, _ := json.Marshal(l.Attributes)
+		_, err := tx.Exec(
+			`INSERT INTO logs (trace_id_hex, span_id_hex, timestamp, severity, event_name, body, attributes)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			TraceIDToHex(l.TraceID), SpanIDToHex(l.SpanID),
+			l.Timestamp, l.Severity, l.EventName, l.Body, string(attrsJSON),
+		)
+		if err != nil {
+			return fmt.Errorf("insert log: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *sqliteStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	where, args := buildSqliteLogWhereClause(q)
+
+	// Count
+	var total int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM logs`+where, args...,
+	).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count logs: %w", err)
+	}
+
+	// List
+	offset := (q.Page - 1) * q.PageSize
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, span_id_hex, timestamp, severity, event_name, body, attributes
+		 FROM logs`+where+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+		append(args, q.PageSize, offset)...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []LogListItem
+	for rows.Next() {
+		var l LogListItem
+		var attrsJSON string
+		err := rows.Scan(
+			&l.TraceIDHex, &l.SpanIDHex, &l.Timestamp, &l.Severity,
+			&l.EventName, &l.Body, &attrsJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan log: %w", err)
+		}
+		l.Attributes = jsonToMap(attrsJSON)
+		logs = append(logs, l)
+	}
+
+	if logs == nil {
+		logs = []LogListItem{}
+	}
+
+	return &LogListResult{
+		Logs: logs,
+		Pagination: Pagination{
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Total:    total,
+		},
+	}, nil
+}
+
+func (s *sqliteStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, span_id_hex, timestamp, severity, event_name, body, attributes
+		 FROM logs WHERE trace_id_hex = ? ORDER BY timestamp ASC`,
+		TraceIDToHex(traceID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query logs by trace: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []LogListItem
+	for rows.Next() {
+		var l LogListItem
+		var attrsJSON string
+		err := rows.Scan(
+			&l.TraceIDHex, &l.SpanIDHex, &l.Timestamp, &l.Severity,
+			&l.EventName, &l.Body, &attrsJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan log: %w", err)
+		}
+		l.Attributes = jsonToMap(attrsJSON)
+		logs = append(logs, l)
+	}
+
+	if logs == nil {
+		logs = []LogListItem{}
+	}
+	return logs, nil
+}
+
+func (s *sqliteStore) GetLogEventNames(ctx context.Context) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT event_name FROM logs WHERE event_name != '' ORDER BY event_name`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query event names: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, fmt.Errorf("scan event name: %w", err)
+		}
+		names = append(names, n)
+	}
+	return names, nil
+}
+
+// --- Pricing methods ---
+
+func (s *sqliteStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT model_name, input_price, output_price, currency FROM model_pricing ORDER BY model_name`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query pricing: %w", err)
+	}
+	defer rows.Close()
+
+	var pricing []ModelPricing
+	for rows.Next() {
+		var p ModelPricing
+		if err := rows.Scan(&p.ModelName, &p.InputPrice, &p.OutputPrice, &p.Currency); err != nil {
+			return nil, fmt.Errorf("scan pricing: %w", err)
+		}
+		pricing = append(pricing, p)
+	}
+	return pricing, nil
+}
+
+func (s *sqliteStore) UpsertModelPricing(ctx context.Context, p ModelPricing) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO model_pricing (model_name, input_price, output_price, currency)
+		 VALUES (?, ?, ?, ?)`,
+		p.ModelName, p.InputPrice, p.OutputPrice, p.Currency,
+	)
+	return err
+}
+
+func (s *sqliteStore) DeleteModelPricing(ctx context.Context, modelName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM model_pricing WHERE model_name = ?`, modelName,
+	)
+	return err
+}
+
+// --- LLMConfig methods ---
+
+func (s *sqliteStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, model_name, provider_url, api_key, is_default, temperature, max_tokens
+		 FROM llm_configs ORDER BY model_name`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query llm configs: %w", err)
+	}
+	defer rows.Close()
+
+	var configs []LLMConfig
+	for rows.Next() {
+		var c LLMConfig
+		var isDefault int
+		if err := rows.Scan(&c.ID, &c.ModelName, &c.ProviderURL, &c.APIKey, &isDefault, &c.Temperature, &c.MaxTokens); err != nil {
+			return nil, fmt.Errorf("scan llm config: %w", err)
+		}
+		c.IsDefault = isDefault != 0
+		// Mask API key for display
+		c.APIKey = MaskAPIKey(c.APIKey)
+		configs = append(configs, c)
+	}
+	return configs, nil
+}
+
+func (s *sqliteStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// If setting as default, clear other defaults first
+	if c.IsDefault {
+		_, err := s.db.ExecContext(ctx, `UPDATE llm_configs SET is_default = 0 WHERE is_default = 1`)
+		if err != nil {
+			return fmt.Errorf("clear defaults: %w", err)
+		}
+	}
+
+	isDefault := 0
+	if c.IsDefault {
+		isDefault = 1
+	}
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO llm_configs (id, model_name, provider_url, api_key, is_default, temperature, max_tokens)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.ModelName, c.ProviderURL, c.APIKey, isDefault, c.Temperature, c.MaxTokens,
+	)
+	return err
+}
+
+func (s *sqliteStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// If API key contains "***" (masked sentinel), preserve existing key
+	apiKey := c.APIKey
+	if strings.Contains(apiKey, "***") {
+		var existingKey string
+		err := s.db.QueryRow(`SELECT api_key FROM llm_configs WHERE id = ?`, c.ID).Scan(&existingKey)
+		if err != nil {
+			return fmt.Errorf("fetch existing key: %w", err)
+		}
+		apiKey = existingKey
+	}
+
+	// If setting as default, clear other defaults first
+	if c.IsDefault {
+		_, err := s.db.ExecContext(ctx, `UPDATE llm_configs SET is_default = 0 WHERE is_default = 1`)
+		if err != nil {
+			return fmt.Errorf("clear defaults: %w", err)
+		}
+	}
+
+	isDefault := 0
+	if c.IsDefault {
+		isDefault = 1
+	}
+
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE llm_configs SET model_name=?, provider_url=?, api_key=?, is_default=?, temperature=?, max_tokens=?
+		 WHERE id=?`,
+		c.ModelName, c.ProviderURL, apiKey, isDefault, c.Temperature, c.MaxTokens, c.ID,
+	)
+	return err
+}
+
+func (s *sqliteStore) DeleteLLMConfig(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.ExecContext(ctx, `DELETE FROM llm_configs WHERE id = ?`, id)
+	return err
+}
+
+// --- Cost methods ---
+
+func (s *sqliteStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	traceIDHex := TraceIDToHex(traceID)
+
+	// Get all pricing configs
+	pricingRows, err := s.db.QueryContext(ctx,
+		`SELECT model_name, input_price, output_price, currency FROM model_pricing`,
+	)
+	if err != nil {
+		return fmt.Errorf("query pricing: %w", err)
+	}
+	pricingMap := make(map[string]ModelPricing)
+	for pricingRows.Next() {
+		var p ModelPricing
+		if err := pricingRows.Scan(&p.ModelName, &p.InputPrice, &p.OutputPrice, &p.Currency); err != nil {
+			pricingRows.Close()
+			return fmt.Errorf("scan pricing: %w", err)
+		}
+		pricingMap[p.ModelName] = p
+	}
+	pricingRows.Close()
+
+	// Get spans with token data
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT input_tokens, output_tokens, total_tokens, gen_ai_request_model
+		 FROM spans WHERE trace_id_hex = ? AND total_tokens IS NOT NULL`,
+		traceIDHex,
+	)
+	if err != nil {
+		return fmt.Errorf("query span tokens: %w", err)
+	}
+
+	var totalCost float64
+	var totalInputTokens, totalOutputTokens uint32
+	var currency string
+	var unpricedCount int
+
+	for rows.Next() {
+		var inputTokens, outputTokens, totalTokens sql.NullInt32
+		var genAIModel sql.NullString
+		err := rows.Scan(&inputTokens, &outputTokens, &totalTokens, &genAIModel)
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("scan span token: %w", err)
+		}
+
+		if !totalTokens.Valid {
+			continue
+		}
+
+		modelName := "(unknown)"
+		if genAIModel.Valid {
+			modelName = genAIModel.String
+		}
+
+		p, ok := pricingMap[modelName]
+		if !ok {
+			unpricedCount++
+			continue
+		}
+
+		inT := uint32(0)
+		if inputTokens.Valid {
+			inT = uint32(inputTokens.Int32)
+			totalInputTokens += inT
+		}
+		outT := uint32(0)
+		if outputTokens.Valid {
+			outT = uint32(outputTokens.Int32)
+			totalOutputTokens += outT
+		}
+
+		// Inline cost calculation: (inputTokens × inputPrice + outputTokens × outputPrice) / 1M
+		spanCost := (float64(inT)*p.InputPrice + float64(outT)*p.OutputPrice) / 1_000_000.0
+		spanCost = math.Round(spanCost*1e6) / 1e6
+		totalCost += spanCost
+		if currency == "" {
+			currency = p.Currency
+		}
+	}
+	rows.Close()
+
+	if totalCost == 0 && unpricedCount == 0 {
+		// No token data at all, skip
+		return nil
+	}
+
+	// Round to 6 decimal places
+	totalCost = math.Round(totalCost*1e6)/1e6
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE traces SET cost = ?, cost_currency = ? WHERE trace_id_hex = ?`,
+		totalCost, currency, traceIDHex,
+	)
+	return err
+}
+
+func (s *sqliteStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummaryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Overview: total cost/tokens/count
+	var overview CostOverview
+	err := s.db.QueryRowContext(ctx,
+		`SELECT
+		    COALESCE(sum(cost), 0) AS total_cost,
+		    COALESCE(sum(total_tokens), 0) AS total_tokens,
+		    count(*) AS trace_count
+		 FROM traces
+		 WHERE start_time_ms >= ? AND start_time_ms <= ?
+		   AND cost IS NOT NULL AND cost > 0`,
+		q.StartTimeMS, q.EndTimeMS,
+	).Scan(&overview.TotalCost, &overview.TotalTokens, &overview.TraceCount)
+	if err != nil {
+		return nil, fmt.Errorf("query cost overview: %w", err)
+	}
+
+	if overview.TraceCount > 0 {
+		overview.AvgCostPerTrace = math.Round(overview.TotalCost/float64(overview.TraceCount)*1e6)/1e6
+	}
+
+	// Get total input/output tokens from spans
+	err = s.db.QueryRowContext(ctx,
+		`SELECT
+		    COALESCE(sum(input_tokens), 0) AS total_input_tokens,
+		    COALESCE(sum(output_tokens), 0) AS total_output_tokens
+		 FROM spans
+		 WHERE trace_id_hex IN (
+		    SELECT trace_id_hex FROM traces
+		    WHERE start_time_ms >= ? AND start_time_ms <= ?
+		      AND cost IS NOT NULL AND cost > 0
+		 ) AND total_tokens IS NOT NULL`,
+		q.StartTimeMS, q.EndTimeMS,
+	).Scan(&overview.TotalInputTokens, &overview.TotalOutputTokens)
+	if err != nil {
+		// Non-critical, continue with zeros
+		overview.TotalInputTokens = 0
+		overview.TotalOutputTokens = 0
+	}
+
+	// By model aggregation
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT
+		    COALESCE(gen_ai_request_model, '(unknown)') AS model,
+		    sum(t.cost) AS cost,
+		    COALESCE(sum(t.total_tokens), 0) AS tokens,
+		    count(DISTINCT t.trace_id_hex) AS trace_count
+		 FROM traces t
+		 LEFT JOIN spans sp ON t.trace_id_hex = sp.trace_id_hex AND sp.gen_ai_request_model IS NOT NULL
+		 WHERE t.start_time_ms >= ? AND t.start_time_ms <= ?
+		   AND t.cost IS NOT NULL AND t.cost > 0
+		 GROUP BY model
+		 ORDER BY cost DESC`,
+		q.StartTimeMS, q.EndTimeMS,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query cost by model: %w", err)
+	}
+	defer rows.Close()
+
+	var byModel []ModelCostItem
+	for rows.Next() {
+		var m ModelCostItem
+		err := rows.Scan(&m.Model, &m.Cost, &m.Tokens, &m.TraceCount)
+		if err != nil {
+			return nil, fmt.Errorf("scan model cost: %w", err)
+		}
+		if m.TraceCount > 0 {
+			m.AvgCost = math.Round(m.Cost/float64(m.TraceCount)*1e6)/1e6
+		}
+		byModel = append(byModel, m)
+	}
+
+	if byModel == nil {
+		byModel = []ModelCostItem{}
+	}
+
+	// Determine currency from traces
+	var currency string
+	s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(max(cost_currency), 'USD') FROM traces WHERE cost IS NOT NULL AND cost > 0
+		 AND start_time_ms >= ? AND start_time_ms <= ?`,
+		q.StartTimeMS, q.EndTimeMS,
+	).Scan(&currency)
+
+	return &CostSummaryResult{
+		Currency: currency,
+		Overview: overview,
+		ByModel:  byModel,
+	}, nil
+}
+
+// --- Diagnosis methods ---
+
+func (s *sqliteStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*DiagnosisResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	traceIDHex := TraceIDToHex(traceID)
+
+	var dr DiagnosisResult
+	var scoresJSON, findingsJSON string
+	var stale int
+	var createdAt string
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT trace_id_hex, model_name, scores, overall_score, findings, summary,
+		        spans_snapshot, raw_response, created_at, stale
+		 FROM diagnosis_results WHERE trace_id_hex = ?`,
+		traceIDHex,
+	).Scan(
+		&dr.TraceIDHex, &dr.ModelName, &scoresJSON, &dr.OverallScore, &findingsJSON, &dr.Summary,
+		&dr.SpansSnapshot, &dr.RawResponse, &createdAt, &stale,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query diagnosis: %w", err)
+	}
+
+	dr.TraceID = traceID
+	dr.Stale = stale != 0
+
+	if err := json.Unmarshal([]byte(scoresJSON), &dr.Scores); err != nil {
+		dr.Scores = DiagnosisScores{}
+	}
+	if err := json.Unmarshal([]byte(findingsJSON), &dr.Findings); err != nil {
+		dr.Findings = []DiagnosisFinding{}
+	}
+	if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+		dr.CreatedAt = t
+	}
+
+	return &dr, nil
+}
+
+func (s *sqliteStore) UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	scoresJSON, _ := json.Marshal(result.Scores)
+	findingsJSON, _ := json.Marshal(result.Findings)
+	stale := 0
+	if result.Stale {
+		stale = 1
+	}
+	createdAt := result.CreatedAt.Format(time.RFC3339)
+	if createdAt == "" || result.CreatedAt.IsZero() {
+		createdAt = time.Now().Format(time.RFC3339)
+	}
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO diagnosis_results
+		 (trace_id_hex, model_name, scores, overall_score, findings, summary,
+		  spans_snapshot, raw_response, created_at, stale)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		TraceIDToHex(result.TraceID), result.ModelName, string(scoresJSON), result.OverallScore,
+		string(findingsJSON), result.Summary, result.SpansSnapshot, result.RawResponse,
+		createdAt, stale,
+	)
+	return err
+}
+
+// --- Purge ---
+
+func (s *sqliteStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (deletedTraces int, deletedSpans int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	nowMS := uint64(time.Now().UnixMilli())
+
+	// Phase 1: Delete by age
+	if maxAge > 0 {
+		cutoffMS := nowMS - uint64(maxAge.Milliseconds())
+		result, e := s.db.ExecContext(ctx,
+			`DELETE FROM traces WHERE start_time_ms < ?`, cutoffMS,
+		)
+		if e != nil {
+			return 0, 0, fmt.Errorf("purge by age: %w", e)
+		}
+		affected, _ := result.RowsAffected()
+		deletedTraces += int(affected)
+	}
+
+	// Phase 2: Delete by count
+	if maxCount > 0 {
+		// Count remaining traces
+		var remaining int
+		s.db.QueryRowContext(ctx, `SELECT count(*) FROM traces`).Scan(&remaining)
+
+		if remaining > maxCount {
+			result, e := s.db.ExecContext(ctx,
+				`DELETE FROM traces WHERE trace_id_hex NOT IN (
+				    SELECT trace_id_hex FROM traces ORDER BY start_time_ms DESC LIMIT ?
+				)`,
+				maxCount,
+			)
+			if e != nil {
+				return deletedTraces, 0, fmt.Errorf("purge by count: %w", e)
+			}
+			affected, _ := result.RowsAffected()
+			deletedTraces += int(affected)
+		}
+	}
+
+	// Clean orphaned spans and logs
+	result, e := s.db.ExecContext(ctx,
+		`DELETE FROM spans WHERE trace_id_hex NOT IN (SELECT trace_id_hex FROM traces)`,
+	)
+	if e != nil {
+		return deletedTraces, 0, fmt.Errorf("purge orphan spans: %w", e)
+	}
+	affected, _ := result.RowsAffected()
+	deletedSpans += int(affected)
+
+	result, e = s.db.ExecContext(ctx,
+		`DELETE FROM logs WHERE trace_id_hex NOT IN (SELECT trace_id_hex FROM traces)`,
+	)
+	if e != nil {
+		return deletedTraces, deletedSpans, fmt.Errorf("purge orphan logs: %w", e)
+	}
+
+	return deletedTraces, deletedSpans, nil
+}
+
+// --- Close ---
+
+func (s *sqliteStore) Close() error {
+	return s.db.Close()
+}
+
+// --- Helper functions for WHERE clause construction ---
+
+func buildSqliteTraceWhereClause(q TraceQuery) (string, []interface{}) {
+	var clauses []string
+	var args []interface{}
+
+	if q.Service != "" {
+		clauses = append(clauses, `json_extract(resource_attributes, '$.service.name') = ?`)
+		args = append(args, q.Service)
+	}
+	if q.Status != "" {
+		clauses = append(clauses, `status_code = ?`)
+		args = append(args, q.Status)
+	}
+	if q.Query != "" {
+		clauses = append(clauses, `root_name LIKE ?`)
+		args = append(args, "%"+q.Query+"%")
+	}
+	if q.StartTimeMS > 0 {
+		clauses = append(clauses, `start_time_ms >= ?`)
+		args = append(args, q.StartTimeMS)
+	}
+	if q.EndTimeMS > 0 {
+		clauses = append(clauses, `start_time_ms <= ?`)
+		args = append(args, q.EndTimeMS)
+	}
+	if q.MinDuration > 0 {
+		clauses = append(clauses, `duration_ms >= ?`)
+		args = append(args, q.MinDuration)
+	}
+	if q.MaxDuration > 0 {
+		clauses = append(clauses, `duration_ms <= ?`)
+		args = append(args, q.MaxDuration)
+	}
+
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	return where, args
+}
+
+func buildSqliteSessionWhereClause(q SessionQuery) (string, []interface{}) {
+	var clauses []string
+	var args []interface{}
+
+	if q.Service != "" {
+		clauses = append(clauses, `json_extract(resource_attributes, '$.service.name') = ?`)
+		args = append(args, q.Service)
+	}
+	if q.Query != "" {
+		clauses = append(clauses, `session_id LIKE ?`)
+		args = append(args, "%"+q.Query+"%")
+	}
+	if q.StartTimeMS > 0 {
+		clauses = append(clauses, `start_time_ms >= ?`)
+		args = append(args, q.StartTimeMS)
+	}
+	if q.EndTimeMS > 0 {
+		clauses = append(clauses, `start_time_ms <= ?`)
+		args = append(args, q.EndTimeMS)
+	}
+
+	where := ""
+	if len(clauses) > 0 {
+		where = " AND " + strings.Join(clauses, " AND ")
+	}
+	return where, args
+}
+
+func buildSqliteLogWhereClause(q LogQuery) (string, []interface{}) {
+	var clauses []string
+	var args []interface{}
+
+	if q.Severity != "" {
+		clauses = append(clauses, `severity = ?`)
+		args = append(args, q.Severity)
+	}
+	if q.EventName != "" {
+		clauses = append(clauses, `event_name = ?`)
+		args = append(args, q.EventName)
+	}
+	if q.Query != "" {
+		clauses = append(clauses, `body LIKE ?`)
+		args = append(args, "%"+q.Query+"%")
+	}
+	if q.TraceID != [16]byte{} {
+		clauses = append(clauses, `trace_id_hex = ?`)
+		args = append(args, TraceIDToHex(q.TraceID))
+	}
+	if q.StartTime > 0 {
+		clauses = append(clauses, `timestamp >= ?`)
+		args = append(args, q.StartTime)
+	}
+	if q.EndTime > 0 {
+		clauses = append(clauses, `timestamp <= ?`)
+		args = append(args, q.EndTime)
+	}
+
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	return where, args
+}
+
+// jsonToMap parses a JSON string into a map[string]string.
+func jsonToMap(raw string) map[string]string {
+	if raw == "" || raw == "{}" {
+		return map[string]string{}
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return map[string]string{}
+	}
+	return m
+}

@@ -13,7 +13,7 @@
       <div v-else-if="noData" class="panel-state">No data</div>
       <div v-else-if="panel.chartType === 'stat'" class="stat-value">
         <span class="stat-number">{{ formatValue(statValue) }}</span>
-        <span class="stat-metric">{{ panel.metric }}</span>
+        <span class="stat-metric">{{ statLabel }}</span>
       </div>
       <canvas v-else ref="canvasRef"></canvas>
       <div
@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import {
   Chart, LineController, BarController, CategoryScale, LinearScale,
   PointElement, LineElement, BarElement, Tooltip, Legend, Filler
@@ -66,15 +66,44 @@ const chartDatasets = ref<any[]>([])
 let chart: Chart | null = null
 let tooltipHovering = false
 
-function buildPromQL(): string {
-  const labels = props.panel.labels || {}
-  const labelPairs = Object.entries(labels)
-    .map(([k, v]) => `${k}="${v}"`)
-    .join(',')
-  if (labelPairs) {
-    return `${props.panel.metric}{${labelPairs}}`
+const statLabel = computed(() => {
+  if (props.panel.expressionType === 'ratio') {
+    return `${props.panel.numeratorMetric || '?'} / ${props.panel.metric}`
   }
   return props.panel.metric
+})
+
+function buildPromQL(): string {
+  const labelsStr = formatLabels(props.panel.labels || {})
+
+  if (props.panel.expressionType === 'ratio') {
+    const numExpr = wrapFunc(props.panel.numeratorMetric || '', labelsStr, props.panel.func)
+    const denExpr = wrapFunc(props.panel.metric, labelsStr, props.panel.func)
+    const ratioExpr = `${numExpr} / ${denExpr}`
+    return wrapAggregation(ratioExpr, props.panel.aggregation, props.panel.groupBy)
+  }
+
+  const expr = wrapFunc(props.panel.metric, labelsStr, props.panel.func)
+  return wrapAggregation(expr, props.panel.aggregation, props.panel.groupBy)
+}
+
+function formatLabels(labels: Record<string, string>): string {
+  return Object.entries(labels)
+    .map(([k, v]) => `${k}="${v}"`)
+    .join(',')
+}
+
+function wrapFunc(metric: string, labels: string, func: string): string {
+  const base = labels ? `${metric}{${labels}}` : metric
+  if (func === 'rate') return `rate(${base}[5m])`
+  if (func === 'increase') return `increase(${base}[5m])`
+  return base
+}
+
+function wrapAggregation(expr: string, agg: string, groupBy?: string): string {
+  if (agg === 'none' || !agg) return expr
+  const byClause = groupBy ? ` by (${groupBy})` : ''
+  return `${agg}(${expr})${byClause}`
 }
 
 async function fetchData() {
@@ -349,7 +378,7 @@ onUnmounted(() => {
 .panel-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin: 0; }
 .panel-actions { display: flex; gap: 4px; }
 .btn-icon {
-  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  background: none; border: none; color: var(--text-secondary); cursor: pointer;
   font-size: 14px; padding: 4px; border-radius: 4px; line-height: 1;
 }
 .btn-icon:hover { color: var(--text-primary); background: var(--bg-surface-hover-subtle); }

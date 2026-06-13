@@ -10,7 +10,8 @@ import (
 
 func setupLLMConfigHandler(t *testing.T) *LLMConfigHandler {
 	t.Helper()
-	store, err := storage.NewChDBStore("")
+	dir := t.TempDir()
+	store, err := storage.NewChDBStore(dir)
 	if err != nil {
 		t.Fatalf("failed to create test store: %v", err)
 	}

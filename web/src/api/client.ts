@@ -139,8 +139,13 @@ export async function exportTraces(traceIds: string[], format: string): Promise<
 export interface PanelConfig {
   id: string
   title: string
-  metric: string
+  expressionType: 'single' | 'ratio'
+  metric: string                       // Single: main metric; Ratio: denominator
+  numeratorMetric?: string             // Ratio: numerator (only when expressionType='ratio')
   labels: Record<string, string>
+  func: 'none' | 'rate' | 'increase'
+  aggregation: 'none' | 'sum' | 'avg' | 'max' | 'min'
+  groupBy?: string                     // label key for grouping
   chartType: 'line' | 'bar' | 'stat'
   step?: number
 }
@@ -288,6 +293,38 @@ export async function recalcCosts(): Promise<{ status: string; traces_updated: n
   const res = await fetch(`${BASE_URL}/model-pricing/recalc`, { method: 'POST' })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
+}
+
+// --- Cost Dashboard types and API ---
+
+export interface CostOverview {
+  total_cost: number
+  total_tokens: number
+  total_input_tokens: number
+  total_output_tokens: number
+  avg_cost_per_trace: number
+  trace_count: number
+}
+
+export interface ModelCost {
+  model: string
+  cost: number
+  tokens: number
+  input_tokens: number
+  output_tokens: number
+  trace_count: number
+  avg_cost: number
+}
+
+export interface CostSummary {
+  period: string
+  currency: string
+  overview: CostOverview
+  by_model: ModelCost[]
+}
+
+export async function getCostSummary(period: string): Promise<CostSummary> {
+  return get<CostSummary>(`${BASE_URL}/cost-summary?period=${period}`)
 }
 
 // --- LLM Config types and API ---
@@ -438,6 +475,61 @@ export async function listLogs(query: LogQuery): Promise<LogListResponse> {
 
 export async function getLogsByTrace(traceIdHex: string): Promise<{ logs: LogRecord[] }> {
   return get<{ logs: LogRecord[] }>(`${BASE_URL}/logs/${traceIdHex}`)
+}
+
+// --- Diagnosis types and API ---
+
+export interface DiagnosisFinding {
+  severity: 'error' | 'warning' | 'info'
+  dimension: 'latency' | 'cost' | 'error' | 'efficiency'
+  title: string
+  description: string
+  suggestion: string
+  span_name?: string
+  span_index?: number
+}
+
+export interface DiagnosisScores {
+  latency: number
+  cost: number
+  error: number
+  efficiency: number
+}
+
+export interface DiagnosisResult {
+  trace_id_hex: string
+  model_name: string
+  overall_score: number
+  scores: DiagnosisScores
+  findings: DiagnosisFinding[]
+  summary: string
+  created_at: string
+  stale: boolean
+}
+
+export async function getDiagnosisResult(traceIdHex: string): Promise<DiagnosisResult> {
+  const res = await fetch(`${BASE_URL}/traces/${traceIdHex}/diagnosis`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Failed to get diagnosis: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function diagnoseTrace(traceIdHex: string, force?: boolean, locale?: string): Promise<DiagnosisResult> {
+  const url = new URL(`${BASE_URL}/traces/${traceIdHex}/diagnose`, window.location.origin)
+  if (force) {
+    url.searchParams.set('force', 'true')
+  }
+  if (locale) {
+    url.searchParams.set('locale', locale)
+  }
+  const res = await fetch(url.toString(), { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Diagnosis failed: ${res.status}`)
+  }
+  return res.json()
 }
 
 export async function getLogEventNames(): Promise<string[]> {

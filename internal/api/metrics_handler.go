@@ -6,15 +6,22 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
 	"github.com/labubu/labubu/internal/receiver"
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	"google.golang.org/protobuf/proto"
+)
+
+// Regexes for PromQL parsing, compiled once at package init.
+var (
+	windowRe   = regexp.MustCompile(`\[\d+m\]`)
+	byClauseRe = regexp.MustCompile(`^\s*by\s*\(\s*([^)]+)\s*\)`)
 )
 
 // Prometheus-compatible API response types.
@@ -36,6 +43,20 @@ type prometheusResult struct {
 	Values [][]interface{}   `json:"values,omitempty"` // range query rows
 }
 
+// parsedQuery holds the result of parsing a PromQL expression with
+// function, aggregation, and ratio support.
+type parsedQuery struct {
+	MetricName    string
+	Labels        map[string]string
+	Func          string // "" | "rate" | "increase"
+	Window        int64  // lookback in ms (300_000 for 5m)
+	Aggregation   string // "" | "sum" | "avg" | "max" | "min"
+	GroupBy       string // label key for aggregation grouping
+	IsRatio       bool
+	NumMetricName string            // numerator metric (ratio only)
+	NumLabels     map[string]string // numerator labels (ratio only)
+}
+
 // MetricsHandler holds HTTP handlers for Prometheus API endpoints.
 type MetricsHandler struct {
 	store metrics.Store
@@ -46,9 +67,10 @@ func NewMetricsHandler(store metrics.Store) *MetricsHandler {
 	return &MetricsHandler{store: store}
 }
 
-// parsePromQL extracts the metric name and label filters from a simple PromQL query.
-// Only supports: metric_name and metric_name{label="value",...} patterns.
-func parsePromQL(query string) (string, map[string]string) {
+// parsePromQLSimple extracts the metric name and label filters from a simple
+// PromQL expression (metric_name and metric_name{label="value",...} patterns).
+// It is used as an inner helper by the extended parser.
+func parsePromQLSimple(query string) (string, map[string]string) {
 	labels := make(map[string]string)
 
 	idx := strings.IndexByte(query, '{')
@@ -80,6 +102,184 @@ func parsePromQL(query string) (string, map[string]string) {
 	return name, labels
 }
 
+// parsePromQL parses a PromQL expression and returns a parsedQuery struct
+// supporting functions (rate, increase), aggregations (sum, avg, max, min),
+// and ratio expressions (a / b).
+func parsePromQL(query string) parsedQuery {
+	q := parsedQuery{Labels: make(map[string]string)}
+
+	// Check for binary division (ratio expression).
+	if left, right, ok := splitRatio(query); ok {
+		q.IsRatio = true
+		leftQ := parseSingleExpr(left)
+		rightQ := parseSingleExpr(right)
+		q.NumMetricName = leftQ.MetricName
+		q.NumLabels = leftQ.Labels
+		q.Func = leftQ.Func
+		q.Window = leftQ.Window
+		q.MetricName = rightQ.MetricName
+		q.Labels = rightQ.Labels
+		q.Aggregation = leftQ.Aggregation
+		q.GroupBy = leftQ.GroupBy
+		return q
+	}
+
+	sq := parseSingleExpr(query)
+	q.MetricName = sq.MetricName
+	q.Labels = sq.Labels
+	q.Func = sq.Func
+	q.Window = sq.Window
+	q.Aggregation = sq.Aggregation
+	q.GroupBy = sq.GroupBy
+	return q
+}
+
+// parseSingleExpr parses a single (non-ratio) PromQL expression, extracting
+// any aggregation wrapper, function wrapper, time window, and the inner
+// metric{labels} selector.
+func parseSingleExpr(expr string) parsedQuery {
+	q := parsedQuery{Labels: make(map[string]string)}
+	expr = strings.TrimSpace(expr)
+
+	// Known aggregation operators.
+	aggs := []string{"sum", "avg", "max", "min"}
+	for _, agg := range aggs {
+		if inner, groupBy, ok := unwrapAggregation(expr, agg); ok {
+			q.Aggregation = agg
+			q.GroupBy = groupBy
+			expr = strings.TrimSpace(inner)
+			break
+		}
+	}
+
+	// Known function wrappers.
+	fns := []string{"rate", "increase"}
+	for _, fn := range fns {
+		if inner, ok := unwrapFunction(expr, fn); ok {
+			q.Func = fn
+			expr = strings.TrimSpace(inner)
+			// Extract and strip the [5m] window.
+			if loc := windowRe.FindStringIndex(expr); loc != nil {
+				windowStr := expr[loc[0]:loc[1]]
+				// windowStr is like "[5m]" — strip brackets and "m" suffix to get "5".
+				minStr := strings.TrimSuffix(windowStr[1:len(windowStr)-1], "m")
+				mins, err := strconv.ParseInt(minStr, 10, 64)
+				if err == nil {
+					q.Window = mins * 60 * 1000 // minutes → ms
+				}
+				expr = expr[:loc[0]] + expr[loc[1]:]
+			}
+			break
+		}
+	}
+
+	// Parse the remaining metric{labels} using the simple parser.
+	name, labels := parsePromQLSimple(strings.TrimSpace(expr))
+	q.MetricName = name
+	q.Labels = labels
+	return q
+}
+
+// splitRatio splits a binary division expression (a / b), respecting
+// parentheses depth so that nested functions/aggregations are not broken.
+func splitRatio(query string) (left, right string, ok bool) {
+	query = strings.TrimSpace(query)
+
+	// Find the top-level '/' operator that is not inside parentheses.
+	depth := 0
+	slashIdx := -1
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+		} else if ch == '/' && depth == 0 {
+			slashIdx = i
+			break
+		}
+	}
+	if slashIdx < 0 {
+		return "", "", false
+	}
+	left = strings.TrimSpace(query[:slashIdx])
+	right = strings.TrimSpace(query[slashIdx+1:])
+	if left == "" || right == "" {
+		return "", "", false
+	}
+	return left, right, true
+}
+
+// unwrapAggregation extracts the inner expression and group-by label from
+// an aggregation wrapper like "sum(rate(...)) by (service)".
+// Returns (inner, groupBy, true) if the expression starts with agg(...).
+func unwrapAggregation(expr, agg string) (inner, groupBy string, ok bool) {
+	prefix := agg + "("
+	if !strings.HasPrefix(expr, prefix) {
+		return "", "", false
+	}
+
+	// Find the closing ')' that matches the opening '(' after agg.
+	depth := 1
+	openIdx := len(prefix) - 1 // index of '(' after agg
+	closeIdx := -1
+	for i := openIdx + 1; i < len(expr); i++ {
+		if expr[i] == '(' {
+			depth++
+		} else if expr[i] == ')' {
+			depth--
+			if depth == 0 {
+				closeIdx = i
+				break
+			}
+		}
+	}
+	if closeIdx < 0 {
+		return "", "", false
+	}
+
+	innerExpr := expr[openIdx+1:closeIdx]
+	rest := strings.TrimSpace(expr[closeIdx+1:])
+
+	// Check for "by (label)" or "by(label)" suffix.
+	groupBy = ""
+	if m := byClauseRe.FindStringSubmatch(rest); m != nil {
+		groupBy = strings.TrimSpace(m[1])
+	}
+
+	return innerExpr, groupBy, true
+}
+
+// unwrapFunction extracts the inner expression from a function wrapper like
+// "rate(metric{labels}[5m])". Returns (inner, true) if expr starts with fn(...).
+func unwrapFunction(expr, fn string) (inner string, ok bool) {
+	prefix := fn + "("
+	if !strings.HasPrefix(expr, prefix) {
+		return "", false
+	}
+
+	// Find the matching closing ')'.
+	depth := 1
+	openIdx := len(prefix) - 1
+	closeIdx := -1
+	for i := openIdx + 1; i < len(expr); i++ {
+		if expr[i] == '(' {
+			depth++
+		} else if expr[i] == ')' {
+			depth--
+			if depth == 0 {
+				closeIdx = i
+				break
+			}
+		}
+	}
+	if closeIdx < 0 {
+		return "", false
+	}
+
+	return expr[openIdx+1:closeIdx], true
+}
+
 // parseTime parses time from query string (seconds Unix), returns milliseconds.
 func parseTime(r *http.Request, key string) (int64, error) {
 	v := r.URL.Query().Get(key)
@@ -97,41 +297,57 @@ func parseTime(r *http.Request, key string) (int64, error) {
 func (h *MetricsHandler) InstantQuery(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, prometheusResponse{
-			Status: "error",
-			Error:  "missing required parameter 'query'",
-		})
+		writeJSON(w, http.StatusBadRequest, prometheusResponse{Status: "error", Error: "missing required parameter 'query'"})
 		return
 	}
 
 	ts, err := parseTime(r, "time")
 	if err != nil {
-		ts = time.Now().UnixMilli()
-	}
-
-	metricName, labels := parsePromQL(query)
-	if metricName == "" {
-		writeJSON(w, http.StatusOK, prometheusResponse{
-			Status: "success",
-			Data:   prometheusData{ResultType: "vector", Result: []prometheusResult{}},
-		})
+		writeJSON(w, http.StatusBadRequest, prometheusResponse{Status: "error", Error: fmt.Sprintf("invalid time: %v", err)})
 		return
 	}
 
-	// Look back up to 1 hour to find the most recent data point.
-	// A narrow window (e.g. 5 s) would miss data ingested more than
-	// a few seconds ago and cause stat cards to show "No data".
+	pq := parsePromQL(query)
+
 	start := ts - 3600_000
 	end := ts + 1000
+	if pq.Func == "rate" || pq.Func == "increase" {
+		start = ts - 3600_000 - lookbackWindowMS
+	}
 
-	series, err := h.store.Select(r.Context(), metricName, labels, start, end)
+	if pq.IsRatio {
+		results := h.computeRatioInstant(r, pq, ts, start, end)
+		writeJSON(w, http.StatusOK, prometheusResponse{Status: "success", Data: prometheusData{ResultType: "vector", Result: results}})
+		return
+	}
+
+	if pq.MetricName == "" {
+		writeJSON(w, http.StatusOK, prometheusResponse{Status: "success", Data: prometheusData{ResultType: "vector", Result: []prometheusResult{}}})
+		return
+	}
+
+	series, err := h.store.Select(r.Context(), pq.MetricName, pq.Labels, start, end)
 	if err != nil {
 		log.Printf("metrics: instant query error: %v", err)
-		writeJSON(w, http.StatusInternalServerError, prometheusResponse{
-			Status: "error",
-			Error:  fmt.Sprintf("query failed: %v", err),
-		})
+		writeJSON(w, http.StatusInternalServerError, prometheusResponse{Status: "error", Error: fmt.Sprintf("query failed: %v", err)})
 		return
+	}
+
+		if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+		// No valid window parsed; skip function computation.
+		// Return raw data instead.
+	} else if pq.Func == "rate" {
+		for i, s := range series {
+			series[i].Points = applyRate(s.Points, pq.Window)
+		}
+	} else if pq.Func == "increase" {
+		for i, s := range series {
+			series[i].Points = applyIncrease(s.Points, pq.Window)
+		}
+	}
+
+	if pq.Aggregation != "" {
+		series = applyAggregation(series, pq.Aggregation, pq.GroupBy)
 	}
 
 	results := make([]prometheusResult, 0)
@@ -151,10 +367,76 @@ func (h *MetricsHandler) InstantQuery(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, prometheusResponse{
-		Status: "success",
-		Data:   prometheusData{ResultType: "vector", Result: results},
-	})
+	writeJSON(w, http.StatusOK, prometheusResponse{Status: "success", Data: prometheusData{ResultType: "vector", Result: results}})
+}
+
+func (h *MetricsHandler) computeRatioInstant(r *http.Request, pq parsedQuery, ts, start, end int64) []prometheusResult {
+	var numSeries []metrics.MetricSeries
+	if pq.NumMetricName != "" {
+		numLabels := pq.NumLabels
+		if numLabels == nil {
+			numLabels = pq.Labels
+		}
+		ns, err := h.store.Select(r.Context(), pq.NumMetricName, numLabels, start, end)
+		if err != nil {
+			log.Printf("metrics: ratio instant numerator query error: %v", err)
+			return nil
+		}
+		numSeries = ns
+	}
+
+	var denSeries []metrics.MetricSeries
+	if pq.MetricName != "" {
+		ds, err := h.store.Select(r.Context(), pq.MetricName, pq.Labels, start, end)
+		if err != nil {
+			log.Printf("metrics: ratio instant denominator query error: %v", err)
+			return nil
+		}
+		denSeries = ds
+	}
+
+		if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+			// No valid window parsed; skip function computation.
+		} else if pq.Func == "rate" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+		} else if pq.Func == "increase" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
+		}
+
+		if pq.Aggregation != "" {
+		numSeries = applyAggregation(numSeries, pq.Aggregation, pq.GroupBy)
+		denSeries = applyAggregation(denSeries, pq.Aggregation, pq.GroupBy)
+	}
+
+	ratioSeries := applyRatio(numSeries, denSeries)
+
+	results := make([]prometheusResult, 0)
+	for _, s := range ratioSeries {
+		best := pickClosestPoint(s.Points, ts)
+		if best == nil {
+			continue
+		}
+		metricLabel := make(map[string]string, len(s.Labels)+1)
+		metricLabel["__name__"] = pq.NumMetricName + "_per_" + pq.MetricName
+		for k, v := range s.Labels {
+			metricLabel[k] = v
+		}
+		results = append(results, prometheusResult{
+			Metric: metricLabel,
+			Value:  []interface{}{float64(best.Timestamp) / 1000.0, strconv.FormatFloat(best.Value, 'f', -1, 64)},
+		})
+	}
+	return results
 }
 
 // pickClosestPoint returns the point with timestamp closest to target.
@@ -185,10 +467,7 @@ func abs64(x int64) int64 {
 func (h *MetricsHandler) RangeQuery(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 	if query == "" {
-		writeJSON(w, http.StatusBadRequest, prometheusResponse{
-			Status: "error",
-			Error:  "missing required parameter 'query'",
-		})
+		writeJSON(w, http.StatusBadRequest, prometheusResponse{Status: "error", Error: "missing required parameter 'query'"})
 		return
 	}
 
@@ -209,43 +488,131 @@ func (h *MetricsHandler) RangeQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	stepMS := stepSec * 1000
 
-	metricName, labels := parsePromQL(query)
-	if metricName == "" {
-		writeJSON(w, http.StatusOK, prometheusResponse{
-			Status: "success",
-			Data:   prometheusData{ResultType: "matrix", Result: []prometheusResult{}},
-		})
+	pq := parsePromQL(query)
+
+	effectiveStart := start
+	if pq.Func == "rate" || pq.Func == "increase" {
+		effectiveStart = start - lookbackWindowMS
+	}
+
+	if pq.IsRatio {
+		results := h.computeRatioRange(r, pq, effectiveStart, end, stepMS, start)
+		writeJSON(w, http.StatusOK, prometheusResponse{Status: "success", Data: prometheusData{ResultType: "matrix", Result: results}})
 		return
 	}
 
-	series, err := h.store.Select(r.Context(), metricName, labels, start, end)
+	if pq.MetricName == "" {
+		writeJSON(w, http.StatusOK, prometheusResponse{Status: "success", Data: prometheusData{ResultType: "matrix", Result: []prometheusResult{}}})
+		return
+	}
+
+	series, err := h.store.Select(r.Context(), pq.MetricName, pq.Labels, effectiveStart, end)
 	if err != nil {
 		log.Printf("metrics: range query error: %v", err)
-		writeJSON(w, http.StatusInternalServerError, prometheusResponse{
-			Status: "error",
-			Error:  fmt.Sprintf("query failed: %v", err),
-		})
+		writeJSON(w, http.StatusInternalServerError, prometheusResponse{Status: "error", Error: fmt.Sprintf("query failed: %v", err)})
 		return
+	}
+
+	// Apply function.
+	if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+		// No valid window parsed; skip function computation.
+		// Return raw data instead.
+	} else if pq.Func == "rate" {
+		for i, s := range series {
+			series[i].Points = applyRate(s.Points, pq.Window)
+		}
+	} else if pq.Func == "increase" {
+		for i, s := range series {
+			series[i].Points = applyIncrease(s.Points, pq.Window)
+		}
+	}
+
+	// Apply aggregation.
+	if pq.Aggregation != "" {
+		series = applyAggregation(series, pq.Aggregation, pq.GroupBy)
 	}
 
 	results := make([]prometheusResult, 0)
 	for _, s := range series {
 		values := downsamplePoints(s.Points, start, end, stepMS)
+		if len(values) == 0 {
+			continue
+		}
 		metricLabel := make(map[string]string, len(s.Labels)+1)
 		metricLabel["__name__"] = s.Name
 		for k, v := range s.Labels {
 			metricLabel[k] = v
 		}
-		results = append(results, prometheusResult{
-			Metric: metricLabel,
-			Values: values,
-		})
+		results = append(results, prometheusResult{Metric: metricLabel, Values: values})
 	}
 
-	writeJSON(w, http.StatusOK, prometheusResponse{
-		Status: "success",
-		Data:   prometheusData{ResultType: "matrix", Result: results},
-	})
+	writeJSON(w, http.StatusOK, prometheusResponse{Status: "success", Data: prometheusData{ResultType: "matrix", Result: results}})
+}
+
+func (h *MetricsHandler) computeRatioRange(r *http.Request, pq parsedQuery, effectiveStart, end, stepMS, origStart int64) []prometheusResult {
+	var numSeries []metrics.MetricSeries
+	if pq.NumMetricName != "" {
+		numLabels := pq.NumLabels
+		if numLabels == nil {
+			numLabels = pq.Labels
+		}
+		ns, err := h.store.Select(r.Context(), pq.NumMetricName, numLabels, effectiveStart, end)
+		if err != nil {
+			log.Printf("metrics: ratio numerator query error: %v", err)
+			return nil
+		}
+		numSeries = ns
+	}
+
+	var denSeries []metrics.MetricSeries
+	if pq.MetricName != "" {
+		ds, err := h.store.Select(r.Context(), pq.MetricName, pq.Labels, effectiveStart, end)
+		if err != nil {
+			log.Printf("metrics: ratio denominator query error: %v", err)
+			return nil
+		}
+		denSeries = ds
+	}
+
+		if (pq.Func == "rate" || pq.Func == "increase") && pq.Window == 0 {
+			// No valid window parsed; skip function computation.
+		} else if pq.Func == "rate" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyRate(s.Points, pq.Window)
+			}
+		} else if pq.Func == "increase" {
+			for i, s := range numSeries {
+				numSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
+			for i, s := range denSeries {
+				denSeries[i].Points = applyIncrease(s.Points, pq.Window)
+			}
+		}
+
+		if pq.Aggregation != "" {
+		numSeries = applyAggregation(numSeries, pq.Aggregation, pq.GroupBy)
+		denSeries = applyAggregation(denSeries, pq.Aggregation, pq.GroupBy)
+	}
+
+	ratioSeries := applyRatio(numSeries, denSeries)
+
+	results := make([]prometheusResult, 0)
+	for _, s := range ratioSeries {
+		values := downsamplePoints(s.Points, origStart, end, stepMS)
+		if len(values) == 0 {
+			continue
+		}
+		metricLabel := make(map[string]string, len(s.Labels)+1)
+		metricLabel["__name__"] = pq.NumMetricName + "_per_" + pq.MetricName
+		for k, v := range s.Labels {
+			metricLabel[k] = v
+		}
+		results = append(results, prometheusResult{Metric: metricLabel, Values: values})
+	}
+	return results
 }
 
 // downsamplePoints picks the closest point for each step interval.
@@ -253,21 +620,226 @@ func downsamplePoints(points []metrics.MetricPoint, start, end, step int64) [][]
 	if len(points) == 0 {
 		return nil
 	}
-
 	var values [][]interface{}
 	for t := start; t <= end; t += step {
-		best := pickClosestPoint(points, t)
-		var val float64
-		if best != nil && abs64(best.Timestamp-t) <= step {
-			val = best.Value
+		windowStart := t - step/2
+		windowEnd := t + step/2
+		sum := 0.0
+		count := 0
+		for _, p := range points {
+			if p.Timestamp >= windowStart && p.Timestamp <= windowEnd {
+				sum += p.Value
+				count++
+			}
 		}
-		// Always emit a point for each step; 0 when no data nearby.
+		if count == 0 {
+			continue
+		}
 		values = append(values, []interface{}{
 			float64(t) / 1000.0,
-			strconv.FormatFloat(val, 'f', -1, 64),
+			strconv.FormatFloat(sum/float64(count), 'f', -1, 64),
 		})
 	}
 	return values
+}
+
+const lookbackWindowMS = 300_000 // 5 minutes in ms
+
+func applyDelta(points []metrics.MetricPoint, lookbackMS int64, perSecond bool) []metrics.MetricPoint {
+	if len(points) == 0 {
+		return nil
+	}
+	lookbackSec := float64(lookbackMS) / 1000.0
+	result := make([]metrics.MetricPoint, 0)
+	for _, p := range points {
+		target := p.Timestamp - lookbackMS
+		bestIdx := -1
+		bestDiff := int64(60_000) // 60s tolerance
+		for i, pp := range points {
+			diff := abs64(pp.Timestamp - target)
+			if diff < bestDiff {
+				bestDiff = diff
+				bestIdx = i
+			}
+		}
+		if bestIdx < 0 {
+			continue
+		}
+		delta := p.Value - points[bestIdx].Value
+		if delta < 0 {
+			delta = 0 // counter resets
+		}
+		value := delta
+		if perSecond {
+			value = delta / lookbackSec
+		}
+		result = append(result, metrics.MetricPoint{
+			Name:      p.Name,
+			Labels:    p.Labels,
+			Value:     value,
+			Timestamp: p.Timestamp,
+		})
+	}
+	return result
+}
+
+func applyRate(points []metrics.MetricPoint, lookbackMS int64) []metrics.MetricPoint {
+	return applyDelta(points, lookbackMS, true)
+}
+
+func applyIncrease(points []metrics.MetricPoint, lookbackMS int64) []metrics.MetricPoint {
+	return applyDelta(points, lookbackMS, false)
+}
+
+func applyAggregation(series []metrics.MetricSeries, agg string, groupBy string) []metrics.MetricSeries {
+	if len(series) == 0 {
+		return nil
+	}
+	groups := make(map[string][]metrics.MetricSeries)
+	for _, s := range series {
+		key := ""
+		if groupBy != "" {
+			key = s.Labels[groupBy]
+		}
+		groups[key] = append(groups[key], s)
+	}
+
+	results := make([]metrics.MetricSeries, 0, len(groups))
+	for groupKey, groupSeries := range groups {
+		var allPoints []metrics.MetricPoint
+		for _, gs := range groupSeries {
+			allPoints = append(allPoints, gs.Points...)
+		}
+		sort.Slice(allPoints, func(i, j int) bool {
+			return allPoints[i].Timestamp < allPoints[j].Timestamp
+		})
+		merged := mergePointsByTimestamp(allPoints, agg)
+		resultLabels := make(map[string]string)
+		if groupBy != "" {
+			resultLabels[groupBy] = groupKey
+		}
+		results = append(results, metrics.MetricSeries{
+			Name:   series[0].Name,
+			Labels: resultLabels,
+			Points: merged,
+		})
+	}
+	return results
+}
+
+func mergePointsByTimestamp(points []metrics.MetricPoint, agg string) []metrics.MetricPoint {
+	if len(points) == 0 {
+		return nil
+	}
+	tsGroups := make(map[int64][]float64)
+	for _, p := range points {
+		tsGroups[p.Timestamp] = append(tsGroups[p.Timestamp], p.Value)
+	}
+	timestamps := make([]int64, 0, len(tsGroups))
+	for ts := range tsGroups {
+		timestamps = append(timestamps, ts)
+	}
+	sort.Slice(timestamps, func(i, j int) bool { return timestamps[i] < timestamps[j] })
+
+	result := make([]metrics.MetricPoint, 0, len(timestamps))
+	for _, ts := range timestamps {
+		vals := tsGroups[ts]
+		var aggVal float64
+		switch agg {
+		case "sum":
+			for _, v := range vals {
+				aggVal += v
+			}
+		case "avg":
+			for _, v := range vals {
+				aggVal += v
+			}
+			aggVal /= float64(len(vals))
+		case "max":
+			aggVal = vals[0]
+			for _, v := range vals {
+				if v > aggVal {
+					aggVal = v
+				}
+			}
+		case "min":
+			aggVal = vals[0]
+			for _, v := range vals {
+				if v < aggVal {
+					aggVal = v
+				}
+			}
+		default:
+			aggVal = vals[0]
+		}
+		result = append(result, metrics.MetricPoint{
+			Value:     aggVal,
+			Timestamp: ts,
+		})
+	}
+	return result
+}
+
+func applyRatio(numSeries, denSeries []metrics.MetricSeries) []metrics.MetricSeries {
+	if len(numSeries) == 0 || len(denSeries) == 0 {
+		return nil
+	}
+	results := make([]metrics.MetricSeries, 0)
+	for _, ns := range numSeries {
+		matchedDenIdx := -1
+		for i, ds := range denSeries {
+			if labelsMatchForRatio(ns.Labels, ds.Labels) {
+				matchedDenIdx = i
+				break
+			}
+		}
+		if matchedDenIdx < 0 {
+			continue
+		}
+		matchedDen := denSeries[matchedDenIdx]
+		denByTS := make(map[int64]float64)
+		for _, dp := range matchedDen.Points {
+			denByTS[dp.Timestamp] = dp.Value
+		}
+		var ratioPoints []metrics.MetricPoint
+		for _, np := range ns.Points {
+			dv, ok := denByTS[np.Timestamp]
+			if !ok || dv == 0 {
+				continue
+			}
+			ratioPoints = append(ratioPoints, metrics.MetricPoint{
+				Name:      ns.Name,
+				Labels:    ns.Labels,
+				Value:     np.Value / dv,
+				Timestamp: np.Timestamp,
+			})
+		}
+		if len(ratioPoints) > 0 {
+			results = append(results, metrics.MetricSeries{
+				Name:   ns.Name,
+				Labels: ns.Labels,
+				Points: ratioPoints,
+			})
+		}
+	}
+	return results
+}
+
+func labelsMatchForRatio(a, b map[string]string) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // Labels handles GET /api/v1/labels

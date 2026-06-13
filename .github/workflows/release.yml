@@ -23,11 +23,27 @@ jobs:
             goarch: amd64
             platform_tag: linux_x86_64
             binary_name: labubu
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            platform_tag: linux_aarch64
+            binary_name: labubu
           - os: windows-latest
             goos: windows
             goarch: amd64
             platform_tag: win_amd64
             binary_name: labubu.exe
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            platform_tag: macosx_10_9_x86_64
+            binary_name: labubu
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            platform_tag: macosx_11_0_arm64
+            binary_name: labubu
+
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -82,27 +98,41 @@ jobs:
           python-version: '3.12'
 
       - name: Install Python build tools
-        run: pip install build wheel
+        run: pip install build
 
-      - name: Build wheel
-        working-directory: labubu-python
-        run: python -m build --wheel
-
-      - name: Tag wheel for platform
+      - name: Build platform-specific wheel
         working-directory: labubu-python
         shell: bash
         run: |
-          pip install wheel
-          wheel tags --platform-tag ${{ matrix.platform_tag }} dist/*.whl
-          # Remove the original any-tagged wheel if it still exists.
-          rm -f dist/*-py3-none-any.whl
+          python -m build --wheel
+          # Fix Root-Is-Purelib and platform tag directly in the zip
+          python -c "
+          import glob, zipfile, os, shutil
+          whl = glob.glob('dist/*.whl')[0]
+          tmp = whl + '.tmp'
+          platform_tag = '${{ matrix.platform_tag }}'
+          with zipfile.ZipFile(whl, 'r') as zin:
+              with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zout:
+                  for item in zin.infolist():
+                      data = zin.read(item.filename)
+                      if item.filename.endswith('/WHEEL') and '/METADATA' not in item.filename:
+                          text = data.decode('utf-8')
+                          text = text.replace('Root-Is-Purelib: true', 'Root-Is-Purelib: false')
+                          text = text.replace('Tag: py3-none-any', f'Tag: py3-none-{platform_tag}')
+                          data = text.encode('utf-8')
+                      zout.writestr(item, data)
+          os.remove(whl)
+          # Rename to match the new tag
+          parts = os.path.basename(whl).replace('-py3-none-any.whl', f'-py3-none-{platform_tag}.whl')
+          shutil.move(tmp, os.path.join('dist', parts))
+          "
 
       - name: Smoke test
+        if: (matrix.goos == 'linux' && matrix.goarch == 'amd64') || (matrix.goos == 'windows' && matrix.goarch == 'amd64') || (matrix.goos == 'darwin' && matrix.goarch == 'arm64')
         shell: bash
         run: |
           pip install labubu-python/dist/*.whl
           labubu version
-          # Start server in background, check health, then stop.
           labubu serve --port 19876 &
           SERVER_PID=$!
           sleep 3
@@ -117,10 +147,45 @@ jobs:
           name: wheel-${{ matrix.goos }}-${{ matrix.goarch }}
           path: labubu-python/dist/*.whl
 
-  publish:
+      - name: Stage raw binary
+        shell: bash
+        run: |
+          mkdir -p staging
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          cp "bin/${{ matrix.binary_name }}" "staging/labubu-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
+
+      - name: Upload raw binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: staging/labubu-*
+
+  github-release:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.whl
+            dist/labubu-*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_ENABLED == 'true'
 
     steps:
       - uses: actions/download-artifact@v4

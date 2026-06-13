@@ -1,13 +1,15 @@
-//go:build !cgo || !local_engine
+//go:build !cgo && nosqlite
 
-// Package storage provides an in-memory Store implementation for non-CGO builds.
-// When compiling without CGO (or without the local_engine tag), NewChDBStore
-// returns this in-memory store so the binary compiles and runs for development.
+// Package storage provides an in-memory Store implementation for non-CGO builds
+// with nosqlite tag. By default, non-CGO builds use SQLite Store instead.
+// This memStore is kept as a minimal fallback when SQLite is explicitly disabled.
 package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 )
 
 // memStore is an in-memory Store used when chDB CGO is not available.
+// LLM configs and diagnosis results are persisted to a JSON file on disk.
 type memStore struct {
 	mu       sync.RWMutex
 	spans    []Span
@@ -23,20 +26,38 @@ type memStore struct {
 	logs     []LogRecord
 	pricing    map[string]ModelPricing
 	llmConfigs map[string]LLMConfig
+	diagnosisResults map[[16]byte]*DiagnosisResult
+	jsonPath  string // path to persistence file; "" means no persistence
 }
 
 // NewChDBStore returns an in-memory Store when chDB is not available.
-// The dataDir parameter is ignored. Data is lost on restart.
+// If dataDir is provided, LLM configs and diagnosis results are persisted
+// to a JSON file under that directory. Otherwise, data is lost on restart.
 func NewChDBStore(dataDir string) (Store, error) {
-	_ = dataDir
-	return &memStore{
-		spans:    make([]Span, 0),
-		traces:   make(map[[16]byte]Trace),
-		services: make(map[string]bool),
-		logs:     make([]LogRecord, 0),
-		pricing:    make(map[string]ModelPricing),
-		llmConfigs: make(map[string]LLMConfig),
-	}, nil
+	jsonPath := ""
+	if dataDir != "" {
+		// Ensure directory exists.
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			return nil, fmt.Errorf("create data dir: %w", err)
+		}
+		jsonPath = dataDir + "/memstore.json"
+	}
+	m := &memStore{
+		spans:            make([]Span, 0),
+		traces:           make(map[[16]byte]Trace),
+		services:         make(map[string]bool),
+		logs:             make([]LogRecord, 0),
+		pricing:          make(map[string]ModelPricing),
+		llmConfigs:       make(map[string]LLMConfig),
+		diagnosisResults: make(map[[16]byte]*DiagnosisResult),
+		jsonPath:         jsonPath,
+	}
+	if jsonPath != "" {
+		if err := m.loadFromDisk(); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("load persisted data: %w", err)
+		}
+	}
+	return m, nil
 }
 
 func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope ScopeInfo, inSpans []Span) error {
@@ -733,7 +754,7 @@ func (m *memStore) UpsertModelPricing(ctx context.Context, p ModelPricing) error
 		m.pricing = make(map[string]ModelPricing)
 	}
 	m.pricing[p.ModelName] = p
-	return nil
+	return m.saveToDiskLocked()
 }
 
 func (m *memStore) DeleteModelPricing(ctx context.Context, modelName string) error {
@@ -741,7 +762,7 @@ func (m *memStore) DeleteModelPricing(ctx context.Context, modelName string) err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.pricing, modelName)
-	return nil
+	return m.saveToDiskLocked()
 }
 
 func (m *memStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
@@ -769,7 +790,7 @@ func (m *memStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
 		}
 	}
 	m.llmConfigs[c.ID] = *c
-	return nil
+	return m.saveToDiskLocked()
 }
 
 func (m *memStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
@@ -791,7 +812,7 @@ func (m *memStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
 		}
 	}
 	m.llmConfigs[c.ID] = *c
-	return nil
+	return m.saveToDiskLocked()
 }
 
 func (m *memStore) DeleteLLMConfig(ctx context.Context, id string) error {
@@ -799,7 +820,7 @@ func (m *memStore) DeleteLLMConfig(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.llmConfigs, id)
-	return nil
+	return m.saveToDiskLocked()
 }
 
 func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
@@ -866,8 +887,224 @@ func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error 
 	return nil
 }
 
+func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummaryResult, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Collect traces in the time range.
+	type modelAgg struct {
+		cost         float64
+		tokens       uint64
+		inputTokens  uint64
+		outputTokens uint64
+		traceCount   int
+	}
+	aggByModel := make(map[string]*modelAgg)
+	var totalCost float64
+	var totalTokens uint64
+	var totalInputTokens uint64
+	var totalOutputTokens uint64
+	traceCount := 0
+	var currency string
+
+	for traceID, t := range m.traces {
+		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
+			continue
+		}
+		if q.EndTimeMS > 0 && t.StartTimeMS > q.EndTimeMS {
+			continue
+		}
+		if t.Cost == nil || *t.Cost == 0 {
+			continue // skip traces with no cost
+		}
+
+		traceCount++
+		totalCost += *t.Cost
+		if t.TotalTokens != nil {
+			totalTokens += uint64(*t.TotalTokens)
+		}
+		if currency == "" && t.CostCurrency != "" {
+			currency = t.CostCurrency
+		}
+
+		// Find the model name from spans.
+		modelName := ""
+		for _, s := range m.spans {
+			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel != "" {
+				modelName = *s.GenAIRequestModel
+				break // use the first span's model
+			}
+		}
+		if modelName == "" {
+			modelName = "(unknown)"
+		}
+
+		entry, exists := aggByModel[modelName]
+		if !exists {
+			entry = &modelAgg{}
+			aggByModel[modelName] = entry
+		}
+		entry.cost += *t.Cost
+		if t.TotalTokens != nil {
+			entry.tokens += uint64(*t.TotalTokens)
+		}
+		entry.traceCount++
+
+		// Also accumulate input/output tokens for the model entry.
+		for _, s := range m.spans {
+			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel == modelName {
+				if s.InputTokens != nil {
+					entry.inputTokens += uint64(*s.InputTokens)
+					totalInputTokens += uint64(*s.InputTokens)
+				}
+				if s.OutputTokens != nil {
+					entry.outputTokens += uint64(*s.OutputTokens)
+					totalOutputTokens += uint64(*s.OutputTokens)
+				}
+			}
+		}
+	}
+
+	// Build ByModel slice, sorted by cost descending.
+	byModel := make([]ModelCostItem, 0, len(aggByModel))
+	for model, agg := range aggByModel {
+		avgCost := 0.0
+		if agg.traceCount > 0 {
+			avgCost = agg.cost / float64(agg.traceCount)
+		}
+		byModel = append(byModel, ModelCostItem{
+			Model:        model,
+			Cost:         agg.cost,
+			Tokens:       agg.tokens,
+			InputTokens:  agg.inputTokens,
+			OutputTokens: agg.outputTokens,
+			TraceCount:   agg.traceCount,
+			AvgCost:      avgCost,
+		})
+	}
+	sort.Slice(byModel, func(i, j int) bool {
+		return byModel[i].Cost > byModel[j].Cost
+	})
+
+	avgCostPerTrace := 0.0
+	if traceCount > 0 {
+		avgCostPerTrace = totalCost / float64(traceCount)
+	}
+
+	return &CostSummaryResult{
+		Period:   "",
+		Currency: currency,
+		Overview: CostOverview{
+			TotalCost:         totalCost,
+			TotalTokens:       totalTokens,
+			TotalInputTokens:  totalInputTokens,
+			TotalOutputTokens: totalOutputTokens,
+			AvgCostPerTrace:   avgCostPerTrace,
+			TraceCount:        traceCount,
+		},
+		ByModel: byModel,
+	}, nil
+}
+
 func (m *memStore) Close() error {
+	return m.saveToDisk()
+}
+
+func (m *memStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*DiagnosisResult, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result, ok := m.diagnosisResults[traceID]
+	if !ok {
+		return nil, nil
+	}
+	return result, nil
+}
+
+func (m *memStore) UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.diagnosisResults[result.TraceID] = result
+	return m.saveToDiskLocked()
+}
+
+// --- JSON file persistence for LLM configs and diagnosis results ---
+
+// persistedMemData is the on-disk format.
+type persistedMemData struct {
+	ModelPricing     []ModelPricing     `json:"model_pricing"`
+	LLMConfigs       []LLMConfig        `json:"llm_configs"`
+	DiagnosisResults []DiagnosisResult  `json:"diagnosis_results"`
+}
+
+func (m *memStore) loadFromDisk() error {
+	data, err := os.ReadFile(m.jsonPath)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	var pd persistedMemData
+	if err := json.Unmarshal(data, &pd); err != nil {
+		return fmt.Errorf("unmarshal memstore: %w", err)
+	}
+	for _, p := range pd.ModelPricing {
+		m.pricing[p.ModelName] = p
+	}
+	for _, c := range pd.LLMConfigs {
+		m.llmConfigs[c.ID] = c
+	}
+	for _, d := range pd.DiagnosisResults {
+		m.diagnosisResults[d.TraceID] = &d
+	}
 	return nil
+}
+
+// saveToDisk saves all persisted data to the JSON file (acquires lock).
+func (m *memStore) saveToDisk() error {
+	if m.jsonPath == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.writeJSONLocked()
+}
+
+// saveToDiskLocked saves without acquiring the lock (caller must hold m.mu).
+func (m *memStore) saveToDiskLocked() error {
+	if m.jsonPath == "" {
+		return nil
+	}
+	return m.writeJSONLocked()
+}
+
+func (m *memStore) writeJSONLocked() error {
+	pricing := make([]ModelPricing, 0, len(m.pricing))
+	for _, p := range m.pricing {
+		pricing = append(pricing, p)
+	}
+	configs := make([]LLMConfig, 0, len(m.llmConfigs))
+	for _, c := range m.llmConfigs {
+		configs = append(configs, c)
+	}
+	results := make([]DiagnosisResult, 0, len(m.diagnosisResults))
+	for _, d := range m.diagnosisResults {
+		results = append(results, *d)
+	}
+
+	pd := persistedMemData{
+		ModelPricing:     pricing,
+		LLMConfigs:       configs,
+		DiagnosisResults: results,
+	}
+	data, err := json.MarshalIndent(pd, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal memstore: %w", err)
+	}
+	return os.WriteFile(m.jsonPath, data, 0644)
 }
 
 // containsSubstring does a simple case-insensitive substring match.

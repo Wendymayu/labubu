@@ -10,7 +10,7 @@ import (
 )
 
 // NewRouter creates the HTTP handler with API routes and static file serving.
-func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler, sessionHandler *SessionHandler, logHandler *LogHandler, pricingHandler *PricingHandler, llmConfigHandler *LLMConfigHandler, alertHandler http.Handler) http.Handler {
+func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashboardHandler *DashboardHandler, sessionHandler *SessionHandler, logHandler *LogHandler, pricingHandler *PricingHandler, llmConfigHandler *LLMConfigHandler, alertHandler http.Handler, costHandler *CostHandler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes.
@@ -21,7 +21,23 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 			traceHandler.ListTraces(w, r)
 			return
 		}
-		traceIDHex := strings.TrimPrefix(path, "/")
+		path = strings.TrimPrefix(path, "/")
+		parts := strings.SplitN(path, "/", 2)
+		traceIDHex := parts[0]
+		if len(parts) == 2 {
+			switch parts[1] {
+			case "diagnosis":
+				if r.Method == http.MethodGet {
+					traceHandler.GetDiagnosis(w, r, traceIDHex)
+					return
+				}
+			case "diagnose":
+				if r.Method == http.MethodPost {
+					traceHandler.DiagnoseTrace(w, r, traceIDHex)
+					return
+				}
+			}
+		}
 		traceHandler.GetTrace(w, r, traceIDHex)
 	})
 	mux.HandleFunc("/api/v1/services", traceHandler.GetServices)
@@ -85,6 +101,12 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 	if alertHandler != nil {
 		mux.HandleFunc("/api/v1/alerts/", alertHandler.ServeHTTP)
 		mux.HandleFunc("/api/v1/alerts", alertHandler.ServeHTTP)
+	}
+
+	// API routes — cost summary.
+	if costHandler != nil {
+		mux.HandleFunc("/api/v1/cost-summary/", costHandler.ServeHTTP)
+		mux.HandleFunc("/api/v1/cost-summary", costHandler.ServeHTTP)
 	}
 
 	// Health check.

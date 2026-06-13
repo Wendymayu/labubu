@@ -89,3 +89,17 @@ CREATE TABLE IF NOT EXISTS llm_configs (
 )
 ENGINE = MergeTree
 ORDER BY id;
+
+CREATE TABLE IF NOT EXISTS diagnosis_results (
+    trace_id        FixedString(16),
+    model_name      String,
+    scores          String,
+    overall_score   UInt8,
+    findings        String,
+    summary         String,
+    spans_snapshot  String,
+    raw_response    String,
+    created_at      DateTime64(3)
+)
+ENGINE = MergeTree
+ORDER BY trace_id;

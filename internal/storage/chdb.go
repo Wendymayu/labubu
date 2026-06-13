@@ -584,6 +584,25 @@ func (s *chDBStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error
 	return s.execSQL(updateSQL)
 }
 
+func (s *chDBStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*DiagnosisResult, error) {
+	_ = ctx
+	sql := buildDiagnosisResultSelectSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get diagnosis result: %w", err)
+	}
+	return parseDiagnosisResult(result)
+}
+
+func (s *chDBStore) UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error {
+	_ = ctx
+	// Delete existing row first (MergeTree doesn't support real UPSERT).
+	deleteSQL := buildDiagnosisResultDeleteSQL(result.TraceID)
+	s.execSQL(deleteSQL) // ignore error — row may not exist
+	insertSQL := buildDiagnosisResultInsertSQL(*result)
+	return s.execSQL(insertSQL)
+}
+
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
 		C.chdb_close(s.conn)
@@ -935,6 +954,59 @@ func parseModelPricing(result string) ([]ModelPricing, error) {
 		items = append(items, p)
 	}
 	return items, nil
+}
+
+func parseDiagnosisResult(result string) (*DiagnosisResult, error) {
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			TraceIDHex    string    `json:"trace_id_hex"`
+			ModelName     string    `json:"model_name"`
+			Scores        string    `json:"scores"`
+			OverallScore  uint8     `json:"overall_score"`
+			Findings      string    `json:"findings"`
+			Summary       string    `json:"summary"`
+			SpansSnapshot string    `json:"spans_snapshot"`
+			RawResponse   string    `json:"raw_response"`
+			CreatedAt     time.Time `json:"created_at"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			return nil, fmt.Errorf("parse diagnosis result: %w (line: %s)", err, line)
+		}
+
+		var scores DiagnosisScores
+		if err := json.Unmarshal([]byte(raw.Scores), &scores); err != nil {
+			return nil, fmt.Errorf("parse diagnosis scores: %w", err)
+		}
+
+		var findings []DiagnosisFinding
+		if err := json.Unmarshal([]byte(raw.Findings), &findings); err != nil {
+			return nil, fmt.Errorf("parse diagnosis findings: %w", err)
+		}
+
+		traceIDBytes, err := hex.DecodeString(raw.TraceIDHex)
+		if err != nil {
+			return nil, fmt.Errorf("decode trace_id: %w", err)
+		}
+		var traceID [16]byte
+		copy(traceID[:], traceIDBytes)
+
+		return &DiagnosisResult{
+			TraceID:       traceID,
+			TraceIDHex:    raw.TraceIDHex,
+			ModelName:     raw.ModelName,
+			Scores:        scores,
+			OverallScore:  raw.OverallScore,
+			Findings:      findings,
+			Summary:       raw.Summary,
+			SpansSnapshot: raw.SpansSnapshot,
+			RawResponse:   raw.RawResponse,
+			CreatedAt:     raw.CreatedAt,
+		}, nil
+	}
+	return nil, nil // no diagnosis found
 }
 
 func mapToSpanDetail(raw map[string]interface{}) SpanDetail {

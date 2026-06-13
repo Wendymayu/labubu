@@ -8,6 +8,17 @@ export function formatCost(cost: number | null | undefined, currency?: string): 
   return `${symbol}${cost.toFixed(2)}`
 }
 
+export function formatNumber(n: number | null | undefined): string {
+  if (n == null) return '-'
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`
+  }
+  if (n >= 1_000) {
+    return `${(n / 1_000).toFixed(1)}K`
+  }
+  return n.toString()
+}
+
 export function highlightJSON(raw: string): string {
   try {
     const parsed = JSON.parse(raw)

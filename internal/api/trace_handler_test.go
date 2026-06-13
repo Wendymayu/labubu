@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,11 +15,17 @@ import (
 
 // mockStore is a minimal Store implementation for handler testing.
 type handlerMockStore struct {
-	traces    *storage.TraceListResult
-	detail    *storage.TraceDetail
-	services  []string
-	listErr   error
-	detailErr error
+	traces            *storage.TraceListResult
+	detail            *storage.TraceDetail
+	services          []string
+	listErr           error
+	detailErr         error
+	costSummary       *storage.CostSummaryResult
+	costSummaryErr    error
+	llmConfigs        []storage.LLMConfig
+	llmConfigsErr     error
+	diagnosisResult   *storage.DiagnosisResult
+	diagnosisResultErr error
 }
 
 func (m *handlerMockStore) InsertSpans(ctx context.Context, r storage.ResourceInfo, s storage.ScopeInfo, spans []storage.Span) error {
@@ -62,7 +69,7 @@ func (m *handlerMockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte)
 func (m *handlerMockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
 
 func (m *handlerMockStore) GetLLMConfigs(ctx context.Context) ([]storage.LLMConfig, error) {
-	return nil, fmt.Errorf("not implemented")
+	return m.llmConfigs, m.llmConfigsErr
 }
 func (m *handlerMockStore) CreateLLMConfig(ctx context.Context, c *storage.LLMConfig) error {
 	return fmt.Errorf("not implemented")
@@ -86,8 +93,19 @@ func (m *handlerMockStore) DeleteModelPricing(ctx context.Context, modelName str
 func (m *handlerMockStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error {
 	return fmt.Errorf("not implemented")
 }
+func (m *handlerMockStore) GetCostSummary(ctx context.Context, q storage.CostQuery) (*storage.CostSummaryResult, error) {
+	return m.costSummary, m.costSummaryErr
+}
 
 func (m *handlerMockStore) Close() error { return nil }
+
+func (m *handlerMockStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*storage.DiagnosisResult, error) {
+	return m.diagnosisResult, m.diagnosisResultErr
+}
+
+func (m *handlerMockStore) UpsertDiagnosisResult(ctx context.Context, result *storage.DiagnosisResult) error {
+	return nil
+}
 
 func TestListTraces(t *testing.T) {
 	store := &handlerMockStore{
@@ -137,6 +155,111 @@ func TestGetTraceBadID(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	handler.GetTrace(rec, req, "short")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for short id, got %d", rec.Code)
+	}
+}
+
+func TestGetDiagnosisNoResult(t *testing.T) {
+	store := &handlerMockStore{
+		diagnosisResult: nil,
+	}
+	handler := NewTraceHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/a1b2c3d4e5f600000000000000000000/diagnosis", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetDiagnosis(rec, req, "a1b2c3d4e5f600000000000000000000")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["error"] != "no_diagnosis" {
+		t.Errorf("expected 'no_diagnosis', got '%s'", body["error"])
+	}
+}
+
+func TestGetDiagnosisCached(t *testing.T) {
+	var tid [16]byte
+	b, _ := hex.DecodeString("a1b2c3d4e5f600000000000000000000")
+	copy(tid[:], b)
+
+	store := &handlerMockStore{
+		diagnosisResult: &storage.DiagnosisResult{
+			TraceID:      tid,
+			TraceIDHex:   "a1b2c3d4e5f600000000000000000000",
+			ModelName:    "test-model",
+			OverallScore: 85,
+			Scores:       storage.DiagnosisScores{Latency: 90, Cost: 80, Error: 85, Efficiency: 85},
+			Summary:      "all good",
+		},
+		detail: nil, // staleness check skipped when trace not found
+	}
+	handler := NewTraceHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/a1b2c3d4e5f600000000000000000000/diagnosis", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetDiagnosis(rec, req, "a1b2c3d4e5f600000000000000000000")
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result storage.DiagnosisResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if result.OverallScore != 85 {
+		t.Errorf("expected overall_score 85, got %d", result.OverallScore)
+	}
+}
+
+func TestDiagnoseTraceNoDefaultModel(t *testing.T) {
+	var tid [16]byte
+	b, _ := hex.DecodeString("a1b2c3d4e5f600000000000000000000")
+	copy(tid[:], b)
+
+	store := &handlerMockStore{
+		detail: &storage.TraceDetail{
+			TraceIDHex: "a1b2c3d4e5f600000000000000000000",
+			SpanCount:  1,
+			Spans:      []storage.SpanDetail{{SpanID: "abc", Name: "test", Status: "OK", DurationMS: 100}},
+		},
+		llmConfigs: []storage.LLMConfig{
+			{ID: "1", ModelName: "test", IsDefault: false},
+		},
+	}
+	handler := NewTraceHandler(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/traces/a1b2c3d4e5f600000000000000000000/diagnose", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiagnoseTrace(rec, req, "a1b2c3d4e5f600000000000000000000")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]string
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["error"] != "no_default_model" {
+		t.Errorf("expected 'no_default_model', got '%s'", body["error"])
+	}
+}
+
+func TestDiagnoseTraceBadID(t *testing.T) {
+	store := &handlerMockStore{}
+	handler := NewTraceHandler(store)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/traces/short/diagnose", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiagnoseTrace(rec, req, "short")
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for short id, got %d", rec.Code)

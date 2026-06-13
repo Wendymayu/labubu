@@ -15,12 +15,17 @@ import (
 
 // PanelConfig is the stored configuration for a single dashboard panel.
 type PanelConfig struct {
-	ID        string            `json:"id"`
-	Title     string            `json:"title"`
-	Metric    string            `json:"metric"`
-	Labels    map[string]string `json:"labels"`
-	ChartType string            `json:"chartType"`
-	Step      int               `json:"step,omitempty"`
+	ID              string            `json:"id"`
+	Title           string            `json:"title"`
+	ExpressionType  string            `json:"expressionType"`            // "single" | "ratio"
+	Metric          string            `json:"metric"`                    // Single: main metric; Ratio: denominator
+	NumeratorMetric string            `json:"numeratorMetric,omitempty"` // Ratio: numerator
+	Labels          map[string]string `json:"labels"`
+	Func            string            `json:"func"`                      // "none" | "rate" | "increase"
+	Aggregation     string            `json:"aggregation"`               // "none" | "sum" | "avg" | "max" | "min"
+	GroupBy         string            `json:"groupBy,omitempty"`         // label key for aggregation grouping
+	ChartType       string            `json:"chartType"`
+	Step            int               `json:"step,omitempty"`
 }
 
 // Dashboard represents a named container of panels.
@@ -358,22 +363,50 @@ func (h *DashboardHandler) deleteDashboard(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// validatePanelConfig checks required fields and enum values, applying defaults
+// where appropriate. It returns an error describing the first validation failure.
+func validatePanelConfig(pc *PanelConfig) error {
+	if pc.Title == "" {
+		return fmt.Errorf("title is required")
+	}
+	if pc.Metric == "" {
+		return fmt.Errorf("metric is required")
+	}
+	if pc.ExpressionType == "" {
+		pc.ExpressionType = "single"
+	}
+	if pc.ExpressionType != "single" && pc.ExpressionType != "ratio" {
+		return fmt.Errorf("expressionType must be single or ratio")
+	}
+	if pc.ExpressionType == "ratio" && pc.NumeratorMetric == "" {
+		return fmt.Errorf("numeratorMetric is required for ratio expressions")
+	}
+	if pc.Func == "" {
+		pc.Func = "none"
+	}
+	if pc.Func != "none" && pc.Func != "rate" && pc.Func != "increase" {
+		return fmt.Errorf("func must be none, rate, or increase")
+	}
+	if pc.Aggregation == "" {
+		pc.Aggregation = "none"
+	}
+	if pc.Aggregation != "none" && pc.Aggregation != "sum" && pc.Aggregation != "avg" && pc.Aggregation != "max" && pc.Aggregation != "min" {
+		return fmt.Errorf("aggregation must be none, sum, avg, max, or min")
+	}
+	if pc.ChartType != "line" && pc.ChartType != "bar" && pc.ChartType != "stat" {
+		return fmt.Errorf("chartType must be line, bar, or stat")
+	}
+	return nil
+}
+
 func (h *DashboardHandler) createPanel(w http.ResponseWriter, r *http.Request, dashboardID string) {
 	var pc PanelConfig
 	if err := json.NewDecoder(r.Body).Decode(&pc); err != nil {
 		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
-	if pc.Title == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
-		return
-	}
-	if pc.Metric == "" {
-		http.Error(w, "metric is required", http.StatusBadRequest)
-		return
-	}
-	if pc.ChartType != "line" && pc.ChartType != "bar" && pc.ChartType != "stat" {
-		http.Error(w, "chartType must be line, bar, or stat", http.StatusBadRequest)
+	if err := validatePanelConfig(&pc); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -392,6 +425,10 @@ func (h *DashboardHandler) updatePanel(w http.ResponseWriter, r *http.Request, d
 	var pc PanelConfig
 	if err := json.NewDecoder(r.Body).Decode(&pc); err != nil {
 		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+	if err := validatePanelConfig(&pc); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
