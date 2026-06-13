@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -115,4 +116,82 @@ func TestGetSessionEmptyID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for empty session_id, got %d", rec.Code)
 	}
+}
+
+func TestGetAgentStats(t *testing.T) {
+	tests := []struct {
+		name       string
+		sessionID  string
+		stats      *storage.AgentStats
+		statsErr   error
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:      "success",
+			sessionID: "sess-1",
+			stats: &storage.AgentStats{
+				TraceSuccessRate:   0.75,
+				AvgToolSuccessRate: 0.92,
+				ToolUsage:          []storage.ToolUsageItem{{ToolName: "file_read", CallCount: 10, SuccessRate: 1.0}},
+				Insights:           []string{"file_read is reliable"},
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "no data",
+			sessionID:  "sess-2",
+			stats:      nil,
+			wantStatus: http.StatusNotFound,
+			wantBody:   "no_agent_data",
+		},
+		{
+			name:       "store error",
+			sessionID:  "sess-3",
+			statsErr:   fmt.Errorf("db error"),
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &agentStatsMockStore{
+				handlerMockStore: handlerMockStore{},
+				agentStats:    tt.stats,
+				agentStatsErr: tt.statsErr,
+			}
+			handler := NewSessionHandler(store)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+tt.sessionID+"/agent-stats", nil)
+			rec := httptest.NewRecorder()
+			handler.GetAgentStats(rec, req, tt.sessionID)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status: got %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantBody != "" {
+				var resp map[string]string
+				json.Unmarshal(rec.Body.Bytes(), &resp)
+				if resp["error"] != tt.wantBody {
+					t.Errorf("error: got %v, want %v", resp["error"], tt.wantBody)
+				}
+			}
+			if tt.stats != nil {
+				var result storage.AgentStats
+				json.Unmarshal(rec.Body.Bytes(), &result)
+				if result.TraceSuccessRate != tt.stats.TraceSuccessRate {
+					t.Errorf("trace_success_rate: got %v, want %v", result.TraceSuccessRate, tt.stats.TraceSuccessRate)
+				}
+			}
+		})
+	}
+}
+
+type agentStatsMockStore struct {
+	handlerMockStore
+	agentStats    *storage.AgentStats
+	agentStatsErr error
+}
+
+func (m *agentStatsMockStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*storage.AgentStats, error) {
+	return m.agentStats, m.agentStatsErr
 }

@@ -73,6 +73,12 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 				return
 			}
 			sessionID := strings.TrimPrefix(path, "/")
+			// Check for sub-path: agent-stats
+			parts := strings.SplitN(sessionID, "/", 2)
+			if len(parts) == 2 && parts[1] == "agent-stats" {
+				sessionHandler.GetAgentStats(w, r, parts[0])
+				return
+			}
 			sessionHandler.GetSession(w, r, sessionID)
 		})
 		mux.HandleFunc("/api/v1/sessions", sessionHandler.ListSessions)

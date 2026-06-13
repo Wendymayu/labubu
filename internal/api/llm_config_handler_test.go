@@ -1,3 +1,5 @@
+//go:build cgo && local_engine
+
 package api
 
 import (
