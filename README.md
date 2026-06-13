@@ -19,10 +19,10 @@ A local-first LLM observability platform. It receives OTLP traces and metrics fr
 
 ### Prerequisites
 
-- **Go** 1.19+
+- **Go** 1.25+
 - **Node.js** 18+ (frontend development only)
 
-chDB (`libchdb.so`) is optional — the in-memory store works without it for development.
+chDB (`libchdb.so`) is optional — without CGO, use the `nosqlite` build tag for in-memory or SQLite storage.
 
 ### 1. Clone & install
 
@@ -37,8 +37,11 @@ cd web && npm install && cd ..
 ### 2. Start backend
 
 ```bash
-# Dev mode (reads frontend from disk, in-memory storage)
-go run -tags dev ./cmd/labubu serve
+# Dev mode with chDB (requires CGO + local_engine build tag)
+go run -tags "dev local_engine" ./cmd/labubu serve
+
+# Dev mode without chDB (in-memory + SQLite storage, no CGO needed)
+CGO_ENABLED=0 go run -tags "dev nosqlite" ./cmd/labubu serve
 ```
 
 The backend starts at:
@@ -61,8 +64,11 @@ Vite dev server starts at http://localhost:3001 and proxies API requests to `:80
 ### Build a single binary
 
 ```bash
-# Build frontend assets + Go binary
+# Build with chDB (requires CGO)
 make build
+
+# Build without chDB (no CGO, for Windows or CI)
+make build-nocgo
 
 # Binary at bin/labubu
 ./bin/labubu serve
@@ -123,8 +129,8 @@ Quick overview:
 
 | Section | Endpoints |
 |---------|-----------|
-| Traces | `GET /api/v1/traces`, `GET /api/v1/traces/:id`, `POST /api/v1/traces/export`, `GET /api/v1/services` |
-| Sessions | `GET /api/v1/sessions`, `GET /api/v1/sessions/:id` |
+| Traces | `GET /api/v1/traces`, `GET /api/v1/traces/:id`, `POST /api/v1/traces/export`, `GET /api/v1/services`, `GET /api/v1/traces/:id/diagnosis`, `POST /api/v1/traces/:id/diagnose` |
+| Sessions | `GET /api/v1/sessions`, `GET /api/v1/sessions/:id`, `GET /api/v1/sessions/:id/agent-stats` |
 | Logs | `GET /api/v1/logs`, `GET /api/v1/logs/:traceId`, `GET /api/v1/log-event-names` |
 | Metrics | `GET /api/v1/query`, `/query_range`, `/labels`, `/label/:name/values`, `/metadata`, `/metric-names` |
 | Dashboards | Full CRUD at `/api/v1/dashboards` + panels sub-resource |
@@ -135,7 +141,7 @@ Quick overview:
 ## Architecture
 
 ```
-OTLP (gRPC/HTTP) → Receiver → Pipeline → Storage (chDB or in-memory)
+OTLP (gRPC/HTTP) → Receiver → Pipeline → Storage (chDB, SQLite, or in-memory)
                     │                        │
                     ▼                        ▼
                Metric Store           REST API ← Vue 3 SPA
@@ -147,11 +153,14 @@ Detailed project structure: **[docs/project-structure.md](docs/project-structure
 ## Development
 
 ```bash
-# Run all Go tests
+# Run all Go tests (requires CGO)
 make test
 
-# Run tests excluding chDB integration tests
+# Run tests without CGO (recommended for Windows/CI)
 make test-nocgo
+
+# Or run directly:
+CGO_ENABLED=0 go test -tags nosqlite -v ./internal/...
 
 # TypeScript type check
 cd web && npx vue-tsc --noEmit
