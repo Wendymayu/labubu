@@ -41,6 +41,9 @@ export interface SpanDetail {
   output_tokens?: number
   total_tokens?: number
   gen_ai_request_model?: string
+  gen_ai_system?: string       // Attributes["gen_ai.system"]
+  tool_name?: string           // Attributes["gen_ai.tool.name"]
+  is_tool_call: boolean        // tool_name != null
 }
 
 export interface ScopeDetail {
@@ -530,6 +533,31 @@ export async function diagnoseTrace(traceIdHex: string, force?: boolean, locale?
     throw new Error(err.error || `Diagnosis failed: ${res.status}`)
   }
   return res.json()
+}
+
+export interface ToolUsageItem {
+  tool_name: string
+  call_count: number
+  success_rate: number
+  avg_retries: number
+  max_loop: number
+}
+
+export interface AgentStats {
+  trace_success_rate: number
+  avg_tool_success_rate: number
+  avg_retries: number
+  avg_loop_depth: number
+  max_loop_depth: number
+  span_per_trace: number
+  total_tool_calls: number
+  successful_tool_calls: number
+  tool_usage: ToolUsageItem[]
+  insights: string[]
+}
+
+export async function getAgentStats(sessionId: string): Promise<AgentStats> {
+  return get<AgentStats>(`${BASE_URL}/sessions/${sessionId}/agent-stats`)
 }
 
 export async function getLogEventNames(): Promise<string[]> {
