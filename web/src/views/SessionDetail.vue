@@ -44,6 +44,13 @@
         </div>
       </div>
 
+      <!-- Agent Stats Section -->
+      <AgentStatsSection
+        :stats="agentStats"
+        :loading="agentStatsLoading"
+        :error="agentStatsError"
+      />
+
       <!-- Context Window Chart -->
       <div class="ctx-window-section">
         <h3 class="ctx-heading">{{ t('sessionDetail.contextWindow') }}</h3>
@@ -98,7 +105,8 @@ import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '../composables/useTheme'
-import { getSession, type SessionDetail, type QueryResult } from '../api/client'
+import { getSession, getAgentStats, type SessionDetail, type AgentStats, type QueryResult } from '../api/client'
+import AgentStatsSection from '../components/AgentStatsSection.vue'
 import { formatCost } from '../utils/format'
 import {
   Chart, LineController, CategoryScale, LinearScale,
@@ -138,6 +146,11 @@ const detail = ref<SessionDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
 
+// Agent stats state
+const agentStats = ref<AgentStats | null>(null)
+const agentStatsLoading = ref(false)
+const agentStatsError = ref('')
+
 // Context window chart state
 const ctxLoading = ref(false)
 const ctxError = ref('')
@@ -164,6 +177,23 @@ async function fetchSession() {
     error.value = e.message || 'Failed to load session'
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchAgentStats() {
+  if (!route.params.sessionId) return
+  agentStatsLoading.value = true
+  agentStatsError.value = ''
+  try {
+    agentStats.value = await getAgentStats(route.params.sessionId as string)
+  } catch (e: any) {
+    if (e.message === 'no_agent_data') {
+      agentStats.value = null
+    } else {
+      agentStatsError.value = e.message || 'Failed to load agent stats'
+    }
+  } finally {
+    agentStatsLoading.value = false
   }
 }
 
@@ -410,6 +440,7 @@ function errorRateClass(rate: number): string {
 
 onMounted(() => {
   fetchSession()
+  fetchAgentStats()
   setupCtxTooltipListeners()
 })
 
