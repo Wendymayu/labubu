@@ -69,6 +69,9 @@
             <button :class="['tab-btn', { active: activeTab === 'diagnosis' }]" @click="switchTab('diagnosis')">
               {{ t('diagnosis.tab') }}
             </button>
+            <button :class="['tab-btn', { active: activeTab === 'agent' }]" @click="switchTab('agent')">
+              {{ t('agentStats.agentBehavior') }}
+            </button>
           </div>
 
           <div v-if="activeTab === 'logs'" class="log-panel">
@@ -107,6 +110,10 @@
               @diagnose="startDiagnosis"
               @navigate-span="onDiagnosisNavigateSpan"
             />
+          </div>
+
+          <div v-if="activeTab === 'agent'" class="agent-behavior-panel">
+            <AgentBehaviorTab :spans="trace.spans" />
           </div>
         </div>
         </div>
@@ -177,6 +184,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getTrace, getLogsByTrace, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
 import DiagnosisTab from '../components/DiagnosisTab.vue'
+import AgentBehaviorTab from '../components/AgentBehaviorTab.vue'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
@@ -194,7 +202,7 @@ const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
 const traceLogs = ref<LogRecord[]>([])
 const logsLoading = ref(false)
-const activeTab = ref<'spans' | 'logs' | 'diagnosis'>('spans')
+const activeTab = ref<'spans' | 'logs' | 'diagnosis' | 'agent'>('spans')
 const logSpanFilter = ref('')
 const logExpandedIdx = ref<number | null>(null)
 const viewMode = ref<'structured' | 'json'>('structured')
@@ -409,7 +417,7 @@ function clearLogFilter() {
   logSpanFilter.value = ''
 }
 
-function switchTab(tab: 'spans' | 'logs' | 'diagnosis') {
+function switchTab(tab: 'spans' | 'logs' | 'diagnosis' | 'agent') {
   activeTab.value = tab
 }
 
