@@ -22,7 +22,7 @@ A local-first LLM observability platform. It receives OTLP traces and metrics fr
 - **Go** 1.25+
 - **Node.js** 18+ (frontend development only)
 
-chDB (`libchdb.so`) is optional — without CGO, use the `nosqlite` build tag for in-memory or SQLite storage.
+No external database required — SQLite is used by default. chDB (`libchdb.so`) is optional for ClickHouse-compatible storage on Linux/macOS.
 
 ### 1. Clone & install
 
@@ -37,12 +37,10 @@ cd web && npm install && cd ..
 ### 2. Start backend
 
 ```bash
-# Dev mode with chDB (requires CGO + local_engine build tag)
-go run -tags "dev local_engine" ./cmd/labubu serve
-
-# Dev mode without chDB (in-memory + SQLite storage, no CGO needed)
-CGO_ENABLED=0 go run -tags "dev nosqlite" ./cmd/labubu serve
+go run -tags dev ./cmd/labubu serve
 ```
+
+> Uses SQLite storage by default. For chDB (Linux/macOS with CGO): `go run -tags "dev local_engine" ./cmd/labubu serve`
 
 The backend starts at:
 - **API & UI:** http://localhost:8080
@@ -160,7 +158,7 @@ make test
 make test-nocgo
 
 # Or run directly:
-CGO_ENABLED=0 go test -tags nosqlite -v ./internal/...
+go test -tags nosqlite -v ./internal/...
 
 # TypeScript type check
 cd web && npx vue-tsc --noEmit

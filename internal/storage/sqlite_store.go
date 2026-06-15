@@ -1,4 +1,4 @@
-//go:build !cgo && !nosqlite
+//go:build !local_engine && !nosqlite
 
 // Package storage provides a pure-Go SQLite Store implementation for non-CGO builds.
 // Uses modernc.org/sqlite (no CGO required) with WAL mode for concurrent reads.
@@ -107,7 +107,8 @@ func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, sc
 		traceIDHex := TraceIDToHex(traceID)
 
 		// Check if trace already exists — merge with existing data
-		var existingSpanCount, existingStartMS, existingEndMS int
+		var existingSpanCount int
+	var existingStartMS, existingEndMS int64
 		var existingRootSpanID, existingRootName, existingSessionID string
 		var existingTotalTokens sql.NullInt32
 		var existingCost sql.NullFloat64

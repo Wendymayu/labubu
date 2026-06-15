@@ -1,4 +1,4 @@
-//go:build !cgo && nosqlite
+//go:build !local_engine && nosqlite
 
 // Package storage provides an in-memory Store implementation for non-CGO builds
 // with nosqlite tag. By default, non-CGO builds use SQLite Store instead.

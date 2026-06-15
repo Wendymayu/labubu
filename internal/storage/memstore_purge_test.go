@@ -1,4 +1,4 @@
-//go:build !cgo && nosqlite
+//go:build !local_engine && nosqlite
 
 package storage
 
