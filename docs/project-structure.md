@@ -32,8 +32,11 @@ internal/
 │   ├── dashboard_handler_test.go
 │   ├── log_handler.go           # Log list, by-trace, event names
 │   ├── pricing_handler.go       # Model pricing CRUD + recalc
-│   ├── llm_config_handler.go    # LLM model config CRUD + default management
+│   ├── llm_config_handler.go    # LLM model config CRUD + default + provider_type validation
 │   ├── llm_config_handler_test.go
+│   ├── diagnosis_llm.go          # Multi-provider LLM diagnosis: dispatcher, OpenAI adapter, Anthropic adapter
+│   ├── diagnosis_llm_test.go     # Tests for dispatcher, polymorphic content, Anthropic adapter
+│   ├── diagnosis_prompt.go       # Diagnosis prompt builder (system + user, i18n locale)
 │   └── otlp_trace.go            # OTLP trace conversion utilities
 ├── receiver/                    # OTLP ingestion
 │   ├── grpc_receiver.go         # gRPC receiver (port 4317)
@@ -41,9 +44,11 @@ internal/
 ├── pipeline/                    # Async batch processing with backpressure
 │   └── pipeline.go              # Buffer + flush-interval pipeline
 ├── storage/                     # Trace storage
-│   ├── storage.go               # Store interface + model types (Trace, Span, LLMConfig, etc.)
+│   ├── storage.go               # Store interface + model types (Trace, Span, LLMConfig with provider_type, etc.)
 │   ├── chdb.go                  # chDB CGO implementation (production)
 │   ├── chdb_query.go            # SQL query builder for chDB
+│   ├── sqlite_store.go          # SQLite store (WAL mode, provider_type migration)
+│   ├── sqlite_schema.sql        # SQLite DDL schema
 │   ├── memstore.go              # In-memory store (dev fallback, no CGO needed)
 │   ├── memstore_purge_test.go   # Retention purge tests
 │   ├── config.go                # YAML config loading + retention settings
@@ -78,7 +83,10 @@ web/
     │   ├── PanelChart.vue       # Dashboard panel chart (line/bar/stat)
     │   ├── PanelForm.vue        # Dashboard panel editor
     │   ├── ThemeToggle.vue      # Dark/light mode toggle
-    │   └── LanguageToggle.vue   # Chinese/English language toggle
+    │   ├── LanguageToggle.vue   # Chinese/English language toggle
+    │   ├── DiagnosisTab.vue     # LLM diagnosis result panel
+    │   ├── AgentBehaviorTab.vue # Agent behavior analysis (tool chain, loop detection)
+    │   └── AgentStatsSection.vue# Agent stats overview cards + tool usage breakdown
     ├── views/
     │   ├── TraceList.vue        # Trace explorer (search, filter, paginate)
     │   ├── TraceDetail.vue      # Single trace detail (waterfall + metadata)

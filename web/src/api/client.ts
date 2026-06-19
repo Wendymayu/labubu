@@ -335,6 +335,7 @@ export async function getCostSummary(period: string): Promise<CostSummary> {
 export interface LlmConfig {
   id: string
   model_name: string
+  provider_type: string // "openai" or "anthropic"
   provider_url: string
   api_key: string
   is_default: boolean

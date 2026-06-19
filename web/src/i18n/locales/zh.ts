@@ -203,4 +203,9 @@ costDashboard: {
     avgRetriesCol: '平均重试',
     maxLoop: '最大循环',
   },
+  llmConfig: {
+    providerType: '提供商类型',
+    providerTypeOpenai: 'OpenAI 兼容',
+    providerTypeAnthropic: 'Anthropic',
+  },
 }

@@ -74,7 +74,14 @@ func (h *LLMConfigHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "model_name, provider_url, and api_key are required"})
 		return
 	}
+	if c.ProviderType != "" && c.ProviderType != "openai" && c.ProviderType != "anthropic" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider_type must be 'openai' or 'anthropic'"})
+		return
+	}
 	// Set defaults.
+	if c.ProviderType == "" {
+		c.ProviderType = "openai"
+	}
 	if c.Temperature == 0 {
 		c.Temperature = 0.7
 	}

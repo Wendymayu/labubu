@@ -203,4 +203,9 @@ costDashboard: {
     avgRetriesCol: 'Avg Retries',
     maxLoop: 'Max Loop',
   },
+  llmConfig: {
+    providerType: 'Provider Type',
+    providerTypeOpenai: 'OpenAI Compatible',
+    providerTypeAnthropic: 'Anthropic',
+  },
 }

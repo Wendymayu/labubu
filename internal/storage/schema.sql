@@ -78,17 +78,20 @@ ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost Nullable(Float64);
 ALTER TABLE traces ADD COLUMN IF NOT EXISTS cost_currency String DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS llm_configs (
-    id           String,
-    model_name   String,
-    provider_url String,
-    api_key      String,
-    is_default   UInt8,
-    temperature  Float64,
-    max_tokens   Int32,
-    updated_at   DateTime DEFAULT now()
+    id            String,
+    model_name    String,
+    provider_type String DEFAULT 'openai',
+    provider_url  String,
+    api_key       String,
+    is_default    UInt8,
+    temperature   Float64,
+    max_tokens    Int32,
+    updated_at    DateTime DEFAULT now()
 )
 ENGINE = MergeTree
 ORDER BY id;
+
+ALTER TABLE llm_configs ADD COLUMN IF NOT EXISTS provider_type String DEFAULT 'openai';
 
 CREATE TABLE IF NOT EXISTS diagnosis_results (
     trace_id        FixedString(16),

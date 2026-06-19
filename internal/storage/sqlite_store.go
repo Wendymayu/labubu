@@ -54,6 +54,9 @@ func NewChDBStore(dataDir string) (Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
+	// Migrate: add provider_type column to existing llm_configs tables.
+	db.Exec(`ALTER TABLE llm_configs ADD COLUMN provider_type TEXT NOT NULL DEFAULT 'openai'`)
+
 	s := &sqliteStore{db: db, dir: dataDir}
 
 	// Seed default pricing from config (same as memStore/chDB)
@@ -799,7 +802,7 @@ func (s *sqliteStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
 	defer s.mu.Unlock()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, model_name, provider_url, api_key, is_default, temperature, max_tokens
+		`SELECT id, model_name, provider_type, provider_url, api_key, is_default, temperature, max_tokens
 		 FROM llm_configs ORDER BY model_name`,
 	)
 	if err != nil {
@@ -811,12 +814,10 @@ func (s *sqliteStore) GetLLMConfigs(ctx context.Context) ([]LLMConfig, error) {
 	for rows.Next() {
 		var c LLMConfig
 		var isDefault int
-		if err := rows.Scan(&c.ID, &c.ModelName, &c.ProviderURL, &c.APIKey, &isDefault, &c.Temperature, &c.MaxTokens); err != nil {
+		if err := rows.Scan(&c.ID, &c.ModelName, &c.ProviderType, &c.ProviderURL, &c.APIKey, &isDefault, &c.Temperature, &c.MaxTokens); err != nil {
 			return nil, fmt.Errorf("scan llm config: %w", err)
 		}
 		c.IsDefault = isDefault != 0
-		// Mask API key for display
-		c.APIKey = MaskAPIKey(c.APIKey)
 		configs = append(configs, c)
 	}
 	return configs, nil
@@ -840,9 +841,9 @@ func (s *sqliteStore) CreateLLMConfig(ctx context.Context, c *LLMConfig) error {
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO llm_configs (id, model_name, provider_url, api_key, is_default, temperature, max_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.ModelName, c.ProviderURL, c.APIKey, isDefault, c.Temperature, c.MaxTokens,
+		`INSERT INTO llm_configs (id, model_name, provider_type, provider_url, api_key, is_default, temperature, max_tokens)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.ModelName, c.ProviderType, c.ProviderURL, c.APIKey, isDefault, c.Temperature, c.MaxTokens,
 	)
 	return err
 }
@@ -876,9 +877,9 @@ func (s *sqliteStore) UpdateLLMConfig(ctx context.Context, c *LLMConfig) error {
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE llm_configs SET model_name=?, provider_url=?, api_key=?, is_default=?, temperature=?, max_tokens=?
+		`UPDATE llm_configs SET model_name=?, provider_type=?, provider_url=?, api_key=?, is_default=?, temperature=?, max_tokens=?
 		 WHERE id=?`,
-		c.ModelName, c.ProviderURL, apiKey, isDefault, c.Temperature, c.MaxTokens, c.ID,
+		c.ModelName, c.ProviderType, c.ProviderURL, apiKey, isDefault, c.Temperature, c.MaxTokens, c.ID,
 	)
 	return err
 }

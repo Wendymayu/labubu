@@ -262,13 +262,14 @@ type ModelPricing struct {
 
 // LLMConfig holds configuration for a single LLM model used for trace analysis.
 type LLMConfig struct {
-	ID          string  `json:"id"`
-	ModelName   string  `json:"model_name"`
-	ProviderURL string  `json:"provider_url"`
-	APIKey      string  `json:"api_key"`     // plaintext at rest, masked on GET
-	IsDefault   bool    `json:"is_default"`
-	Temperature float64 `json:"temperature"` // default 0.7
-	MaxTokens   int     `json:"max_tokens"`  // default 4096
+	ID           string  `json:"id"`
+	ModelName    string  `json:"model_name"`
+	ProviderType string  `json:"provider_type"` // "openai" or "anthropic", default "openai"
+	ProviderURL  string  `json:"provider_url"`
+	APIKey       string  `json:"api_key"`     // plaintext at rest, masked on GET
+	IsDefault    bool    `json:"is_default"`
+	Temperature  float64 `json:"temperature"` // default 0.7
+	MaxTokens    int     `json:"max_tokens"`  // default 4096
 }
 
 // MaskAPIKey truncates an API key for display: shows first 3 and last 2 chars

@@ -26,9 +26,10 @@ func TestLLMConfigHandler_CreateAndList(t *testing.T) {
 
 	// Create a config.
 	createBody := map[string]interface{}{
-		"model_name":   "claude-opus-4-8",
-		"provider_url": "https://api.anthropic.com/v1/messages",
-		"api_key":      "sk-ant-full-key-12345",
+		"model_name":    "claude-opus-4-8",
+		"provider_type": "anthropic",
+		"provider_url":  "https://api.anthropic.com/v1/messages",
+		"api_key":       "sk-ant-full-key-12345",
 	}
 	rec, req := doJSON(t, http.MethodPost, "/api/v1/llm-configs", createBody)
 	handler.ServeHTTP(rec, req)
@@ -57,6 +58,9 @@ func TestLLMConfigHandler_CreateAndList(t *testing.T) {
 	}
 	if created.MaxTokens != 4096 {
 		t.Fatalf("expected max_tokens 4096, got %d", created.MaxTokens)
+	}
+	if created.ProviderType != "anthropic" {
+		t.Fatalf("expected provider_type anthropic, got %s", created.ProviderType)
 	}
 
 	// List configs.
@@ -108,11 +112,12 @@ func TestLLMConfigHandler_UpdateAndDelete(t *testing.T) {
 
 	// Create a config first.
 	createBody := map[string]interface{}{
-		"model_name":   "original-name",
-		"provider_url": "https://original.example.com",
-		"api_key":      "sk-original-key-123",
-		"temperature":  0.5,
-		"max_tokens":   2048,
+		"model_name":    "original-name",
+		"provider_type": "openai",
+		"provider_url":  "https://original.example.com",
+		"api_key":       "sk-original-key-123",
+		"temperature":   0.5,
+		"max_tokens":    2048,
 	}
 	rec, req := doJSON(t, http.MethodPost, "/api/v1/llm-configs", createBody)
 	handler.ServeHTTP(rec, req)
@@ -122,12 +127,13 @@ func TestLLMConfigHandler_UpdateAndDelete(t *testing.T) {
 
 	// Update the config.
 	updateBody := map[string]interface{}{
-		"model_name":   "updated-name",
-		"provider_url": "https://updated.example.com",
-		"api_key":      "***", // masked sentinel — store retains existing
-		"temperature":  1.0,
-		"max_tokens":   8192,
-		"is_default":   true,
+		"model_name":    "updated-name",
+		"provider_type": "anthropic",
+		"provider_url":  "https://updated.example.com",
+		"api_key":       "***", // masked sentinel — store retains existing
+		"temperature":   1.0,
+		"max_tokens":    8192,
+		"is_default":    true,
 	}
 	rec2, req2 := doJSON(t, http.MethodPut, "/api/v1/llm-configs/"+created.ID, updateBody)
 	handler.ServeHTTP(rec2, req2)
@@ -229,5 +235,21 @@ func TestLLMConfigHandler_MethodNotAllowed(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestLLMConfigHandler_InvalidProviderType(t *testing.T) {
+	handler := setupLLMConfigHandler(t)
+
+	body := map[string]interface{}{
+		"model_name":    "test-model",
+		"provider_type": "azure",
+		"provider_url":  "https://example.com",
+		"api_key":       "sk-key-test",
+	}
+	rec, req := doJSON(t, http.MethodPost, "/api/v1/llm-configs", body)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid provider_type, got %d", rec.Code)
 	}
 }

@@ -14,8 +14,14 @@
         <label>Model Name:
           <input v-model="form.model_name" placeholder="claude-opus-4-8" />
         </label>
+        <label>{{ t('llmConfig.providerType') }}:
+          <select v-model="form.provider_type">
+            <option value="openai">{{ t('llmConfig.providerTypeOpenai') }}</option>
+            <option value="anthropic">{{ t('llmConfig.providerTypeAnthropic') }}</option>
+          </select>
+        </label>
         <label>Provider URL:
-          <input v-model="form.provider_url" placeholder="https://api.anthropic.com/v1/messages" />
+          <input v-model="form.provider_url" :placeholder="form.provider_type === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions'" />
         </label>
         <label>API Key:
           <input v-model="form.api_key" :placeholder="editing ? '(unchanged)' : 'sk-ant-...'" />
@@ -46,6 +52,7 @@
       <thead>
         <tr>
           <th>Model Name</th>
+          <th>{{ t('llmConfig.providerType') }}</th>
           <th>Provider URL</th>
           <th>API Key</th>
           <th>Default</th>
@@ -57,6 +64,7 @@
       <tbody>
         <tr v-for="c in configs" :key="c.id">
           <td>{{ c.model_name }}</td>
+          <td>{{ c.provider_type === 'anthropic' ? t('llmConfig.providerTypeAnthropic') : t('llmConfig.providerTypeOpenai') }}</td>
           <td class="url-cell">{{ c.provider_url }}</td>
           <td><code>{{ c.api_key }}</code></td>
           <td>
@@ -81,10 +89,13 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { LlmConfig } from '../api/client'
 import {
   listLlmConfigs, createLlmConfig, updateLlmConfig, deleteLlmConfig,
 } from '../api/client'
+
+const { t } = useI18n()
 
 const configs = ref<LlmConfig[]>([])
 const showForm = ref(false)
@@ -94,6 +105,7 @@ const saveError = ref('')
 
 const form = reactive<Omit<LlmConfig, 'id'> & { id?: string }>({
   model_name: '',
+  provider_type: 'openai',
   provider_url: '',
   api_key: '',
   is_default: false,
@@ -113,6 +125,7 @@ async function loadConfigs() {
 function openAdd() {
   editing.value = null
   form.model_name = ''
+  form.provider_type = 'openai'
   form.provider_url = ''
   form.api_key = ''
   form.is_default = false
@@ -126,6 +139,7 @@ function openAdd() {
 function editConfig(c: LlmConfig) {
   editing.value = c
   form.model_name = c.model_name
+  form.provider_type = c.provider_type || 'openai'
   form.provider_url = c.provider_url
   form.api_key = '***'
   form.is_default = c.is_default
@@ -253,6 +267,13 @@ onMounted(loadConfigs)
   font-size: 13px;
 }
 .form-box input {
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.form-box select {
   padding: 6px 10px;
   border: 1px solid var(--border-default);
   border-radius: 4px;

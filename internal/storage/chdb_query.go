@@ -549,7 +549,7 @@ func isZeroSpanID(id [8]byte) bool {
 
 // buildLLMConfigSelectSQL builds a query to fetch all LLM config entries.
 func buildLLMConfigSelectSQL() string {
-	return `SELECT id, model_name, provider_url, api_key, is_default, temperature, max_tokens FROM llm_configs ORDER BY model_name`
+	return `SELECT id, model_name, provider_type, provider_url, api_key, is_default, temperature, max_tokens FROM llm_configs ORDER BY model_name`
 }
 
 // buildLLMConfigInsertSQL builds an INSERT for a new LLM config entry.
@@ -559,8 +559,8 @@ func buildLLMConfigInsertSQL(c LLMConfig) string {
 		isDefault = 1
 	}
 	return fmt.Sprintf(
-		`INSERT INTO llm_configs (id, model_name, provider_url, api_key, is_default, temperature, max_tokens) VALUES ('%s', '%s', '%s', '%s', %d, %f, %d)`,
-		escapeSQL(c.ID), escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens,
+		`INSERT INTO llm_configs (id, model_name, provider_type, provider_url, api_key, is_default, temperature, max_tokens) VALUES ('%s', '%s', '%s', '%s', '%s', %d, %f, %d)`,
+		escapeSQL(c.ID), escapeSQL(c.ModelName), escapeSQL(c.ProviderType), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens,
 	)
 }
 
@@ -571,8 +571,8 @@ func buildLLMConfigUpdateSQL(c LLMConfig) string {
 		isDefault = 1
 	}
 	return fmt.Sprintf(
-		`ALTER TABLE llm_configs UPDATE model_name = '%s', provider_url = '%s', api_key = '%s', is_default = %d, temperature = %f, max_tokens = %d, updated_at = now() WHERE id = '%s'`,
-		escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens, escapeSQL(c.ID),
+		`ALTER TABLE llm_configs UPDATE model_name = '%s', provider_type = '%s', provider_url = '%s', api_key = '%s', is_default = %d, temperature = %f, max_tokens = %d, updated_at = now() WHERE id = '%s'`,
+		escapeSQL(c.ModelName), escapeSQL(c.ProviderType), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens, escapeSQL(c.ID),
 	)
 }
 

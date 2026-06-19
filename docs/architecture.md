@@ -1,6 +1,6 @@
 # Labubu 项目架构文档
 
-> 最后更新：2026-06-12
+> 最后更新：2026-06-17
 
 ## 整体架构概览
 
@@ -223,7 +223,7 @@ labubu serve [flags]
         │  Session 域    │  ListSessions / GetSession
         │  Log 域        │  InsertLogs / ListLogs / GetLogsByTrace / GetLogEventNames
         │  Pricing 域    │  GetModelPricing / UpsertModelPricing / DeleteModelPricing
-        │  LLMConfig 域  │  GetLLMConfigs / CreateLLMConfig / UpdateLLMConfig / DeleteLLMConfig
+        │  LLMConfig 域  │  GetLLMConfigs / CreateLLMConfig / UpdateLLMConfig / DeleteLLMConfig (含 provider_type: openai/anthropic)
         │  Cost 域       │  UpdateTraceCost / GetCostSummary
         │  Diagnosis 域  │  GetDiagnosisResult / UpsertDiagnosisResult
         │  Lifecycle     │  Purge / Close
@@ -388,7 +388,10 @@ labubu serve [flags]
 
 - **Go 1.22 ServeMux**：路径参数 `{id}` 支持，无需第三方路由库
 - **SPA 嵌入**：生产构建将 `web/dist` 嵌入二进制，`serveSPA` 处理所有非 API 路径
-- **LLM 诊断**：`DiagnoseTrace` → 构建 prompt → 调用 OpenAI 兼容 API → 存储 DiagnosisResult
+- **LLM 诊断**：`DiagnoseTrace` → 构建 prompt → 按 provider_type 调用适配器 → 存储 DiagnosisResult
+  - **多提供商适配器**：`provider_type` 字段 (`openai` / `anthropic`) 决定调用哪个适配器
+  - **OpenAI 适配器**：兼容 OpenAI、DeepSeek、Qwen、ZhipuAI/GLM 等，支持多态 content 字段
+  - **Anthropic 适配器**：Claude Messages API，`x-api-key` 认证，`system` 顶级字段，content 数组响应
   - 去重：`inFlight` map 防止同一 Trace 重复诊断
   - 过期检测：`computeSpanSnapshot` 检测 Trace 数据变化，标记诊断结果过期
   - 多语言 prompt：中/英双语诊断提示
@@ -622,7 +625,8 @@ labubu serve [flags]
 | **三实现切换** | 构建标签选择 chDB (CGO生产) / SQLite (非CGO默认) / memStore (fallback)，同一接口 | `chdb.go` / `sqlite_store.go` / `memstore.go` |
 | **异步缓冲** | Pipeline 为 Trace 提供背压保护，Metric/Log 直写 | `internal/pipeline/pipeline.go` |
 | **单二进制部署** | `go:embed` 嵌入前端，Go + Vue = 一个可执行文件 | `web/embed.go` |
-| **去重保护** | `inFlight` map 防止重复 LLM 诊断调用 | `trace_handler.go` |
+| **多提供商适配器** | `callLLMForDiagnosis` dispatcher 按 `provider_type` 路由到 OpenAI 或 Anthropic 适配器 | `diagnosis_llm.go` |
+| **多态 Content 解析** | `extractContent` 处理 OpenAI 格式（string）和 ZhipuAI 格式（array）的 `content` 字段 | `diagnosis_llm.go` |
 | **过期检测** | `computeSpanSnapshot` 检测数据变化，标记诊断过期 | `trace_handler.go` |
 | **Prometheus 兼容** | Metrics API 返回标准 Prometheus JSON，支持 Grafana 集成 | `metrics_handler.go` |
 | **Notifier 插件** | `Notifier` 接口 + `NotifierFactory` 注册，告警通知可扩展 | `alerting/notifier.go` |
