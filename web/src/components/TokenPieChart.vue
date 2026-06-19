@@ -84,12 +84,12 @@ function getColors(): Record<string, string> {
 const { theme } = useTheme()
 
 const KEY_PATTERNS: { pattern: string; key: string; label: string }[] = [
-  { pattern: 'gen_ai.context.system_tokens',           key: 'system',           label: 'System' },
-  { pattern: 'gen_ai.context.assistant_tokens',        key: 'assistant',        label: 'Assistant History' },
-  { pattern: 'gen_ai.context.user_tokens',             key: 'user',             label: 'User' },
-  { pattern: 'gen_ai.context.tool_tokens',             key: 'tool',             label: 'Tool Results' },
-  { pattern: 'gen_ai.context.tool_definitions_tokens', key: 'tool_definitions', label: 'Tool Definitions' },
-  { pattern: 'gen_ai.context.skill_tokens',            key: 'skill',            label: 'Skill' },
+  { pattern: 'gen_ai.context.system_prompt',       key: 'system',           label: 'System' },
+  { pattern: 'gen_ai.context.assistant_messages',  key: 'assistant',        label: 'Assistant History' },
+  { pattern: 'gen_ai.context.user_messages',       key: 'user',             label: 'User' },
+  { pattern: 'gen_ai.context.tool_results',        key: 'tool',             label: 'Tool Results' },
+  { pattern: 'gen_ai.context.tool_definitions',    key: 'tool_definitions', label: 'Tool Definitions' },
+  { pattern: 'gen_ai.context.skill',               key: 'skill',            label: 'Skill' },
 ]
 
 interface Segment {

@@ -216,12 +216,12 @@ const diagnosisError = ref('')
 
 /** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
 const CTX_PATTERNS: { key: string; label: string }[] = [
-  { key: 'gen_ai.context.system_tokens',           label: 'System' },
-  { key: 'gen_ai.context.assistant_tokens',        label: 'Assistant History' },
-  { key: 'gen_ai.context.user_tokens',             label: 'User' },
-  { key: 'gen_ai.context.tool_tokens',             label: 'Tool Results' },
-  { key: 'gen_ai.context.tool_definitions_tokens', label: 'Tool Definitions' },
-  { key: 'gen_ai.context.skill_tokens',            label: 'Skill' },
+  { key: 'gen_ai.context.system_prompt',       label: 'System' },
+  { key: 'gen_ai.context.assistant_messages',  label: 'Assistant History' },
+  { key: 'gen_ai.context.user_messages',       label: 'User' },
+  { key: 'gen_ai.context.tool_results',        label: 'Tool Results' },
+  { key: 'gen_ai.context.tool_definitions',    label: 'Tool Definitions' },
+  { key: 'gen_ai.context.skill',               label: 'Skill' },
 ]
 
 const selectedSpanTokenSlices = computed<PieSlice[]>(() => {
