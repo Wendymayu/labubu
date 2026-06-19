@@ -20,7 +20,7 @@
       <button @click="search" class="btn">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
       <button v-if="selectedIds.size > 0" @click="downloadSelected" :disabled="exportLoading" class="btn">
-        {{ exportLoading ? t('common.loading') : t('traceList.downloadOtlp') + ' (' + selectedIds.size + ')' }}
+        {{ exportLoading ? t('common.loading') : t('traceList.downloadSelected', { count: selectedIds.size }) }}
       </button>
     </div>
 

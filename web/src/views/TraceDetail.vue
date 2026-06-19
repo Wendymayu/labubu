@@ -39,8 +39,7 @@
             </span>
           </div>
           <div class="download-group">
-            <button class="btn-download" @click="downloadTraceJSON" title="Download as internal JSON">JSON</button>
-            <button class="btn-download" @click="downloadTraceOTLP" title="Download as OTLP JSON (importable to Jaeger/Grafana)">OTLP</button>
+            <button class="btn-download" @click="downloadTraceOTLP">{{ t('traceList.download') }}</button>
           </div>
         </div>
       </div>
@@ -433,11 +432,6 @@ function formatLogBody(body: string): string {
   } catch {
     return body
   }
-}
-
-function downloadTraceJSON() {
-  if (!trace.value) return
-  downloadBlob(JSON.stringify(trace.value, null, 2), `trace-${traceIdHex}.json`)
 }
 
 async function downloadTraceOTLP() {
