@@ -431,6 +431,8 @@ function formatTokens(tokens: number): string {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
+  order: 2;
 }
 .search-input {
   padding: 4px 10px;
@@ -454,6 +456,7 @@ function formatTokens(tokens: number): string {
 .toolbar-filters {
   display: flex;
   gap: 4px;
+  order: 1;
 }
 .filter-btn {
   padding: 3px 10px;
@@ -474,9 +477,9 @@ function formatTokens(tokens: number): string {
   border-color: var(--accent-blue);
 }
 .toolbar-actions {
-  margin-left: auto;
   display: flex;
   gap: 4px;
+  order: 0;
 }
 .action-btn {
   padding: 3px 8px;
