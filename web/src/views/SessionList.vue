@@ -12,7 +12,7 @@
         <option value="">{{ t('common.allServices') }}</option>
         <option v-for="svc in services" :key="svc" :value="svc">{{ svc }}</option>
       </select>
-      <button @click="search" class="btn btn-primary">{{ t('common.search') }}</button>
+      <button @click="search" class="btn">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 

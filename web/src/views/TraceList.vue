@@ -17,7 +17,7 @@
         <option value="OK">OK</option>
         <option value="ERROR">ERROR</option>
       </select>
-      <button @click="search" class="btn btn-primary">{{ t('common.search') }}</button>
+      <button @click="search" class="btn">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
       <button v-if="selectedIds.size > 0" @click="downloadSelected" :disabled="exportLoading" class="btn btn-primary">
         {{ exportLoading ? t('common.loading') : t('traceList.downloadOtlp') + ' (' + selectedIds.size + ')' }}
