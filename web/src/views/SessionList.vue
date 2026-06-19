@@ -192,7 +192,7 @@ onMounted(() => {
 .trace-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--border-subtle); }
 .trace-row { cursor: pointer; }
 .trace-row:hover { background: var(--bg-surface); }
-.cell-session-id { font-family: 'Courier New', monospace; font-size: 13px; color: var(--accent-blue); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-session-id { font-weight: 600; color: var(--accent-blue); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell-tokens { color: var(--token-highlight); font-weight: 600; }
 .cell-time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .error-rate { font-weight: 600; font-size: 13px; }
