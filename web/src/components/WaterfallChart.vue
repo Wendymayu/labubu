@@ -431,7 +431,6 @@ function formatTokens(tokens: number): string {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   order: 2;
 }
 .search-input {
