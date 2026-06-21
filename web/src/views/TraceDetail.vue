@@ -117,6 +117,7 @@
         </div>
         </div>
 
+        <div v-if="drawerOpen" class="drawer-backdrop" @click="closeDrawer"></div>
         <div v-if="drawerOpen" class="detail-drawer">
           <div class="drawer-header">
             <div class="drawer-title">
@@ -579,8 +580,7 @@ onUnmounted(() => {
 }
 
 /* Backdrop */
-.detail-layout.drawer-open::after {
-  content: '';
+.drawer-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.3);

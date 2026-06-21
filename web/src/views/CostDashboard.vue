@@ -81,9 +81,9 @@ const periods = [
   { key: '30d' },
 ]
 
-const activePeriod = ref('7d')
+const activePeriod = ref('today')
 const summary = ref<CostSummary>({
-  period: '7d',
+  period: 'today',
   currency: 'USD',
   overview: {
     total_cost: 0,

@@ -116,10 +116,11 @@ func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, sc
 		var existingTotalTokens sql.NullInt32
 		var existingCost sql.NullFloat64
 		var existingCostCurrency string
+		var existingResAttrsJSON string
 
 		row := tx.QueryRow(
 			`SELECT span_count, start_time_ms, end_time_ms, root_span_id_hex, root_name,
-			        total_tokens, cost, cost_currency, session_id
+			        total_tokens, cost, cost_currency, session_id, resource_attributes
 			 FROM traces WHERE trace_id_hex = ?`,
 			traceIDHex,
 		)
@@ -127,7 +128,7 @@ func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, sc
 			&existingSpanCount, &existingStartMS, &existingEndMS,
 			&existingRootSpanID, &existingRootName,
 			&existingTotalTokens, &existingCost, &existingCostCurrency,
-			&existingSessionID,
+			&existingSessionID, &existingResAttrsJSON,
 		)
 		if err == sql.ErrNoRows {
 			// New trace, insert directly
@@ -148,6 +149,10 @@ func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, sc
 			}
 			if existingSessionID != "" && trace.SessionID == "" {
 				trace.SessionID = existingSessionID
+			}
+			// Preserve existing resource_attributes if new batch is empty
+			if (trace.ResourceAttrs == nil || len(trace.ResourceAttrs) == 0) && existingResAttrsJSON != "" && existingResAttrsJSON != "{}" && existingResAttrsJSON != "null" {
+				trace.ResourceAttrs = jsonToMap(existingResAttrsJSON)
 			}
 			if trace.TotalTokens == nil && existingTotalTokens.Valid {
 				v := uint32(existingTotalTokens.Int32)
@@ -219,7 +224,7 @@ func (s *sqliteStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListR
 	// Fetch page
 	offset := (q.Page - 1) * q.PageSize
 	listSQL := `SELECT trace_id_hex, root_span_id_hex, root_name,
-	               json_extract(resource_attributes, '$.service.name') AS root_service,
+	               json_extract(resource_attributes, '$."service.name"') AS root_service,
 	               start_time_ms, duration_ms, span_count, status_code,
 	               total_tokens, cost, cost_currency
 	        FROM traces` + where + ` ORDER BY start_time_ms DESC LIMIT ? OFFSET ?`
@@ -403,10 +408,10 @@ func (s *sqliteStore) GetServices(ctx context.Context) ([]string, error) {
 	defer s.mu.Unlock()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT json_extract(resource_attributes, '$.service.name') AS service
+		`SELECT DISTINCT json_extract(resource_attributes, '$."service.name"') AS service
 		 FROM traces
-		 WHERE json_extract(resource_attributes, '$.service.name') IS NOT NULL
-		   AND json_extract(resource_attributes, '$.service.name') != ''
+		 WHERE json_extract(resource_attributes, '$."service.name"') IS NOT NULL
+		   AND json_extract(resource_attributes, '$."service.name"') != ''
 		 ORDER BY service`,
 	)
 	if err != nil {
@@ -556,7 +561,7 @@ func (s *sqliteStore) GetSession(ctx context.Context, sessionID string) (*Sessio
 	// Session traces
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT trace_id_hex, root_span_id_hex, root_name,
-		        json_extract(resource_attributes, '$.service.name') AS root_service,
+		        json_extract(resource_attributes, '$."service.name"') AS root_service,
 		        start_time_ms, duration_ms, span_count, status_code,
 		        total_tokens, cost, cost_currency
 		 FROM traces WHERE session_id = ? ORDER BY start_time_ms ASC`,
@@ -1239,7 +1244,7 @@ func buildSqliteTraceWhereClause(q TraceQuery) (string, []interface{}) {
 	var args []interface{}
 
 	if q.Service != "" {
-		clauses = append(clauses, `json_extract(resource_attributes, '$.service.name') = ?`)
+		clauses = append(clauses, `json_extract(resource_attributes, '$."service.name"') = ?`)
 		args = append(args, q.Service)
 	}
 	if q.Status != "" {
@@ -1279,7 +1284,7 @@ func buildSqliteSessionWhereClause(q SessionQuery) (string, []interface{}) {
 	var args []interface{}
 
 	if q.Service != "" {
-		clauses = append(clauses, `json_extract(resource_attributes, '$.service.name') = ?`)
+		clauses = append(clauses, `json_extract(resource_attributes, '$."service.name"') = ?`)
 		args = append(args, q.Service)
 	}
 	if q.Query != "" {
