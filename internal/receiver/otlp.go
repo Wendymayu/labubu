@@ -8,12 +8,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/storage"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -219,15 +221,9 @@ func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 	var exportReq coltracepb.ExportTraceServiceRequest
 
 	contentType := req.Header.Get("Content-Type")
-	if contentType == "application/json" {
-		// Use protojson for JSON-encoded OTLP.
-		// For simplicity in Phase 1, use the protobuf JSON unmarshaler.
-		// protojson is in google.golang.org/protobuf/encoding/protojson
-		// Fallback: try proto unmarshal first, then handle as needed.
-		if err := proto.Unmarshal(body, &exportReq); err != nil {
-			// Try JSON unmarshal as fallback.
-			// Many OTLP HTTP clients send JSON.
-			http.Error(w, fmt.Sprintf("failed to unmarshal request: %v", err), http.StatusBadRequest)
+	if strings.Contains(contentType, "application/json") {
+		if err := protojson.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal JSON: %v", err), http.StatusBadRequest)
 			return
 		}
 	} else {
