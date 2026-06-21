@@ -22,6 +22,13 @@
       <button v-if="selectedIds.size > 0" @click="downloadSelected" :disabled="exportLoading" class="btn">
         {{ exportLoading ? t('common.loading') : t('traceList.downloadSelected', { count: selectedIds.size }) }}
       </button>
+      <button @click="triggerImport" :disabled="importLoading" class="btn">
+        {{ importLoading ? t('common.loading') : t('traceList.importBtn') }}
+      </button>
+      <input ref="fileInput" type="file" accept=".json" style="display:none" @change="handleImportFile" />
+
+      <span v-if="importResult" class="import-result">{{ t('traceList.importResult', { imported: importResult.imported, skipped: importResult.skipped }) }}</span>
+      <span v-if="importError" class="import-error">{{ t('traceList.importFailed') }}: {{ importError }}</span>
     </div>
 
     <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
@@ -95,7 +102,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listTraces, getServices, exportTraces, type TraceListItem, type Pagination } from '../api/client'
+import { listTraces, getServices, exportTraces, importTraces, type TraceListItem, type Pagination, type ImportResult } from '../api/client'
 import { formatCost } from '../utils/format'
 
 const router = useRouter()
@@ -110,6 +117,10 @@ const error = ref('')
 // Batch selection state
 const selectedIds = ref<Set<string>>(new Set())
 const exportLoading = ref(false)
+const importLoading = ref(false)
+const importResult = ref<ImportResult | null>(null)
+const importError = ref('')
+const fileInput = ref<HTMLInputElement | null>(null)
 
 function toggleSelect(traceId: string) {
   const next = new Set(selectedIds.value)
@@ -161,6 +172,31 @@ async function downloadSelected() {
     alert(`${t('traceList.exportFailed')}: ${e.message}`)
   } finally {
     exportLoading.value = false
+  }
+}
+
+function triggerImport() {
+  fileInput.value?.click()
+}
+
+async function handleImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  importLoading.value = true
+  importResult.value = null
+  importError.value = ''
+  try {
+    const text = await file.text()
+    const result = await importTraces(text)
+    importResult.value = result
+    fetchTraces()
+  } catch (e: any) {
+    importError.value = e.message
+  } finally {
+    importLoading.value = false
+    input.value = ''
   }
 }
 
@@ -290,4 +326,6 @@ onMounted(() => {
 .row-selected {
   background: var(--bg-surface) !important;
 }
+.import-result { color: var(--status-ok-text); font-size: 13px; margin-left: 8px; }
+.import-error { color: var(--status-error-accent); font-size: 13px; margin-left: 8px; }
 </style>

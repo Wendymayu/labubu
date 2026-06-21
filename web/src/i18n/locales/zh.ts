@@ -66,6 +66,9 @@ export default {
     download: '下载',
     clearSelection: '取消选择',
     exportFailed: '导出失败',
+    importFailed: '导入失败',
+    importBtn: '导入',
+    importResult: '已导入 {imported} 条 trace，跳过 {skipped} 条',
   },
   sessionList: {
     searchPlaceholder: '搜索会话...',

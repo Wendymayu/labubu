@@ -137,6 +137,24 @@ export async function exportTraces(traceIds: string[], format: string): Promise<
   return res.json()
 }
 
+export interface ImportResult {
+  imported: number
+  skipped: number
+}
+
+export async function importTraces(jsonData: string): Promise<ImportResult> {
+  const res = await fetch(`${BASE_URL}/traces/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: jsonData,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Import failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 // --- Dashboard types and API ---
 
 export interface PanelConfig {

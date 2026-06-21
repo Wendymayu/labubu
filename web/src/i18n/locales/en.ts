@@ -66,6 +66,9 @@ export default {
     download: 'Download',
     clearSelection: 'Clear selection',
     exportFailed: 'Export failed',
+    importFailed: 'Import failed',
+    importBtn: 'Import',
+    importResult: 'Imported {imported} traces, skipped {skipped}',
   },
   sessionList: {
     searchPlaceholder: 'Search sessions...',
