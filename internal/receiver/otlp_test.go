@@ -91,7 +91,7 @@ func (m *memTestStore) Close() error {
 
 func TestTranslateSpanBasic(t *testing.T) {
 	// Basic smoke test: nil spans should produce empty result.
-	spans := translateSpans(nil)
+	spans := TranslateSpans(nil)
 	if len(spans) != 0 {
 		t.Errorf("expected 0 spans from nil input, got %d", len(spans))
 	}

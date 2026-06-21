@@ -351,3 +351,37 @@ func TestExportTracesProtojson(t *testing.T) {
 		t.Errorf("export should return a single TracesData envelope, not an array; got: %s", respBody[:20])
 	}
 }
+
+func TestImportTracesInvalidJSON(t *testing.T) {
+	store := &handlerMockStore{}
+	handler := NewTraceHandler(store)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/traces/import", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ImportTraces(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid JSON, got %d", rec.Code)
+	}
+}
+
+func TestImportTracesEmptyBody(t *testing.T) {
+	store := &handlerMockStore{}
+	handler := NewTraceHandler(store)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/traces/import", strings.NewReader(""))
+	rec := httptest.NewRecorder()
+	handler.ImportTraces(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty body, got %d", rec.Code)
+	}
+}
+
+func TestImportTracesMethodNotAllowed(t *testing.T) {
+	store := &handlerMockStore{}
+	handler := NewTraceHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/import", nil)
+	rec := httptest.NewRecorder()
+	handler.ImportTraces(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 for GET, got %d", rec.Code)
+	}
+}

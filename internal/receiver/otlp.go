@@ -116,16 +116,16 @@ type traceService struct {
 // Export receives trace data via gRPC.
 func (s *traceService) Export(ctx context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
 	for _, resourceSpan := range req.ResourceSpans {
-		resource := translateResource(resourceSpan.Resource)
+		resource := TranslateResource(resourceSpan.Resource)
 		if resourceSpan.SchemaUrl != "" {
 			resource.SchemaURL = resourceSpan.SchemaUrl
 		}
 		for _, scopeSpan := range resourceSpan.ScopeSpans {
-			scope := translateScope(scopeSpan.Scope)
+			scope := TranslateScope(scopeSpan.Scope)
 			if scopeSpan.SchemaUrl != "" {
 				scope.SchemaURL = scopeSpan.SchemaUrl
 			}
-			spans := translateSpans(scopeSpan.Spans)
+			spans := TranslateSpans(scopeSpan.Spans)
 
 			if len(spans) == 0 {
 				continue
@@ -234,16 +234,16 @@ func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, resourceSpan := range exportReq.ResourceSpans {
-		resource := translateResource(resourceSpan.Resource)
+		resource := TranslateResource(resourceSpan.Resource)
 		if resourceSpan.SchemaUrl != "" {
 			resource.SchemaURL = resourceSpan.SchemaUrl
 		}
 		for _, scopeSpan := range resourceSpan.ScopeSpans {
-			scope := translateScope(scopeSpan.Scope)
+			scope := TranslateScope(scopeSpan.Scope)
 			if scopeSpan.SchemaUrl != "" {
 				scope.SchemaURL = scopeSpan.SchemaUrl
 			}
-			spans := translateSpans(scopeSpan.Spans)
+			spans := TranslateSpans(scopeSpan.Spans)
 
 			if len(spans) == 0 {
 				continue
@@ -356,7 +356,7 @@ func (r *Receiver) handleHTTPLogs(w http.ResponseWriter, req *http.Request) {
 
 // --- Translation helpers ---
 
-func translateResource(resource *resourcepb.Resource) storage.ResourceInfo {
+func TranslateResource(resource *resourcepb.Resource) storage.ResourceInfo {
 	if resource == nil {
 		return storage.ResourceInfo{}
 	}
@@ -365,7 +365,7 @@ func translateResource(resource *resourcepb.Resource) storage.ResourceInfo {
 	}
 }
 
-func translateScope(scope *commonpb.InstrumentationScope) storage.ScopeInfo {
+func TranslateScope(scope *commonpb.InstrumentationScope) storage.ScopeInfo {
 	if scope == nil {
 		return storage.ScopeInfo{}
 	}
@@ -376,7 +376,7 @@ func translateScope(scope *commonpb.InstrumentationScope) storage.ScopeInfo {
 	}
 }
 
-func translateSpans(protoSpans []*tracepb.Span) []storage.Span {
+func TranslateSpans(protoSpans []*tracepb.Span) []storage.Span {
 	spans := make([]storage.Span, 0, len(protoSpans))
 	for _, ps := range protoSpans {
 		if ps == nil {
