@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -267,5 +268,86 @@ func TestDiagnoseTraceBadID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for short id, got %d", rec.Code)
+	}
+}
+
+func TestExportTracesProtojson(t *testing.T) {
+	store := &handlerMockStore{
+		detail: &storage.TraceDetail{
+			TraceIDHex: "a1b2c3d4e5f600000000000000000000",
+			SpanCount:  2,
+			ResourceAttrs: map[string]string{
+				"service.name": "my-service",
+			},
+			ResourceSchemaURL: "https://opentelemetry.io/schemas/1.0",
+			Scope: storage.ScopeDetail{
+				Name:    "my-instrumentation",
+				Version: "1.0.0",
+			},
+			Spans: []storage.SpanDetail{
+				{
+					SpanID:       "0123456789abcdef",
+					ParentSpanID: "",
+					Name:         "root-span",
+					Kind:         "SERVER",
+					StartTimeMS:  1000,
+					DurationMS:   500,
+					Attributes: map[string]string{
+						"http.status_code":       "200",
+						"gen_ai.usage.input_tokens": "150",
+					},
+					Status:        "OK",
+					StatusMessage: "",
+				},
+				{
+					SpanID:       "abcdef0123456789",
+					ParentSpanID: "0123456789abcdef",
+					Name:         "child-span",
+					Kind:         "CLIENT",
+					StartTimeMS:  1100,
+					DurationMS:   200,
+					Attributes: map[string]string{
+						"gen_ai.usage.input_tokens": "50",
+					},
+					Status:        "UNSET",
+					StatusMessage: "",
+				},
+			},
+		},
+	}
+	handler := NewTraceHandler(store)
+
+	body := `{"trace_ids":["a1b2c3d4e5f600000000000000000000"],"format":"otlp"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/traces/export", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ExportTraces(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	respBody := rec.Body.String()
+
+	// Verify traceId is hex-encoded (32-char hex, not base64)
+	// protojson with UseProtoNames uses snake_case: "trace_id" not "traceId"
+	if !strings.Contains(respBody, `"trace_id":"a1b2c3d4e5f600000000000000000000"`) {
+		t.Errorf("expected hex-encoded trace_id in response, got: %s", respBody)
+	}
+
+	// Verify intValue for numeric attributes (not stringValue)
+	if !strings.Contains(respBody, `"int_value"`) {
+		t.Errorf("expected int_value for numeric attributes, got: %s", respBody)
+	}
+
+	// Verify http.status_code=200 is rendered as intValue
+	if !strings.Contains(respBody, `"http.status_code"`) {
+		t.Errorf("expected http.status_code key in response, got: %s", respBody)
+	}
+
+	// Verify the response is a single TracesData envelope (not an array)
+	if strings.HasPrefix(respBody, "[") {
+		t.Errorf("export should return a single TracesData envelope, not an array; got: %s", respBody[:20])
 	}
 }

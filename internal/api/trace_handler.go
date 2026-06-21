@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+
 	"github.com/labubu/labubu/internal/storage"
 )
 
@@ -95,7 +97,15 @@ func (h *TraceHandler) GetTrace(w http.ResponseWriter, r *http.Request, traceIDH
 	}
 
 	if r.URL.Query().Get("format") == "otlp" {
-		writeOTLPResponse(w, detail)
+		td := convertToProto(detail)
+		jsonBytes, err := marshalOTLPJSON(td)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal otlp: %v", err)})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(jsonBytes)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"trace": detail})
@@ -115,7 +125,7 @@ func (h *TraceHandler) GetServices(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExportTraces handles POST /api/v1/traces/export.
-// Accepts a list of trace IDs and returns them as an OTLP JSON array.
+// Accepts a list of trace IDs and returns them as a single OTLP TracesData JSON envelope.
 func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "only POST allowed"})
@@ -145,7 +155,8 @@ func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := make([]otlpTraceResponse, 0, len(req.TraceIDs))
+	// Collect all ResourceSpans into a single TracesData.
+	allResourceSpans := make([]*tracepb.ResourceSpans, 0, len(req.TraceIDs))
 	for _, hexID := range req.TraceIDs {
 		if len(hexID) != 32 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid trace_id length: %s (must be 32 hex chars)", hexID)})
@@ -168,10 +179,21 @@ func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 			continue // silently skip missing traces
 		}
 
-		results = append(results, convertToOTLP(detail))
+		td := convertToProto(detail)
+		allResourceSpans = append(allResourceSpans, td.ResourceSpans...)
 	}
 
-	writeJSON(w, http.StatusOK, results)
+	tracesData := &tracepb.TracesData{
+		ResourceSpans: allResourceSpans,
+	}
+	jsonBytes, err := marshalOTLPJSON(tracesData)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal otlp: %v", err)})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(jsonBytes)
 }
 
 // GetDiagnosis handles GET /api/v1/traces/{traceIdHex}/diagnosis.
