@@ -352,6 +352,102 @@ func TestExportTracesProtojson(t *testing.T) {
 	}
 }
 
+func TestImportExportRoundTrip(t *testing.T) {
+	inputTokens := uint32(100)
+	outputTokens := uint32(50)
+	totalTokens := uint32(150)
+	genAIModel := "gpt-4"
+
+	traceIDHex := "4bf92f3577b34da6a3ce929d0e0e4736"
+
+	// Step 1: Export a trace
+	exportStore := &handlerMockStore{
+		detail: &storage.TraceDetail{
+			TraceIDHex: traceIDHex,
+			ResourceAttrs: map[string]string{
+				"service.name":    "frontend",
+				"service.version": "1.0.0",
+			},
+			ResourceSchemaURL: "",
+			Scope: storage.ScopeDetail{
+				Name:    "test-lib",
+				Version: "1.0",
+				Attributes: map[string]string{},
+			},
+			Spans: []storage.SpanDetail{
+				{
+					SpanID:       "abc1234567890def",
+					ParentSpanID: "",
+					Name:         "HTTP GET /api",
+					Kind:         "SERVER",
+					StartTimeMS:  1608238394254,
+					DurationMS:   100,
+					Attributes: map[string]string{
+						"http.method":      "GET",
+						"http.status_code": "200",
+					},
+					Events:        []interface{}{},
+					Links:         []interface{}{},
+					Status:        "OK",
+					InputTokens:   &inputTokens,
+					OutputTokens:  &outputTokens,
+					TotalTokens:   &totalTokens,
+					GenAIRequestModel: &genAIModel,
+				},
+			},
+		},
+	}
+
+	exportHandler := NewTraceHandler(exportStore)
+
+	exportBody := `{"trace_ids":["4bf92f3577b34da6a3ce929d0e0e4736"],"format":"otlp"}`
+	exportReq := httptest.NewRequest(http.MethodPost, "/api/v1/traces/export", strings.NewReader(exportBody))
+	exportReq.Header.Set("Content-Type", "application/json")
+	exportRec := httptest.NewRecorder()
+
+	exportHandler.ExportTraces(exportRec, exportReq)
+
+	if exportRec.Code != http.StatusOK {
+		t.Fatalf("export: expected 200, got %d: %s", exportRec.Code, exportRec.Body.String())
+	}
+
+	exportedJSON := exportRec.Body.String()
+
+	// Verify the exported JSON has hex trace_id (32 chars, snake_case per UseProtoNames)
+	if !strings.Contains(exportedJSON, `"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"`) {
+		t.Errorf("exported JSON does not contain hex trace_id, got: %s", exportedJSON[:200])
+	}
+
+	// Verify int_value for numeric attribute
+	if !strings.Contains(exportedJSON, `"int_value"`) {
+		t.Errorf("exported JSON does not contain int_value for numeric attributes, got: %s", exportedJSON[:200])
+	}
+
+	// Step 2: Import the exported JSON (fresh store with no existing traces)
+	importStore := &handlerMockStore{detail: nil}
+	importHandler := NewTraceHandler(importStore)
+
+	importReq := httptest.NewRequest(http.MethodPost, "/api/v1/traces/import", strings.NewReader(exportedJSON))
+	importReq.Header.Set("Content-Type", "application/json")
+	importRec := httptest.NewRecorder()
+
+	importHandler.ImportTraces(importRec, importReq)
+
+	if importRec.Code != http.StatusOK {
+		t.Fatalf("import: expected 200, got %d: %s", importRec.Code, importRec.Body.String())
+	}
+
+	var importResult map[string]interface{}
+	if err := json.Unmarshal(importRec.Body.Bytes(), &importResult); err != nil {
+		t.Fatalf("failed to parse import result: %v", err)
+	}
+
+	importedCount := int(importResult["imported"].(float64))
+	if importedCount < 1 {
+		t.Errorf("expected at least 1 imported trace, got %d; result: %v", importedCount, importResult)
+	}
+}
+
 func TestImportTracesInvalidJSON(t *testing.T) {
 	store := &handlerMockStore{}
 	handler := NewTraceHandler(store)
