@@ -120,26 +120,26 @@ func TestKeyValueToMap(t *testing.T) {
 func TestHTTPTracesJSON(t *testing.T) {
 	// Standard OTLP JSON payload with base64-encoded traceId/spanId (protojson format).
 	jsonPayload := `{
-		"resourceSpans": [{
-			"resource": {
-				"attributes": [
-					{"key": "service.name", "value": {"stringValue": "test-service"}}
-				]
-			},
-			"scopeSpans": [{
-				"scope": {"name": "test-lib", "version": "1.0"},
-				"spans": [{
-					"traceId": "MWYyZDRlNjcxY2VkNGI3NjgwMDAwMDAw",
-					"spanId": "YWJjMTIzNDU2Nzg5",
-					"name": "test-span",
-					"kind": 1,
-					"startTimeUnixNano": "1608238394254000000",
-					"endTimeUnixNano": "1608238394354000000",
-					"status": {"code": 1}
+			"resourceSpans": [{
+				"resource": {
+					"attributes": [
+						{"key": "service.name", "value": {"stringValue": "test-service"}}
+					]
+				},
+				"scopeSpans": [{
+					"scope": {"name": "test-lib", "version": "1.0"},
+					"spans": [{
+						"traceId": "MWYyZDRlNjcxY2VkNGI3NjgwMDAwMDAw",
+						"spanId": "YWJjMTIzNDU2Nzg5",
+						"name": "test-span",
+						"kind": 1,
+						"startTimeUnixNano": "1608238394254000000",
+						"endTimeUnixNano": "1608238394354000000",
+						"status": {"code": 1}
+					}]
 				}]
 			}]
-		}]
-	}`
+		}`
 
 	store := &memTestStore{}
 	p := pipeline.New(store, 100, 1*time.Second)
@@ -161,26 +161,26 @@ func TestHTTPTracesJSON(t *testing.T) {
 func TestHTTPTracesJSONWithCharset(t *testing.T) {
 	// Content-Type may include charset parameter like "application/json; charset=utf-8".
 	jsonPayload := `{
-		"resourceSpans": [{
-			"resource": {
-				"attributes": [
-					{"key": "service.name", "value": {"stringValue": "test-service"}}
-				]
-			},
-			"scopeSpans": [{
-				"scope": {"name": "test-lib", "version": "1.0"},
-				"spans": [{
-					"traceId": "MWYyZDRlNjcxY2VkNGI3NjgwMDAwMDAw",
-					"spanId": "YWJjMTIzNDU2Nzg5",
-					"name": "test-span",
-					"kind": 1,
-					"startTimeUnixNano": "1608238394254000000",
-					"endTimeUnixNano": "1608238394354000000",
-					"status": {"code": 1}
+			"resourceSpans": [{
+				"resource": {
+					"attributes": [
+						{"key": "service.name", "value": {"stringValue": "test-service"}}
+					]
+				},
+				"scopeSpans": [{
+					"scope": {"name": "test-lib", "version": "1.0"},
+					"spans": [{
+						"traceId": "MWYyZDRlNjcxY2VkNGI3NjgwMDAwMDAw",
+						"spanId": "YWJjMTIzNDU2Nzg5",
+						"name": "test-span",
+						"kind": 1,
+						"startTimeUnixNano": "1608238394254000000",
+						"endTimeUnixNano": "1608238394354000000",
+						"status": {"code": 1}
+					}]
 				}]
 			}]
-		}]
-	}`
+		}`
 
 	store := &memTestStore{}
 	p := pipeline.New(store, 100, 1*time.Second)
@@ -274,4 +274,94 @@ func TestNormalizeAttributes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTokenExtractionAfterNormalize(t *testing.T) {
+	// Verify that fallback keys produce typed token columns
+	// after normalizeAttributes copies them to standard keys.
+	tests := []struct {
+		name         string
+		input        map[string]string
+		expectInput  *uint32
+		expectOutput *uint32
+		expectTotal  *uint32
+	}{
+		{
+			name:         "Claude Code input_tokens → typed column",
+			input:        map[string]string{"input_tokens": "100", "output_tokens": "50"},
+			expectInput:  uint32Ptr(100),
+			expectOutput: uint32Ptr(50),
+			expectTotal:  uint32Ptr(150),
+		},
+		{
+			name:         "OpenInference llm keys → typed column",
+			input:        map[string]string{"llm.usage.input_tokens": "200", "llm.usage.output_tokens": "100"},
+			expectInput:  uint32Ptr(200),
+			expectOutput: uint32Ptr(100),
+			expectTotal:  uint32Ptr(300),
+		},
+		{
+			name:         "standard keys already present",
+			input:        map[string]string{"gen_ai.usage.input_tokens": "300"},
+			expectInput:  uint32Ptr(300),
+			expectOutput: nil,
+			expectTotal:  uint32Ptr(300),
+		},
+		{
+			name:         "no token keys → nil",
+			input:        map[string]string{"other_attr": "value"},
+			expectInput:  nil,
+			expectOutput: nil,
+			expectTotal:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attrs := make(map[string]string, len(tt.input))
+			for k, v := range tt.input {
+				attrs[k] = v
+			}
+			normalizeAttributes(attrs)
+
+			inputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.input_tokens")
+			outputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.output_tokens")
+			var totalTokens *uint32
+			if inputTokens != nil || outputTokens != nil {
+				var sum uint32
+				if inputTokens != nil {
+					sum += *inputTokens
+				}
+				if outputTokens != nil {
+					sum += *outputTokens
+				}
+				if t := getUint32AttrFromMap(attrs, "gen_ai.usage.total_tokens"); t != nil {
+					sum = *t
+				}
+				totalTokens = &sum
+			}
+
+			if !uint32PtrEqual(inputTokens, tt.expectInput) {
+				t.Errorf("inputTokens: got %v, want %v", inputTokens, tt.expectInput)
+			}
+			if !uint32PtrEqual(outputTokens, tt.expectOutput) {
+				t.Errorf("outputTokens: got %v, want %v", outputTokens, tt.expectOutput)
+			}
+			if !uint32PtrEqual(totalTokens, tt.expectTotal) {
+				t.Errorf("totalTokens: got %v, want %v", totalTokens, tt.expectTotal)
+			}
+		})
+	}
+}
+
+func uint32Ptr(v uint32) *uint32 { return &v }
+
+func uint32PtrEqual(a, b *uint32) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }

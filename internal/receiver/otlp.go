@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	ilog "github.com/labubu/labubu/internal/log"
@@ -405,8 +406,14 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 	}
 	durationMS := endMS - startMS
 
-	inputTokens := getUint32Attr(ps.Attributes, "gen_ai.usage.input_tokens")
-	outputTokens := getUint32Attr(ps.Attributes, "gen_ai.usage.output_tokens")
+	// Normalize attributes BEFORE extracting typed columns,
+	// so fallback keys (e.g. "input_tokens" from Claude Code)
+	// are copied to standard keys (e.g. "gen_ai.usage.input_tokens")
+	// that getUint32Attr/getStringAttr look for.
+	attrs := normalizeAttributes(keyValueToMap(ps.Attributes))
+
+	inputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.input_tokens")
+	outputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.output_tokens")
 	var totalTokens *uint32
 	if inputTokens != nil || outputTokens != nil {
 		var sum uint32
@@ -416,12 +423,12 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 		if outputTokens != nil {
 			sum += *outputTokens
 		}
-		if tt := getUint32Attr(ps.Attributes, "gen_ai.usage.total_tokens"); tt != nil {
+		if tt := getUint32AttrFromMap(attrs, "gen_ai.usage.total_tokens"); tt != nil {
 			sum = *tt
 		}
 		totalTokens = &sum
 	}
-	genAIModel := getStringAttr(ps.Attributes, "gen_ai.request.model")
+	genAIModel := getStringAttrFromMap(attrs, "gen_ai.request.model")
 
 	eventsJSON := serializeEvents(ps.Events)
 	linksJSON := serializeLinks(ps.Links)
@@ -435,7 +442,7 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 		StartTimeMS:       startMS,
 		EndTimeMS:         endMS,
 		DurationMS:        durationMS,
-		Attributes:        normalizeAttributes(keyValueToMap(ps.Attributes)),
+		Attributes:        attrs,
 		Events:            eventsJSON,
 		Links:             linksJSON,
 		StatusCode:        int32(ps.Status.GetCode()),
@@ -540,6 +547,30 @@ func getUint32Attr(attrs []*commonpb.KeyValue, key string) *uint32 {
 		}
 	}
 	return nil
+}
+
+// getUint32AttrFromMap reads a uint32 value from a normalized attributes map.
+// Used after normalizeAttributes so fallback keys are already copied to standard keys.
+func getUint32AttrFromMap(attrs map[string]string, key string) *uint32 {
+	v, ok := attrs[key]
+	if !ok {
+		return nil
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil || n == 0 {
+		return nil
+	}
+	u := uint32(n)
+	return &u
+}
+
+// getStringAttrFromMap reads a string value from a normalized attributes map.
+func getStringAttrFromMap(attrs map[string]string, key string) *string {
+	v, ok := attrs[key]
+	if !ok || v == "" {
+		return nil
+	}
+	return &v
 }
 
 func serializeEvents(events []*tracepb.Span_Event) string {
