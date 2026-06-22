@@ -198,3 +198,80 @@ func TestHTTPTracesJSONWithCharset(t *testing.T) {
 		t.Errorf("expected status 200 for charset Content-Type, got %d; body: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestNormalizeAttributes(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  map[string]string
+		expect map[string]string
+	}{
+		{
+			name: "Claude Code keys → standard keys",
+			input: map[string]string{
+				"input_tokens":  "100",
+				"output_tokens": "50",
+				"session.id":    "abc-123",
+			},
+			expect: map[string]string{
+				"input_tokens":                   "100",
+				"output_tokens":                  "50",
+				"session.id":                     "abc-123",
+				"gen_ai.usage.input_tokens":     "100",
+				"gen_ai.usage.output_tokens":    "50",
+				"jiuwenclaw.session.id":          "abc-123",
+			},
+		},
+		{
+			name: "standard keys already present → no alias",
+			input: map[string]string{
+				"gen_ai.usage.input_tokens": "200",
+				"input_tokens":              "100",
+			},
+			expect: map[string]string{
+				"gen_ai.usage.input_tokens": "200",
+				"input_tokens":              "100",
+			},
+		},
+		{
+			name: "OpenInference llm.* keys",
+			input: map[string]string{
+				"llm.usage.input_tokens":  "300",
+				"llm.usage.output_tokens": "150",
+				"llm.request.model":       "gpt-4o",
+			},
+			expect: map[string]string{
+				"llm.usage.input_tokens":       "300",
+				"llm.usage.output_tokens":      "150",
+				"llm.request.model":            "gpt-4o",
+				"gen_ai.usage.input_tokens":    "300",
+				"gen_ai.usage.output_tokens":   "150",
+				"gen_ai.request.model":         "gpt-4o",
+			},
+		},
+		{
+			name:   "empty attributes → no changes",
+			input:  map[string]string{},
+			expect: map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attrs := make(map[string]string, len(tt.input))
+			for k, v := range tt.input {
+				attrs[k] = v
+			}
+			normalizeAttributes(attrs)
+			for k, v := range tt.expect {
+				if attrs[k] != v {
+					t.Errorf("key %q: got %q, want %q", k, attrs[k], v)
+				}
+			}
+			for k := range attrs {
+				if _, ok := tt.expect[k]; !ok {
+					t.Errorf("unexpected key %q added", k)
+				}
+			}
+		})
+	}
+}

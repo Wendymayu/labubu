@@ -435,7 +435,7 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 		StartTimeMS:       startMS,
 		EndTimeMS:         endMS,
 		DurationMS:        durationMS,
-		Attributes:        keyValueToMap(ps.Attributes),
+		Attributes:        normalizeAttributes(keyValueToMap(ps.Attributes)),
 		Events:            eventsJSON,
 		Links:             linksJSON,
 		StatusCode:        int32(ps.Status.GetCode()),
@@ -449,6 +449,40 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 }
 
 // --- Attribute helpers ---
+
+// attrAliases maps a standard OTel attribute key to fallback keys
+// that various agents use instead. If the standard key is absent but
+// a fallback key exists, the fallback value is copied to the standard key.
+// Adding a new agent only requires appending its key names to the fallback lists.
+var attrAliases = map[string][]string{
+	// Token usage (GenAI semconv → Claude Code → OpenInference)
+	"gen_ai.usage.input_tokens":  {"input_tokens", "llm.usage.input_tokens"},
+	"gen_ai.usage.output_tokens": {"output_tokens", "llm.usage.output_tokens"},
+	"gen_ai.usage.total_tokens":  {"total_tokens", "llm.usage.total_tokens"},
+	// Request model
+	"gen_ai.request.model":       {"model", "llm.request.model"},
+	// Session ID (JiuwenClaw → Claude Code → Codex)
+	"jiuwenclaw.session.id":      {"session.id", "codex.session.id"},
+}
+
+// normalizeAttributes copies values from fallback keys to standard keys
+// when the standard key is absent. Original keys are preserved.
+// This makes downstream extraction (typed columns, session, etc.)
+// work regardless of which agent produced the data.
+func normalizeAttributes(attrs map[string]string) map[string]string {
+	for stdKey, fallbacks := range attrAliases {
+		if _, exists := attrs[stdKey]; exists {
+			continue
+		}
+		for _, fb := range fallbacks {
+			if v, exists := attrs[fb]; exists {
+				attrs[stdKey] = v
+				break
+			}
+		}
+	}
+	return attrs
+}
 
 func keyValueToMap(attrs []*commonpb.KeyValue) map[string]string {
 	result := make(map[string]string, len(attrs))
