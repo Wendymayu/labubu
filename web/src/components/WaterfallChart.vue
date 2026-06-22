@@ -23,8 +23,7 @@
         >{{ opt.label }}</button>
       </div>
       <div class="toolbar-actions">
-        <button class="action-btn" @click="expandAll" title="Expand All">⇤</button>
-        <button class="action-btn" @click="collapseAll" title="Collapse All">⇥</button>
+        <button class="action-btn" @click="toggleExpandCollapse" :title="allExpanded ? 'Collapse All' : 'Expand All'">{{ allExpanded ? '⇥' : '⇤' }}</button>
       </div>
     </div>
     <div class="waterfall-stats">
@@ -298,6 +297,16 @@ watch(searchQuery, (newVal) => {
     }
   }
 })
+
+const allExpanded = computed(() => collapsedParents.value.size === 0)
+
+function toggleExpandCollapse() {
+  if (allExpanded.value) {
+    collapseAll()
+  } else {
+    expandAll()
+  }
+}
 
 function expandAll() {
   collapsedParents.value = new Set()
