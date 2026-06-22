@@ -41,7 +41,31 @@
           <div class="download-group">
             <button class="btn-download" @click="downloadTraceOTLP">{{ t('traceList.download') }}</button>
           </div>
+          <div class="insight-btn-group">
+            <button :class="['btn-insight', { active: activeInsight === 'diagnosis' }]" @click="toggleInsight('diagnosis')">
+              🔍 {{ t('diagnosis.tab') }}
+            </button>
+            <button :class="['btn-insight', { active: activeInsight === 'agent' }]" @click="toggleInsight('agent')">
+              🤖 {{ t('agentStats.agentBehavior') }}
+            </button>
+          </div>
         </div>
+      </div>
+
+      <div v-if="activeInsight" class="insight-panel">
+        <DiagnosisTab
+          v-if="activeInsight === 'diagnosis'"
+          :result="diagnosisResult"
+          :loading="diagnosisLoading"
+          :noModel="diagnosisNoModel"
+          :error="diagnosisError"
+          @diagnose="startDiagnosis"
+          @navigate-span="onDiagnosisNavigateSpan"
+        />
+        <AgentBehaviorTab
+          v-if="activeInsight === 'agent'"
+          :spans="trace.spans"
+        />
       </div>
 
       <div class="detail-layout" :class="{ 'drawer-open': drawerOpen }">
@@ -64,12 +88,6 @@
             </button>
             <button :class="['tab-btn', { active: activeTab === 'logs' }]" @click="switchTab('logs')">
               {{ t('logList.logCount', { count: totalLogCount }) }}
-            </button>
-            <button :class="['tab-btn', { active: activeTab === 'diagnosis' }]" @click="switchTab('diagnosis')">
-              {{ t('diagnosis.tab') }}
-            </button>
-            <button :class="['tab-btn', { active: activeTab === 'agent' }]" @click="switchTab('agent')">
-              {{ t('agentStats.agentBehavior') }}
             </button>
           </div>
 
@@ -99,21 +117,6 @@
           </div>
 
           <div v-if="activeTab === 'spans'" class="hint-click">Click any span to view details</div>
-
-          <div v-if="activeTab === 'diagnosis'" class="diagnosis-panel">
-            <DiagnosisTab
-              :result="diagnosisResult"
-              :loading="diagnosisLoading"
-              :noModel="diagnosisNoModel"
-              :error="diagnosisError"
-              @diagnose="startDiagnosis"
-              @navigate-span="onDiagnosisNavigateSpan"
-            />
-          </div>
-
-          <div v-if="activeTab === 'agent'" class="agent-behavior-panel">
-            <AgentBehaviorTab :spans="trace.spans" />
-          </div>
         </div>
         </div>
 
@@ -202,7 +205,16 @@ const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
 const traceLogs = ref<LogRecord[]>([])
 const logsLoading = ref(false)
-const activeTab = ref<'spans' | 'logs' | 'diagnosis' | 'agent'>('spans')
+const activeTab = ref<'spans' | 'logs'>('spans')
+const activeInsight = ref<'diagnosis' | 'agent' | null>(null)
+
+function toggleInsight(insight: 'diagnosis' | 'agent') {
+  if (activeInsight.value === insight) {
+    activeInsight.value = null
+  } else {
+    activeInsight.value = insight
+  }
+}
 const logSpanFilter = ref('')
 const logExpandedIdx = ref<number | null>(null)
 const viewMode = ref<'structured' | 'json'>('structured')
@@ -421,7 +433,7 @@ function clearLogFilter() {
   logSpanFilter.value = ''
 }
 
-function switchTab(tab: 'spans' | 'logs' | 'diagnosis' | 'agent') {
+function switchTab(tab: 'spans' | 'logs') {
   activeTab.value = tab
 }
 
@@ -544,6 +556,47 @@ onUnmounted(() => {
 .btn-download:hover {
   border-color: var(--accent-blue);
   color: var(--accent-blue);
+}
+
+/* === Insight buttons (Diagnosis / Agent) in summary === */
+.insight-btn-group {
+  display: flex;
+  gap: 0;
+  align-self: center;
+}
+.btn-insight {
+  padding: 6px 12px;
+  border: 1px solid var(--border-group);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-insight:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.btn-insight:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.btn-insight:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.btn-insight.active {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+.insight-panel {
+  margin-bottom: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  overflow: hidden;
+  animation: panelExpand 0.2s ease;
+}
+@keyframes panelExpand {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 1000px; }
 }
 
 /* === New drawer layout === */
