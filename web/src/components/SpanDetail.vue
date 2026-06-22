@@ -135,7 +135,7 @@ interface AttrGroup {
 }
 
 const GROUP_RULES: Omit<AttrGroup, 'items'>[] = [
-  { name: 'Gen AI', prefixes: ['gen_ai.'], defaultExpanded: true },
+  { name: 'Gen AI', prefixes: ['gen_ai.', 'llm.'], defaultExpanded: true },
   { name: 'HTTP', prefixes: ['http.', 'url.', 'net.'], defaultExpanded: false },
   { name: 'Service', prefixes: ['service.', 'telemetry.'], defaultExpanded: false },
 ]
