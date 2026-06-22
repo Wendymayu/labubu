@@ -214,14 +214,14 @@ const diagnosisLoading = ref(false)
 const diagnosisNoModel = ref(false)
 const diagnosisError = ref('')
 
-/** Context-window token breakdown, matching gen_ai.context.*_tokens convention. */
-const CTX_PATTERNS: { key: string; label: string }[] = [
-  { key: 'gen_ai.context.system_prompt',       label: 'System' },
-  { key: 'gen_ai.context.assistant_messages',  label: 'Assistant History' },
-  { key: 'gen_ai.context.user_messages',       label: 'User' },
-  { key: 'gen_ai.context.tool_results',        label: 'Tool Results' },
-  { key: 'gen_ai.context.tool_definitions',    label: 'Tool Definitions' },
-  { key: 'gen_ai.context.skill',               label: 'Skill' },
+/** Context-window token breakdown, with fallback patterns for multi-agent compatibility. */
+const CTX_PATTERNS: { patterns: string[]; label: string }[] = [
+  { patterns: ['gen_ai.context.system_prompt',       'system_prompt_tokens'],  label: 'System' },
+  { patterns: ['gen_ai.context.assistant_messages',  'assistant_messages_tokens'], label: 'Assistant History' },
+  { patterns: ['gen_ai.context.user_messages',       'user_messages_tokens'],  label: 'User' },
+  { patterns: ['gen_ai.context.tool_results',        'tool_results_tokens'],   label: 'Tool Results' },
+  { patterns: ['gen_ai.context.tool_definitions',    'tool_definitions_tokens'], label: 'Tool Definitions' },
+  { patterns: ['gen_ai.context.skill',               'skill_tokens'],          label: 'Skill' },
 ]
 
 const selectedSpanTokenSlices = computed<PieSlice[]>(() => {
@@ -230,8 +230,12 @@ const selectedSpanTokenSlices = computed<PieSlice[]>(() => {
   const attrs = span.attributes || {}
   const slices: PieSlice[] = []
 
-  for (const { key, label } of CTX_PATTERNS) {
-    const raw = attrs[key]
+  for (const { patterns, label } of CTX_PATTERNS) {
+    let raw: string | undefined
+    for (const p of patterns) {
+      raw = attrs[p]
+      if (raw) break
+    }
     if (!raw) continue
     const n = parseInt(raw, 10)
     if (isNaN(n) || n <= 0) continue

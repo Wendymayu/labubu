@@ -83,13 +83,13 @@ function getColors(): Record<string, string> {
 
 const { theme } = useTheme()
 
-const KEY_PATTERNS: { pattern: string; key: string; label: string }[] = [
-  { pattern: 'gen_ai.context.system_prompt',       key: 'system',           label: 'System' },
-  { pattern: 'gen_ai.context.assistant_messages',  key: 'assistant',        label: 'Assistant History' },
-  { pattern: 'gen_ai.context.user_messages',       key: 'user',             label: 'User' },
-  { pattern: 'gen_ai.context.tool_results',        key: 'tool',             label: 'Tool Results' },
-  { pattern: 'gen_ai.context.tool_definitions',    key: 'tool_definitions', label: 'Tool Definitions' },
-  { pattern: 'gen_ai.context.skill',               key: 'skill',            label: 'Skill' },
+const KEY_PATTERNS: { patterns: string[]; key: string; label: string }[] = [
+  { patterns: ['gen_ai.context.system_prompt',       'system_prompt_tokens'],  key: 'system',           label: 'System' },
+  { patterns: ['gen_ai.context.assistant_messages',  'assistant_messages_tokens'], key: 'assistant',        label: 'Assistant History' },
+  { patterns: ['gen_ai.context.user_messages',       'user_messages_tokens'],  key: 'user',             label: 'User' },
+  { patterns: ['gen_ai.context.tool_results',        'tool_results_tokens'],   key: 'tool',             label: 'Tool Results' },
+  { patterns: ['gen_ai.context.tool_definitions',    'tool_definitions_tokens'], key: 'tool_definitions', label: 'Tool Definitions' },
+  { patterns: ['gen_ai.context.skill',               'skill_tokens'],          key: 'skill',            label: 'Skill' },
 ]
 
 interface Segment {
