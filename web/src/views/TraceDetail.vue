@@ -41,31 +41,38 @@
           <div class="download-group">
             <button class="btn-download" @click="downloadTraceOTLP">{{ t('traceList.download') }}</button>
           </div>
-          <div class="insight-btn-group">
-            <button :class="['btn-insight', { active: activeInsight === 'diagnosis' }]" @click="toggleInsight('diagnosis')">
-              🔍 {{ t('diagnosis.tab') }}
-            </button>
-            <button :class="['btn-insight', { active: activeInsight === 'agent' }]" @click="toggleInsight('agent')">
-              🤖 {{ t('agentStats.agentBehavior') }}
-            </button>
-          </div>
+        </div>
+        <div class="summary-actions">
+          <button :class="['btn-insight', { active: activeInsight === 'diagnosis' }]" @click="toggleInsight('diagnosis')">
+            🔍 {{ t('diagnosis.tab') }}
+          </button>
+          <button :class="['btn-insight', { active: activeInsight === 'agent' }]" @click="toggleInsight('agent')">
+            🤖 {{ t('agentStats.agentBehavior') }}
+          </button>
         </div>
       </div>
 
-      <div v-if="activeInsight" class="insight-panel">
-        <DiagnosisTab
-          v-if="activeInsight === 'diagnosis'"
-          :result="diagnosisResult"
-          :loading="diagnosisLoading"
-          :noModel="diagnosisNoModel"
-          :error="diagnosisError"
-          @diagnose="startDiagnosis"
-          @navigate-span="onDiagnosisNavigateSpan"
-        />
-        <AgentBehaviorTab
-          v-if="activeInsight === 'agent'"
-          :spans="trace.spans"
-        />
+      <div v-if="activeInsight" class="insight-backdrop" @click="activeInsight = null"></div>
+      <div v-if="activeInsight" class="insight-overlay">
+        <div class="insight-overlay-header">
+          <span class="insight-overlay-title">{{ activeInsight === 'diagnosis' ? t('diagnosis.tab') : t('agentStats.agentBehavior') }}</span>
+          <button class="insight-overlay-close" @click="activeInsight = null" title="Close">✕</button>
+        </div>
+        <div class="insight-overlay-body">
+          <DiagnosisTab
+            v-if="activeInsight === 'diagnosis'"
+            :result="diagnosisResult"
+            :loading="diagnosisLoading"
+            :noModel="diagnosisNoModel"
+            :error="diagnosisError"
+            @diagnose="startDiagnosis"
+            @navigate-span="onDiagnosisNavigateSpan"
+          />
+          <AgentBehaviorTab
+            v-if="activeInsight === 'agent'"
+            :spans="trace.spans"
+          />
+        </div>
       </div>
 
       <div class="detail-layout" :class="{ 'drawer-open': drawerOpen }">
@@ -502,8 +509,12 @@ function formatTokens(tokens: number | null): string {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && drawerOpen.value) {
-    closeDrawer()
+  if (e.key === 'Escape') {
+    if (drawerOpen.value) {
+      closeDrawer()
+    } else if (activeInsight.value) {
+      activeInsight.value = null
+    }
   }
 }
 
@@ -558,25 +569,20 @@ onUnmounted(() => {
   color: var(--accent-blue);
 }
 
-/* === Insight buttons (Diagnosis / Agent) in summary === */
-.insight-btn-group {
+/* === Insight actions bar below summary === */
+.summary-actions {
   display: flex;
-  gap: 0;
-  align-self: center;
+  gap: 6px;
+  margin-top: 10px;
 }
 .btn-insight {
-  padding: 6px 12px;
+  padding: 6px 14px;
   border: 1px solid var(--border-group);
+  border-radius: 6px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
-}
-.btn-insight:first-child {
-  border-radius: 6px 0 0 6px;
-}
-.btn-insight:last-child {
-  border-radius: 0 6px 6px 0;
 }
 .btn-insight:hover {
   border-color: var(--accent-blue);
@@ -587,16 +593,78 @@ onUnmounted(() => {
   color: #fff;
   border-color: var(--accent-blue);
 }
-.insight-panel {
-  margin-bottom: 16px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  overflow: hidden;
-  animation: panelExpand 0.2s ease;
+
+/* === Insight overlay panel === */
+.insight-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 50;
 }
-@keyframes panelExpand {
-  from { opacity: 0; max-height: 0; }
-  to { opacity: 1; max-height: 1000px; }
+.insight-overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 720px;
+  max-width: 90vw;
+  max-height: 80vh;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  z-index: 51;
+  display: flex;
+  flex-direction: column;
+  animation: overlayFadeIn 0.2s ease;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.insight-overlay-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+.insight-overlay-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.insight-overlay-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.insight-overlay-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover-subtle);
+}
+.insight-overlay-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.insight-overlay-body::-webkit-scrollbar { width: 4px; }
+.insight-overlay-body::-webkit-scrollbar-track { background: transparent; }
+.insight-overlay-body::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
+@keyframes overlayFadeIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@media (max-width: 600px) {
+  .insight-overlay {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
 }
 
 /* === New drawer layout === */
