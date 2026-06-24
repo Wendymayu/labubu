@@ -27,7 +27,9 @@ type Span struct {
 	StatusMessage          string
 	InputTokens            *uint32 // nullable — only set for LLM spans
 	OutputTokens           *uint32
-	TotalTokens            *uint32
+	TotalTokens            *uint32 // input + cache_creation + cache_read + output
+	CacheCreationTokens    *uint32 // prompt-caching write tokens (Claude/Anthropic)
+	CacheReadTokens        *uint32 // prompt-caching read tokens (Claude/Anthropic)
 	GenAIRequestModel      *string // nullable
 	TraceState             string
 }
@@ -223,6 +225,8 @@ type SpanDetail struct {
 	InputTokens         *uint32           `json:"input_tokens"`
 	OutputTokens        *uint32           `json:"output_tokens"`
 	TotalTokens         *uint32           `json:"total_tokens"`
+	CacheCreationTokens *uint32           `json:"cache_creation_tokens"`
+	CacheReadTokens     *uint32           `json:"cache_read_tokens"`
 	GenAIRequestModel   *string           `json:"gen_ai_request_model"`
 	GenAISystem         *string           `json:"gen_ai_system"`        // Attributes["gen_ai.system"]
 	ToolName            *string           `json:"tool_name"`            // Attributes["gen_ai.tool.name"]

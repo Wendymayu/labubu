@@ -29,6 +29,14 @@
         <span class="ts-label">Input</span>
         <span class="ts-val">{{ formatTokens(span.input_tokens) }}</span>
       </div>
+      <div v-if="span.cache_creation_tokens || span.cache_read_tokens" class="ts-item ts-item-cache">
+        <span class="ts-label">Cache Create</span>
+        <span class="ts-val ts-cache">{{ formatTokens(span.cache_creation_tokens) }}</span>
+      </div>
+      <div v-if="span.cache_creation_tokens || span.cache_read_tokens" class="ts-item ts-item-cache">
+        <span class="ts-label">Cache Read</span>
+        <span class="ts-val ts-cache">{{ formatTokens(span.cache_read_tokens) }}</span>
+      </div>
       <div class="ts-item">
         <span class="ts-label">Output</span>
         <span class="ts-val">{{ formatTokens(span.output_tokens) }}</span>
@@ -305,6 +313,7 @@ function formatDuration(ms: number): string {
 
 function formatTokens(tokens: number | undefined | null): string {
   if (tokens == null) return '-'
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
   return String(tokens)
 }
@@ -405,6 +414,13 @@ function statusClass(status: string): string {
 }
 .ts-highlight {
   color: var(--token-highlight);
+}
+.ts-item-cache {
+  border-left: 1px dashed var(--border-group);
+  border-right: 1px dashed var(--border-group);
+}
+.ts-cache {
+  color: var(--accent-blue);
 }
 
 /* --- Attributes --- */

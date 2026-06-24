@@ -131,13 +131,25 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 				if p.ModelName == *span.GenAIRequestModel {
 					inputT := float64(0)
 					outputT := float64(0)
+					cacheCreateT := float64(0)
+					cacheReadT := float64(0)
 					if span.InputTokens != nil {
 						inputT = float64(*span.InputTokens)
 					}
 					if span.OutputTokens != nil {
 						outputT = float64(*span.OutputTokens)
 					}
-					totalCost += (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+					if span.CacheCreationTokens != nil {
+						cacheCreateT = float64(*span.CacheCreationTokens)
+					}
+					if span.CacheReadTokens != nil {
+						cacheReadT = float64(*span.CacheReadTokens)
+					}
+					// Anthropic prompt-caching differential rates.
+					totalCost += (inputT*p.InputPrice +
+						cacheCreateT*p.InputPrice*1.25 +
+						cacheReadT*p.InputPrice*0.1 +
+						outputT*p.OutputPrice) / 1_000_000.0
 					hasCost = true
 					if currency == "" {
 						currency = p.Currency
@@ -416,6 +428,8 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 			InputTokens:       s.InputTokens,
 			OutputTokens:      s.OutputTokens,
 			TotalTokens:       s.TotalTokens,
+			CacheCreationTokens: s.CacheCreationTokens,
+			CacheReadTokens:   s.CacheReadTokens,
 			GenAIRequestModel: s.GenAIRequestModel,
 		}
 
@@ -873,13 +887,25 @@ func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error 
 			if p.ModelName == *span.GenAIRequestModel {
 				inputT := float64(0)
 				outputT := float64(0)
+				cacheCreateT := float64(0)
+				cacheReadT := float64(0)
 				if span.InputTokens != nil {
 					inputT = float64(*span.InputTokens)
 				}
 				if span.OutputTokens != nil {
 					outputT = float64(*span.OutputTokens)
 				}
-				c := (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+				if span.CacheCreationTokens != nil {
+					cacheCreateT = float64(*span.CacheCreationTokens)
+				}
+				if span.CacheReadTokens != nil {
+					cacheReadT = float64(*span.CacheReadTokens)
+				}
+				// Anthropic prompt-caching differential rates.
+				c := (inputT*p.InputPrice +
+					cacheCreateT*p.InputPrice*1.25 +
+					cacheReadT*p.InputPrice*0.1 +
+					outputT*p.OutputPrice) / 1_000_000.0
 				totalCost += c
 				hasCost = true
 				if currency == "" {
@@ -963,11 +989,20 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 		entry.traceCount++
 
 		// Also accumulate input/output tokens for the model entry.
+		// "Input" is gross prompt throughput: non-cached input + cache write + cache read.
 		for _, s := range m.spans {
 			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel == modelName {
 				if s.InputTokens != nil {
 					entry.inputTokens += uint64(*s.InputTokens)
 					totalInputTokens += uint64(*s.InputTokens)
+				}
+				if s.CacheCreationTokens != nil {
+					entry.inputTokens += uint64(*s.CacheCreationTokens)
+					totalInputTokens += uint64(*s.CacheCreationTokens)
+				}
+				if s.CacheReadTokens != nil {
+					entry.inputTokens += uint64(*s.CacheReadTokens)
+					totalInputTokens += uint64(*s.CacheReadTokens)
 				}
 				if s.OutputTokens != nil {
 					entry.outputTokens += uint64(*s.OutputTokens)

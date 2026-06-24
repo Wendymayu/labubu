@@ -1,17 +1,15 @@
 <template>
   <div class="llm-config">
-    <h2>LLM Configs</h2>
-
     <div class="toolbar">
-      <button class="btn btn-primary" @click="openAdd">+ Add Model</button>
+      <button class="btn btn-primary" @click="openAdd">{{ t('llmConfig.addModel') }}</button>
     </div>
 
     <!-- Form modal -->
     <div v-if="showForm" class="form-overlay" @click.self="closeForm">
       <div class="form-box">
-        <h3>{{ editing ? 'Edit' : 'Add' }} LLM Model</h3>
+        <h3>{{ editing ? t('llmConfig.editTitle') : t('llmConfig.addTitle') }}</h3>
 
-        <label>Model Name:
+        <label>{{ t('llmConfig.modelName') }}:
           <input v-model="form.model_name" placeholder="claude-opus-4-8" />
         </label>
         <label>{{ t('llmConfig.providerType') }}:
@@ -20,28 +18,28 @@
             <option value="anthropic">{{ t('llmConfig.providerTypeAnthropic') }}</option>
           </select>
         </label>
-        <label>Provider URL:
+        <label>{{ t('llmConfig.providerUrl') }}:
           <input v-model="form.provider_url" :placeholder="form.provider_type === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions'" />
         </label>
-        <label>API Key:
-          <input v-model="form.api_key" :placeholder="editing ? '(unchanged)' : 'sk-ant-...'" />
+        <label>{{ t('llmConfig.apiKey') }}:
+          <input v-model="form.api_key" :placeholder="editing ? t('llmConfig.apiKeyUnchanged') : 'sk-ant-...'" />
         </label>
-        <label>Temperature:
+        <label>{{ t('llmConfig.temperature') }}:
           <input v-model.number="form.temperature" type="number" step="0.1" min="0" max="2" />
         </label>
-        <label>Max Tokens:
+        <label>{{ t('llmConfig.maxTokens') }}:
           <input v-model.number="form.max_tokens" type="number" min="1" />
         </label>
         <label class="checkbox-label">
           <input type="checkbox" v-model="form.is_default" />
-          Set as default model
+          {{ t('llmConfig.setAsDefault') }}
         </label>
 
         <div class="form-actions">
           <button class="btn btn-primary" @click="saveConfig" :disabled="saving">
-            {{ saving ? 'Saving...' : 'Save' }}
+            {{ saving ? t('llmConfig.saving') : t('llmConfig.save') }}
           </button>
-          <button class="btn" @click="closeForm">Cancel</button>
+          <button class="btn" @click="closeForm">{{ t('llmConfig.cancel') }}</button>
         </div>
         <p v-if="saveError" class="form-error">{{ saveError }}</p>
       </div>
@@ -51,14 +49,14 @@
     <table v-if="configs.length > 0" class="config-table">
       <thead>
         <tr>
-          <th>Model Name</th>
+          <th>{{ t('llmConfig.modelName') }}</th>
           <th>{{ t('llmConfig.providerType') }}</th>
-          <th>Provider URL</th>
-          <th>API Key</th>
-          <th>Default</th>
-          <th>Temp</th>
-          <th>Max Tokens</th>
-          <th>Actions</th>
+          <th>{{ t('llmConfig.providerUrl') }}</th>
+          <th>{{ t('llmConfig.apiKey') }}</th>
+          <th>{{ t('llmConfig.default') }}</th>
+          <th>{{ t('llmConfig.temp') }}</th>
+          <th>{{ t('llmConfig.maxTokens') }}</th>
+          <th>{{ t('llmConfig.actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -69,20 +67,20 @@
           <td><code>{{ c.api_key }}</code></td>
           <td>
             <span v-if="c.is_default" class="default-star">&#9733;</span>
-            <button v-else class="btn btn-sm" @click="setDefault(c)">Set Default</button>
+            <button v-else class="btn btn-sm" @click="setDefault(c)">{{ t('llmConfig.setDefault') }}</button>
           </td>
           <td>{{ c.temperature }}</td>
           <td>{{ c.max_tokens }}</td>
           <td>
-            <button class="btn btn-sm" @click="editConfig(c)">Edit</button>
-            <button class="btn btn-sm btn-danger" @click="deleteConfig(c)">Delete</button>
+            <button class="btn btn-sm" @click="editConfig(c)">{{ t('llmConfig.edit') }}</button>
+            <button class="btn btn-sm btn-danger" @click="deleteConfig(c)">{{ t('llmConfig.delete') }}</button>
           </td>
         </tr>
       </tbody>
     </table>
 
     <div v-else class="empty">
-      No LLM models configured. Add a model to enable LLM-powered trace analysis.
+      {{ t('llmConfig.empty') }}
     </div>
   </div>
 </template>
@@ -158,11 +156,11 @@ function closeForm() {
 async function saveConfig() {
   saveError.value = ''
   if (!form.model_name || !form.provider_url) {
-    saveError.value = 'Model name and provider URL are required.'
+    saveError.value = t('llmConfig.errNameUrlRequired')
     return
   }
   if (!editing.value && !form.api_key) {
-    saveError.value = 'API key is required.'
+    saveError.value = t('llmConfig.errApiKeyRequired')
     return
   }
   saving.value = true
@@ -175,7 +173,7 @@ async function saveConfig() {
     closeForm()
     await loadConfigs()
   } catch (e: any) {
-    saveError.value = e.message || 'Save failed'
+    saveError.value = e.message || t('llmConfig.errSaveFailed')
   } finally {
     saving.value = false
   }
@@ -190,21 +188,21 @@ async function setDefault(c: LlmConfig) {
     })
     await loadConfigs()
   } catch (e: any) {
-    alert('Failed to set default: ' + e.message)
+    alert(t('llmConfig.setDefaultFailed', { error: e.message }))
   }
 }
 
 async function deleteConfig(c: LlmConfig) {
-  let msg = `Delete LLM config "${c.model_name}"?`
+  let msg = t('llmConfig.deleteConfirm', { name: c.model_name })
   if (c.is_default) {
-    msg = `"${c.model_name}" is the active default model. Delete anyway?`
+    msg = t('llmConfig.deleteDefaultConfirm', { name: c.model_name })
   }
   if (!confirm(msg)) return
   try {
     await deleteLlmConfig(c.id)
     await loadConfigs()
   } catch (e: any) {
-    alert('Delete failed: ' + e.message)
+    alert(t('llmConfig.deleteFailed', { error: e.message }))
   }
 }
 
@@ -212,8 +210,7 @@ onMounted(loadConfigs)
 </script>
 
 <style scoped>
-.llm-config { max-width: 960px; }
-.llm-config h2 { margin-bottom: 16px; }
+.llm-config { max-width: 960px; margin: 0 auto; }
 .toolbar { margin-bottom: 16px; }
 
 .config-table {

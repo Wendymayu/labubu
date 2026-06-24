@@ -414,14 +414,22 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 
 	inputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.input_tokens")
 	outputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.output_tokens")
+	cacheCreationTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.cache_creation_input_tokens")
+	cacheReadTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.cache_read_input_tokens")
 	var totalTokens *uint32
-	if inputTokens != nil || outputTokens != nil {
+	if inputTokens != nil || outputTokens != nil || cacheCreationTokens != nil || cacheReadTokens != nil {
 		var sum uint32
 		if inputTokens != nil {
 			sum += *inputTokens
 		}
 		if outputTokens != nil {
 			sum += *outputTokens
+		}
+		if cacheCreationTokens != nil {
+			sum += *cacheCreationTokens
+		}
+		if cacheReadTokens != nil {
+			sum += *cacheReadTokens
 		}
 		if tt := getUint32AttrFromMap(attrs, "gen_ai.usage.total_tokens"); tt != nil {
 			sum = *tt
@@ -450,6 +458,8 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 		InputTokens:       inputTokens,
 		OutputTokens:      outputTokens,
 		TotalTokens:       totalTokens,
+		CacheCreationTokens: cacheCreationTokens,
+		CacheReadTokens:     cacheReadTokens,
 		GenAIRequestModel: genAIModel,
 		TraceState:        ps.TraceState,
 	}
@@ -466,6 +476,11 @@ var attrAliases = map[string][]string{
 	"gen_ai.usage.input_tokens":  {"input_tokens", "llm.usage.input_tokens"},
 	"gen_ai.usage.output_tokens": {"output_tokens", "llm.usage.output_tokens"},
 	"gen_ai.usage.total_tokens":  {"total_tokens", "llm.usage.total_tokens"},
+	// Prompt-caching tokens (Claude Code / Anthropic). These dominate real
+	// token consumption but are reported as separate attributes, so they must
+	// be folded into total_tokens to reflect true throughput.
+	"gen_ai.usage.cache_creation_input_tokens": {"cache_creation_tokens", "cache_creation_input_tokens"},
+	"gen_ai.usage.cache_read_input_tokens":     {"cache_read_tokens", "cache_read_input_tokens"},
 	// Request model
 	"gen_ai.request.model":       {"model", "llm.request.model"},
 	// Session ID (JiuwenClaw → Claude Code → Codex)

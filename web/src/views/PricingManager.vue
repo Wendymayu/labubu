@@ -1,35 +1,33 @@
 <template>
   <div class="pricing-manager">
-    <h2>Model Pricing</h2>
-
     <div class="pricing-toolbar">
-      <button class="btn btn-primary" @click="openAdd">+ Add Model</button>
+      <button class="btn btn-primary" @click="openAdd">{{ t('pricingManager.addModel') }}</button>
       <button class="btn" @click="handleRecalc" :disabled="recalcing">
-        {{ recalcing ? 'Recalculating...' : 'Recalculate All Costs' }}
+        {{ recalcing ? t('pricingManager.recalculating') : t('pricingManager.recalcAll') }}
       </button>
     </div>
 
     <div v-if="showForm" class="pricing-form-overlay" @click.self="showForm = false">
       <div class="pricing-form">
-        <h3>{{ editingModel ? 'Edit' : 'Add' }} Model Pricing</h3>
-        <label>Model Name:
+        <h3>{{ editingModel ? t('pricingManager.editTitle') : t('pricingManager.addTitle') }}</h3>
+        <label>{{ t('pricingManager.modelName') }}:
           <input v-model="form.model_name" placeholder="claude-opus-4-8" />
         </label>
-        <label>Input Price (per 1M tokens):
+        <label>{{ t('pricingManager.inputPriceHint') }}:
           <input v-model.number="form.input_price" type="number" step="0.01" min="0" />
         </label>
-        <label>Output Price (per 1M tokens):
+        <label>{{ t('pricingManager.outputPriceHint') }}:
           <input v-model.number="form.output_price" type="number" step="0.01" min="0" />
         </label>
-        <label>Currency:
+        <label>{{ t('pricingManager.currency') }}:
           <select v-model="form.currency">
             <option value="USD">USD ($)</option>
             <option value="CNY">CNY (¥)</option>
           </select>
         </label>
         <div class="form-actions">
-          <button class="btn btn-primary" @click="saveModel">Save</button>
-          <button class="btn" @click="showForm = false">Cancel</button>
+          <button class="btn btn-primary" @click="saveModel">{{ t('pricingManager.save') }}</button>
+          <button class="btn" @click="showForm = false">{{ t('pricingManager.cancel') }}</button>
         </div>
       </div>
     </div>
@@ -37,11 +35,11 @@
     <table class="pricing-table" v-if="models.length > 0">
       <thead>
         <tr>
-          <th>Model Name</th>
-          <th>Input Price</th>
-          <th>Output Price</th>
-          <th>Currency</th>
-          <th>Actions</th>
+          <th>{{ t('pricingManager.modelName') }}</th>
+          <th>{{ t('pricingManager.inputPrice') }}</th>
+          <th>{{ t('pricingManager.outputPrice') }}</th>
+          <th>{{ t('pricingManager.currency') }}</th>
+          <th>{{ t('pricingManager.actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -51,19 +49,22 @@
           <td>${{ m.output_price }}/1M</td>
           <td>{{ m.currency }}</td>
           <td>
-            <button class="btn btn-sm" @click="editModel(m)">Edit</button>
-            <button class="btn btn-sm btn-danger" @click="deleteModel(m.model_name)">Delete</button>
+            <button class="btn btn-sm" @click="editModel(m)">{{ t('pricingManager.edit') }}</button>
+            <button class="btn btn-sm btn-danger" @click="deleteModel(m.model_name)">{{ t('pricingManager.delete') }}</button>
           </td>
         </tr>
       </tbody>
     </table>
-    <div v-else class="empty">No pricing configured. Add a model to start tracking costs.</div>
+    <div v-else class="empty">{{ t('pricingManager.empty') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { getModelPricing, saveModelPricing, deleteModelPricing, recalcCosts, type ModelPricing } from '../api/client'
+
+const { t } = useI18n()
 
 const models = ref<ModelPricing[]>([])
 const showForm = ref(false)
@@ -97,7 +98,7 @@ async function saveModel() {
 }
 
 async function deleteModel(name: string) {
-  if (!confirm(`Delete pricing for "${name}"?`)) return
+  if (!confirm(t('pricingManager.deleteConfirm', { name }))) return
   await deleteModelPricing(name)
   await fetchModels()
 }
@@ -106,9 +107,9 @@ async function handleRecalc() {
   recalcing.value = true
   try {
     const result = await recalcCosts()
-    alert(`Recalculation complete. ${result.traces_updated} traces updated.`)
+    alert(t('pricingManager.recalcDone', { count: result.traces_updated }))
   } catch (e: any) {
-    alert('Recalculation failed: ' + e.message)
+    alert(t('pricingManager.recalcFailed', { error: e.message }))
   } finally {
     recalcing.value = false
   }
@@ -118,8 +119,7 @@ onMounted(fetchModels)
 </script>
 
 <style scoped>
-.pricing-manager { max-width: 800px; }
-.pricing-manager h2 { margin-bottom: 16px; }
+.pricing-manager { max-width: 800px; margin: 0 auto; }
 .pricing-toolbar { display: flex; gap: 8px; margin-bottom: 16px; }
 .pricing-table { width: 100%; border-collapse: collapse; }
 .pricing-table th, .pricing-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border-default); }

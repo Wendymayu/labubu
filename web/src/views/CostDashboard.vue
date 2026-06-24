@@ -1,7 +1,5 @@
 <template>
   <div class="cost-dashboard">
-    <h2>{{ t('costDashboard.title') }}</h2>
-
     <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
     <div v-else-if="loadError" class="error">{{ loadError }}</div>
     <div v-else-if="noPricing" class="no-pricing">
@@ -138,10 +136,6 @@ onMounted(() => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px;
-}
-
-.cost-dashboard h2 {
-  margin-bottom: 16px;
 }
 
 .period-bar {

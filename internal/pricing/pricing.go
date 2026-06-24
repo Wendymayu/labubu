@@ -19,18 +19,34 @@ func CalculateSpanCost(span storage.Span, pricings []storage.ModelPricing) *floa
 		return nil
 	}
 
+	// Anthropic prompt-caching charges cache tokens at differential rates:
+	// cache creation (write) = 1.25× input price, cache read = 0.1× input price.
+	const cacheCreateRate = 1.25
+	const cacheReadRate = 0.1
+
 	modelName := *span.GenAIRequestModel
 	for _, p := range pricings {
 		if p.ModelName == modelName {
 			inputTokens := float64(0)
 			outputTokens := float64(0)
+			cacheCreate := float64(0)
+			cacheRead := float64(0)
 			if span.InputTokens != nil {
 				inputTokens = float64(*span.InputTokens)
 			}
 			if span.OutputTokens != nil {
 				outputTokens = float64(*span.OutputTokens)
 			}
-			cost := (inputTokens*p.InputPrice + outputTokens*p.OutputPrice) / 1_000_000.0
+			if span.CacheCreationTokens != nil {
+				cacheCreate = float64(*span.CacheCreationTokens)
+			}
+			if span.CacheReadTokens != nil {
+				cacheRead = float64(*span.CacheReadTokens)
+			}
+			cost := (inputTokens*p.InputPrice +
+				cacheCreate*p.InputPrice*cacheCreateRate +
+				cacheRead*p.InputPrice*cacheReadRate +
+				outputTokens*p.OutputPrice) / 1_000_000.0
 			cost = math.Round(cost*1_000_000) / 1_000_000
 			return &cost
 		}

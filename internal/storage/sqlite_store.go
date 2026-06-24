@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,11 @@ func NewChDBStore(dataDir string) (Store, error) {
 	// Migrate: add provider_type column to existing llm_configs tables.
 	db.Exec(`ALTER TABLE llm_configs ADD COLUMN provider_type TEXT NOT NULL DEFAULT 'openai'`)
 
+	// Migrate: add prompt-caching token columns to existing spans tables.
+	// New columns are nullable; populated by the backfill below for old rows.
+	db.Exec(`ALTER TABLE spans ADD COLUMN cache_creation_tokens INTEGER`)
+	db.Exec(`ALTER TABLE spans ADD COLUMN cache_read_tokens INTEGER`)
+
 	s := &sqliteStore{db: db, dir: dataDir}
 
 	// Seed default pricing from config (same as memStore/chDB)
@@ -65,7 +71,172 @@ func NewChDBStore(dataDir string) (Store, error) {
 		s.UpsertModelPricing(context.Background(), m)
 	}
 
+	// Backfill prompt-caching token columns + totals for pre-existing spans.
+	s.backfillCacheTokens(context.Background())
+
 	return s, nil
+}
+
+// backfillCacheTokens migrates spans that predate the cache_creation_tokens /
+// cache_read_tokens columns. Those spans stored only input+output in
+// total_tokens, but the raw attributes JSON still holds the Claude Code cache
+// values. This re-derives the cache columns, recomputes span total_tokens, and
+// re-aggregates trace total_tokens + cost. Idempotent: once cache_creation_tokens
+// is non-NULL the span is skipped.
+func (s *sqliteStore) backfillCacheTokens(ctx context.Context) {
+	// Load pricing for cost recompute.
+	pricingMap := make(map[string]ModelPricing)
+	if pricingRows, err := s.db.QueryContext(ctx, `SELECT model_name, input_price, output_price, currency FROM model_pricing`); err == nil {
+		for pricingRows.Next() {
+			var p ModelPricing
+			if pricingRows.Scan(&p.ModelName, &p.InputPrice, &p.OutputPrice, &p.Currency) == nil {
+				pricingMap[p.ModelName] = p
+			}
+		}
+		pricingRows.Close()
+	}
+
+	// Find spans predating the cache columns whose attributes hold cache values.
+	// Both columns NULL precisely targets pre-fix spans (new spans always write
+	// at least one cache column, even if zero).
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, span_id_hex, input_tokens, output_tokens, attributes
+		 FROM spans
+		 WHERE cache_creation_tokens IS NULL AND cache_read_tokens IS NULL
+		   AND (attributes LIKE '%cache_creation_tokens%' OR attributes LIKE '%cache_read_tokens%')`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	type spanFix struct {
+		traceID, spanID           string
+		cacheCreate, cacheRead, total uint32
+	}
+	var fixes []spanFix
+	affectedTraces := make(map[string]struct{})
+
+	for rows.Next() {
+		var traceID, spanID, attrsJSON string
+		var inputTokens, outputTokens sql.NullInt32
+		if err := rows.Scan(&traceID, &spanID, &inputTokens, &outputTokens, &attrsJSON); err != nil {
+			continue
+		}
+		attrs := map[string]string{}
+		_ = json.Unmarshal([]byte(attrsJSON), &attrs)
+		cc := parseUint32Attr(attrs, "cache_creation_tokens", "cache_creation_input_tokens")
+		cr := parseUint32Attr(attrs, "cache_read_tokens", "cache_read_input_tokens")
+
+		var sum uint32
+		if inputTokens.Valid {
+			sum += uint32(inputTokens.Int32)
+		}
+		if outputTokens.Valid {
+			sum += uint32(outputTokens.Int32)
+		}
+		sum += cc + cr
+
+		fixes = append(fixes, spanFix{traceID, spanID, cc, cr, sum})
+		affectedTraces[traceID] = struct{}{}
+	}
+	rows.Close()
+
+	if len(fixes) == 0 {
+		return
+	}
+
+	const cacheCreateRate = 1.25
+	const cacheReadRate = 0.1
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+
+	for _, f := range fixes {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE spans SET cache_creation_tokens = ?, cache_read_tokens = ?, total_tokens = ? WHERE trace_id_hex = ? AND span_id_hex = ?`,
+			f.cacheCreate, f.cacheRead, f.total, f.traceID, f.spanID); err != nil {
+			return
+		}
+	}
+
+	// Re-aggregate affected traces: total_tokens + cost.
+	for traceID := range affectedTraces {
+		var sumTotal sql.NullInt64
+		_ = tx.QueryRowContext(ctx,
+			`SELECT COALESCE(sum(total_tokens),0) FROM spans WHERE trace_id_hex = ?`, traceID,
+		).Scan(&sumTotal)
+		var traceTotal *uint32
+		if sumTotal.Valid && sumTotal.Int64 > 0 {
+			v := uint32(sumTotal.Int64)
+			traceTotal = &v
+		}
+
+		var cost float64
+		var currency string
+		if tokenRows, err := tx.QueryContext(ctx,
+			`SELECT input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
+			 FROM spans WHERE trace_id_hex = ? AND total_tokens IS NOT NULL`, traceID); err == nil {
+			for tokenRows.Next() {
+				var inT, outT, ccT, crT sql.NullInt32
+				var model sql.NullString
+				if tokenRows.Scan(&inT, &outT, &ccT, &crT, &model) != nil {
+					continue
+				}
+				p, ok := pricingMap[model.String]
+				if !ok {
+					continue
+				}
+				in := 0.0
+				if inT.Valid {
+					in = float64(inT.Int32)
+				}
+				out := 0.0
+				if outT.Valid {
+					out = float64(outT.Int32)
+				}
+				ccv := 0.0
+				if ccT.Valid {
+					ccv = float64(ccT.Int32)
+				}
+				crv := 0.0
+				if crT.Valid {
+					crv = float64(crT.Int32)
+				}
+				spanCost := (in*p.InputPrice + ccv*p.InputPrice*cacheCreateRate +
+					crv*p.InputPrice*cacheReadRate + out*p.OutputPrice) / 1_000_000.0
+				cost += spanCost
+				if currency == "" {
+					currency = p.Currency
+				}
+			}
+			tokenRows.Close()
+		}
+
+		cost = math.Round(cost*1e6) / 1e6
+		if cost > 0 {
+			tx.ExecContext(ctx, `UPDATE traces SET total_tokens = ?, cost = ?, cost_currency = ? WHERE trace_id_hex = ?`,
+				traceTotal, cost, currency, traceID)
+		} else {
+			tx.ExecContext(ctx, `UPDATE traces SET total_tokens = ? WHERE trace_id_hex = ?`, traceTotal, traceID)
+		}
+	}
+
+	_ = tx.Commit()
+}
+
+// parseUint32Attr reads the first present numeric attribute key as uint32.
+func parseUint32Attr(attrs map[string]string, keys ...string) uint32 {
+	for _, k := range keys {
+		if v, ok := attrs[k]; ok {
+			if n, err := strconv.ParseUint(v, 10, 32); err == nil {
+				return uint32(n)
+			}
+		}
+	}
+	return 0
 }
 
 // --- Trace methods ---
@@ -89,14 +260,14 @@ func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, sc
 				start_time_ms, end_time_ms, duration_ms, attributes,
 				dropped_attributes_count, events, dropped_events_count,
 				links, dropped_links_count, status_code, status_message,
-				input_tokens, output_tokens, total_tokens, gen_ai_request_model
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			TraceIDToHex(sp.TraceID), SpanIDToHex(sp.SpanID), SpanIDToHex(sp.ParentSpanID),
 			sp.TraceState, sp.Name, KindToString(sp.Kind),
 			sp.StartTimeMS, sp.EndTimeMS, sp.DurationMS, string(attrsJSON),
 			0, sp.Events, 0, sp.Links, 0,
 			StatusCodeToString(sp.StatusCode), sp.StatusMessage,
-			sp.InputTokens, sp.OutputTokens, sp.TotalTokens, sp.GenAIRequestModel,
+			sp.InputTokens, sp.OutputTokens, sp.TotalTokens, sp.CacheCreationTokens, sp.CacheReadTokens, sp.GenAIRequestModel,
 		)
 		if err != nil {
 			return fmt.Errorf("insert span: %w", err)
@@ -291,7 +462,7 @@ func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDet
 	spanRows, err := s.db.QueryContext(ctx,
 		`SELECT span_id_hex, parent_span_id_hex, name, kind, start_time_ms, duration_ms,
 		        attributes, events, links, status_code, status_message,
-		        input_tokens, output_tokens, total_tokens, gen_ai_request_model
+		        input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
 		 FROM spans WHERE trace_id_hex = ? ORDER BY start_time_ms`,
 		traceIDHex,
 	)
@@ -306,12 +477,12 @@ func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDet
 		var sd SpanDetail
 		var kind, status string
 		var attrsJSON, eventsJSON, linksJSON string
-		var inputTokens, outputTokens, totalTokens sql.NullInt32
+		var inputTokens, outputTokens, totalTokens, cacheCreationTokens, cacheReadTokens sql.NullInt32
 		var genAIModel sql.NullString
 		err := spanRows.Scan(
 			&sd.SpanID, &sd.ParentSpanID, &sd.Name, &kind, &sd.StartTimeMS, &sd.DurationMS,
 			&attrsJSON, &eventsJSON, &linksJSON, &status, &sd.StatusMessage,
-			&inputTokens, &outputTokens, &totalTokens, &genAIModel,
+			&inputTokens, &outputTokens, &totalTokens, &cacheCreationTokens, &cacheReadTokens, &genAIModel,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan span: %w", err)
@@ -332,6 +503,14 @@ func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDet
 		if totalTokens.Valid {
 			v := uint32(totalTokens.Int32)
 			sd.TotalTokens = &v
+		}
+		if cacheCreationTokens.Valid {
+			v := uint32(cacheCreationTokens.Int32)
+			sd.CacheCreationTokens = &v
+		}
+		if cacheReadTokens.Valid {
+			v := uint32(cacheReadTokens.Int32)
+			sd.CacheReadTokens = &v
 		}
 		if genAIModel.Valid {
 			sd.GenAIRequestModel = &genAIModel.String
@@ -925,7 +1104,7 @@ func (s *sqliteStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) err
 
 	// Get spans with token data
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT input_tokens, output_tokens, total_tokens, gen_ai_request_model
+		`SELECT input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
 		 FROM spans WHERE trace_id_hex = ? AND total_tokens IS NOT NULL`,
 		traceIDHex,
 	)
@@ -933,15 +1112,19 @@ func (s *sqliteStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) err
 		return fmt.Errorf("query span tokens: %w", err)
 	}
 
+	// Anthropic prompt-caching differential rates (cache write = 1.25×, cache read = 0.1× input).
+	const cacheCreateRate = 1.25
+	const cacheReadRate = 0.1
+
 	var totalCost float64
 	var totalInputTokens, totalOutputTokens uint32
 	var currency string
 	var unpricedCount int
 
 	for rows.Next() {
-		var inputTokens, outputTokens, totalTokens sql.NullInt32
+		var inputTokens, outputTokens, totalTokens, cacheCreationTokens, cacheReadTokens sql.NullInt32
 		var genAIModel sql.NullString
-		err := rows.Scan(&inputTokens, &outputTokens, &totalTokens, &genAIModel)
+		err := rows.Scan(&inputTokens, &outputTokens, &totalTokens, &cacheCreationTokens, &cacheReadTokens, &genAIModel)
 		if err != nil {
 			rows.Close()
 			return fmt.Errorf("scan span token: %w", err)
@@ -972,9 +1155,22 @@ func (s *sqliteStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) err
 			outT = uint32(outputTokens.Int32)
 			totalOutputTokens += outT
 		}
+		ccT := uint32(0)
+		if cacheCreationTokens.Valid {
+			ccT = uint32(cacheCreationTokens.Int32)
+			totalInputTokens += ccT
+		}
+		crT := uint32(0)
+		if cacheReadTokens.Valid {
+			crT = uint32(cacheReadTokens.Int32)
+			totalInputTokens += crT
+		}
 
-		// Inline cost calculation: (inputTokens × inputPrice + outputTokens × outputPrice) / 1M
-		spanCost := (float64(inT)*p.InputPrice + float64(outT)*p.OutputPrice) / 1_000_000.0
+		// Inline cost calculation with differential cache rates.
+		spanCost := (float64(inT)*p.InputPrice +
+			float64(ccT)*p.InputPrice*cacheCreateRate +
+			float64(crT)*p.InputPrice*cacheReadRate +
+			float64(outT)*p.OutputPrice) / 1_000_000.0
 		spanCost = math.Round(spanCost*1e6) / 1e6
 		totalCost += spanCost
 		if currency == "" {
@@ -1022,10 +1218,11 @@ func (s *sqliteStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSum
 		overview.AvgCostPerTrace = math.Round(overview.TotalCost/float64(overview.TraceCount)*1e6)/1e6
 	}
 
-	// Get total input/output tokens from spans
+	// Get total input/output tokens from spans.
+	// "Input" here is gross prompt throughput: non-cached input + cache write + cache read.
 	err = s.db.QueryRowContext(ctx,
 		`SELECT
-		    COALESCE(sum(input_tokens), 0) AS total_input_tokens,
+		    COALESCE(sum(COALESCE(input_tokens,0) + COALESCE(cache_creation_tokens,0) + COALESCE(cache_read_tokens,0)), 0) AS total_input_tokens,
 		    COALESCE(sum(output_tokens), 0) AS total_output_tokens
 		 FROM spans
 		 WHERE trace_id_hex IN (

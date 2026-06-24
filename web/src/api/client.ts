@@ -40,6 +40,8 @@ export interface SpanDetail {
   input_tokens?: number
   output_tokens?: number
   total_tokens?: number
+  cache_creation_tokens?: number // prompt-caching write tokens (Claude/Anthropic)
+  cache_read_tokens?: number     // prompt-caching read tokens (Claude/Anthropic)
   gen_ai_request_model?: string
   gen_ai_system?: string       // Attributes["gen_ai.system"]
   tool_name?: string           // Attributes["gen_ai.tool.name"]

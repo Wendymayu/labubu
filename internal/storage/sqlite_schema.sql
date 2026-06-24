@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS spans (
     input_tokens       INTEGER,
     output_tokens      INTEGER,
     total_tokens       INTEGER,
+    cache_creation_tokens INTEGER,
+    cache_read_tokens  INTEGER,
     gen_ai_request_model TEXT,
     PRIMARY KEY (trace_id_hex, span_id_hex)
 );

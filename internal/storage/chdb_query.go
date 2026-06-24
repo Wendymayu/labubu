@@ -11,6 +11,8 @@ func buildInsertSpanSQL(span Span) string {
 	inputTokens := nullUint32(span.InputTokens)
 	outputTokens := nullUint32(span.OutputTokens)
 	totalTokens := nullUint32(span.TotalTokens)
+	cacheCreateTokens := nullUint32(span.CacheCreationTokens)
+	cacheReadTokens := nullUint32(span.CacheReadTokens)
 	genAIModel := nullString(span.GenAIRequestModel)
 
 	return fmt.Sprintf(
@@ -21,7 +23,7 @@ func buildInsertSpanSQL(span Span) string {
 			events, dropped_events_count,
 			links, dropped_links_count,
 			status_code, status_message,
-			input_tokens, output_tokens, total_tokens, gen_ai_request_model
+			input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
 		) VALUES (
 			unhex('%x'), unhex('%x'), unhex('%x'), '%s', '%s', %d,
 			%d, %d, %d,
@@ -29,7 +31,7 @@ func buildInsertSpanSQL(span Span) string {
 			'%s', 0,
 			'%s', 0,
 			%d, '%s',
-			%s, %s, %s, %s
+			%s, %s, %s, %s, %s, %s
 		)`,
 		span.TraceID, span.SpanID, span.ParentSpanID,
 		escapeSQL(span.TraceState),
@@ -39,7 +41,7 @@ func buildInsertSpanSQL(span Span) string {
 		escapeSQL(span.Events),
 		escapeSQL(span.Links),
 		span.StatusCode, escapeSQL(span.StatusMessage),
-		inputTokens, outputTokens, totalTokens, genAIModel,
+		inputTokens, outputTokens, totalTokens, cacheCreateTokens, cacheReadTokens, genAIModel,
 	)
 }
 
@@ -196,6 +198,8 @@ func buildGetTraceSQL(traceID [16]byte) string {
 			input_tokens,
 			output_tokens,
 			total_tokens,
+			cache_creation_tokens,
+			cache_read_tokens,
 			gen_ai_request_model
 		FROM spans
 		WHERE trace_id = unhex('%x')

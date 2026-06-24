@@ -5,6 +5,7 @@
       <nav class="app-nav">
         <router-link to="/traces">{{ t('nav.traces') }}</router-link>
         <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
+        <router-link to="/logs">{{ t('nav.logs') }}</router-link>
         <div class="nav-group">
           <button class="nav-group-title" @click="metricsOpen = !metricsOpen">
             {{ t('nav.metrics') }}
@@ -15,7 +16,6 @@
             <router-link to="/cost">{{ t('nav.cost') }}</router-link>
           </div>
         </div>
-        <router-link to="/logs">{{ t('nav.logs') }}</router-link>
         <div class="nav-group">
           <button class="nav-group-title" @click="alertsOpen = !alertsOpen">
             {{ t('nav.alerts') }}

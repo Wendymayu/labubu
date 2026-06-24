@@ -181,12 +181,29 @@ interface DisplaySpan extends SpanDetail {
   _filterMatch: boolean
 }
 
+// A span is treated as a root when its parent is empty OR not present in the
+// current span set. This keeps in-progress/incomplete traces visible: when the
+// root span hasn't been exported yet, every received child span points at a
+// missing parent and would otherwise be unreachable from the tree root,
+// leaving the waterfall empty.
+const knownSpanIds = computed(() => {
+  const ids = new Set<string>()
+  for (const span of props.spans) ids.add(span.span_id)
+  return ids
+})
+
+function parentKeyOf(span: SpanDetail): string {
+  const p = span.parent_span_id
+  if (!p || !knownSpanIds.value.has(p)) return '__root__'
+  return p
+}
+
 const displaySpans = computed(() => {
   // --- Build childrenMap and childCountMap (once, reused below) ---
   const childrenMap = new Map<string, SpanDetail[]>()
   const childCountMap = new Map<string, number>()
   for (const span of props.spans) {
-    const parentKey = span.parent_span_id || '__root__'
+    const parentKey = parentKeyOf(span)
     if (!childrenMap.has(parentKey)) childrenMap.set(parentKey, [])
     childrenMap.get(parentKey)!.push(span)
     childCountMap.set(parentKey, (childCountMap.get(parentKey) || 0) + 1)
@@ -317,7 +334,7 @@ function collapseAll() {
   // Collect all parent spans at depth >= 1
   const childrenMap = new Map<string, SpanDetail[]>()
   for (const span of props.spans) {
-    const pk = span.parent_span_id || '__root__'
+    const pk = parentKeyOf(span)
     if (!childrenMap.has(pk)) childrenMap.set(pk, [])
     childrenMap.get(pk)!.push(span)
   }
@@ -371,6 +388,7 @@ function formatDuration(ms: number): string {
 }
 
 function formatTokens(tokens: number): string {
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(0)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}K`
   return String(tokens)
 }

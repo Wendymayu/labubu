@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS spans (
 ENGINE = MergeTree
 ORDER BY (trace_id, start_time_ms);
 
+ALTER TABLE spans ADD COLUMN IF NOT EXISTS cache_creation_tokens Nullable(UInt32);
+ALTER TABLE spans ADD COLUMN IF NOT EXISTS cache_read_tokens Nullable(UInt32);
+
 CREATE TABLE IF NOT EXISTS logs (
     trace_id    FixedString(16),
     span_id     FixedString(8),

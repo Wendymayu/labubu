@@ -10,6 +10,8 @@ import (
 
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/storage"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
 // memTestStore implements storage.Store with stubs for all methods.
@@ -364,4 +366,64 @@ func uint32PtrEqual(a, b *uint32) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func intKV(key string, v int64) *commonpb.KeyValue {
+	return &commonpb.KeyValue{Key: key, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: v}}}
+}
+
+// TestTranslateSpanCacheTokens verifies Claude Code's prompt-caching tokens
+// (cache_creation_tokens / cache_read_tokens) are extracted into typed columns
+// and folded into total_tokens. This is the root cause of the undercount bug.
+func TestTranslateSpanCacheTokens(t *testing.T) {
+	span := &tracepb.Span{
+		TraceId: make([]byte, 16),
+		SpanId:  make([]byte, 8),
+		Name:    "claude_code.llm_request",
+		Attributes: []*commonpb.KeyValue{
+			intKV("input_tokens", 2),
+			intKV("output_tokens", 100),
+			intKV("cache_creation_tokens", 189194),
+			intKV("cache_read_tokens", 5000),
+		},
+	}
+
+	got := translateSpan(span)
+
+	if !uint32PtrEqual(got.InputTokens, uint32Ptr(2)) {
+		t.Errorf("InputTokens: got %v, want 2", got.InputTokens)
+	}
+	if !uint32PtrEqual(got.OutputTokens, uint32Ptr(100)) {
+		t.Errorf("OutputTokens: got %v, want 100", got.OutputTokens)
+	}
+	if !uint32PtrEqual(got.CacheCreationTokens, uint32Ptr(189194)) {
+		t.Errorf("CacheCreationTokens: got %v, want 189194", got.CacheCreationTokens)
+	}
+	if !uint32PtrEqual(got.CacheReadTokens, uint32Ptr(5000)) {
+		t.Errorf("CacheReadTokens: got %v, want 5000", got.CacheReadTokens)
+	}
+	// total = input + output + cache_creation + cache_read = 2 + 100 + 189194 + 5000 = 194296
+	if !uint32PtrEqual(got.TotalTokens, uint32Ptr(194296)) {
+		t.Errorf("TotalTokens: got %v, want 194296", got.TotalTokens)
+	}
+	// Normalized keys should be present on the attributes map too.
+	if got.Attributes["gen_ai.usage.cache_creation_input_tokens"] != "189194" {
+		t.Errorf("normalized cache_creation key missing: %v", got.Attributes["gen_ai.usage.cache_creation_input_tokens"])
+	}
+}
+
+// TestTranslateSpanNoTokens ensures non-LLM spans leave all token columns nil.
+func TestTranslateSpanNoTokens(t *testing.T) {
+	span := &tracepb.Span{
+		TraceId:    make([]byte, 16),
+		SpanId:     make([]byte, 8),
+		Name:       "http.request",
+		Attributes: []*commonpb.KeyValue{intKV("http.method", 0)},
+	}
+	got := translateSpan(span)
+	if got.InputTokens != nil || got.OutputTokens != nil || got.TotalTokens != nil ||
+		got.CacheCreationTokens != nil || got.CacheReadTokens != nil {
+		t.Errorf("expected nil token columns for non-LLM span, got input=%v output=%v total=%v cc=%v cr=%v",
+			got.InputTokens, got.OutputTokens, got.TotalTokens, got.CacheCreationTokens, got.CacheReadTokens)
+	}
 }

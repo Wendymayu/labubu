@@ -296,7 +296,9 @@ const filteredLogs = computed(() => {
 const rootSpanName = computed(() => {
   if (!trace.value) return 'Trace Detail'
   const root = trace.value.spans.find(s => s.parent_span_id === '')
-  return root?.name || 'Trace Detail'
+  // Incomplete traces may have no root span yet; fall back to the earliest
+  // span so the header still shows something meaningful.
+  return root?.name || trace.value.spans[0]?.name || 'Trace Detail'
 })
 
 const spanJSON = computed(() => {
@@ -504,6 +506,7 @@ function formatDuration(ms: number): string {
 
 function formatTokens(tokens: number | null): string {
   if (tokens == null) return '-'
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(0)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}K`
   return String(tokens)
 }

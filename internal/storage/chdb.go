@@ -1085,6 +1085,8 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 		InputTokens:       getNullableUint32("input_tokens"),
 		OutputTokens:      getNullableUint32("output_tokens"),
 		TotalTokens:       getNullableUint32("total_tokens"),
+		CacheCreationTokens: getNullableUint32("cache_creation_tokens"),
+		CacheReadTokens:   getNullableUint32("cache_read_tokens"),
 		GenAIRequestModel: getNullableString("gen_ai_request_model"),
 	}
 

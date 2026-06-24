@@ -311,6 +311,7 @@ function formatRate(rate: number): string {
 }
 
 function formatTokens(tokens: number): string {
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
   return String(tokens)
 }
