@@ -107,6 +107,10 @@ export default {
     noLogs: 'No logs found.',
     filteredBySpan: 'Filtered: {name}',
     logCount: 'Logs ({count})',
+    download: 'Download Logs',
+    prev: 'Prev',
+    next: 'Next',
+    pageOf: 'Page {page} of {total}',
   },
   alerts: {
     rules: 'Alert Rules',

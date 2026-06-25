@@ -107,6 +107,10 @@ export default {
     noLogs: '未找到日志。',
     filteredBySpan: '已过滤: {name}',
     logCount: '日志 ({count})',
+    download: '下载日志',
+    prev: '上一页',
+    next: '下一页',
+    pageOf: '第 {page} / {total} 页',
   },
   alerts: {
     rules: '告警规则',
