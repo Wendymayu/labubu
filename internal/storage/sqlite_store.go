@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -63,6 +64,10 @@ func NewChDBStore(dataDir string) (Store, error) {
 	db.Exec(`ALTER TABLE spans ADD COLUMN cache_creation_tokens INTEGER`)
 	db.Exec(`ALTER TABLE spans ADD COLUMN cache_read_tokens INTEGER`)
 
+	// Migrate: add per-span cost columns for accurate by-model cost aggregation.
+	db.Exec(`ALTER TABLE spans ADD COLUMN cost REAL`)
+	db.Exec(`ALTER TABLE spans ADD COLUMN cost_currency TEXT NOT NULL DEFAULT ''`)
+
 	s := &sqliteStore{db: db, dir: dataDir}
 
 	// Seed default pricing from config (same as memStore/chDB)
@@ -73,6 +78,9 @@ func NewChDBStore(dataDir string) (Store, error) {
 
 	// Backfill prompt-caching token columns + totals for pre-existing spans.
 	s.backfillCacheTokens(context.Background())
+
+	// Backfill per-span cost for pre-existing spans (idempotent).
+	s.backfillSpanCost(context.Background())
 
 	return s, nil
 }
@@ -225,6 +233,34 @@ func (s *sqliteStore) backfillCacheTokens(ctx context.Context) {
 	}
 
 	_ = tx.Commit()
+}
+
+// backfillSpanCost populates spans.cost/cost_currency for pre-existing
+// spans (added alongside the span-level cost column). Idempotent: only
+// touches traces that still have a span with NULL cost.
+func (s *sqliteStore) backfillSpanCost(ctx context.Context) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT trace_id_hex FROM spans WHERE cost IS NULL`)
+	if err != nil {
+		return
+	}
+	var traceIDs []string
+	for rows.Next() {
+		var hexStr string
+		if rows.Scan(&hexStr) == nil {
+			traceIDs = append(traceIDs, hexStr)
+		}
+	}
+	rows.Close()
+	for _, hexStr := range traceIDs {
+		b, err := hex.DecodeString(hexStr)
+		if err != nil || len(b) != 16 {
+			continue
+		}
+		var tid [16]byte
+		copy(tid[:], b)
+		s.UpdateTraceCost(ctx, tid)
+	}
 }
 
 // parseUint32Attr reads the first present numeric attribute key as uint32.
