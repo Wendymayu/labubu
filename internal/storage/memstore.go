@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -112,6 +113,7 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 	}
 
 	// Calculate costs inline for traces with token data (lock already held).
+	// Set per-span Cost on stored spans and aggregate trace cost.
 	for traceID := range traceMap {
 		merged, ok := m.traces[traceID]
 		if !ok || merged.TotalTokens == nil || *merged.TotalTokens == 0 {
@@ -120,36 +122,35 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 		var totalCost float64
 		var currency string
 		hasCost := false
-		for _, span := range inSpans {
-			if span.TraceID != traceID {
+		for i := range m.spans {
+			s := &m.spans[i]
+			if s.TraceID != traceID {
 				continue
 			}
-			if span.TotalTokens == nil || *span.TotalTokens == 0 || span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
+			if s.TotalTokens == nil || *s.TotalTokens == 0 || s.GenAIRequestModel == nil || *s.GenAIRequestModel == "" {
 				continue
 			}
 			for _, p := range m.pricing {
-				if p.ModelName == *span.GenAIRequestModel {
-					inputT := float64(0)
-					outputT := float64(0)
-					cacheCreateT := float64(0)
-					cacheReadT := float64(0)
-					if span.InputTokens != nil {
-						inputT = float64(*span.InputTokens)
+				if p.ModelName == *s.GenAIRequestModel {
+					inputT, outputT, ccT, crT := 0.0, 0.0, 0.0, 0.0
+					if s.InputTokens != nil {
+						inputT = float64(*s.InputTokens)
 					}
-					if span.OutputTokens != nil {
-						outputT = float64(*span.OutputTokens)
+					if s.OutputTokens != nil {
+						outputT = float64(*s.OutputTokens)
 					}
-					if span.CacheCreationTokens != nil {
-						cacheCreateT = float64(*span.CacheCreationTokens)
+					if s.CacheCreationTokens != nil {
+						ccT = float64(*s.CacheCreationTokens)
 					}
-					if span.CacheReadTokens != nil {
-						cacheReadT = float64(*span.CacheReadTokens)
+					if s.CacheReadTokens != nil {
+						crT = float64(*s.CacheReadTokens)
 					}
-					// Anthropic prompt-caching differential rates.
-					totalCost += (inputT*p.InputPrice +
-						cacheCreateT*p.InputPrice*1.25 +
-						cacheReadT*p.InputPrice*0.1 +
-						outputT*p.OutputPrice) / 1_000_000.0
+					spanCost := (inputT*p.InputPrice+ccT*p.InputPrice*1.25+
+						crT*p.InputPrice*0.1+outputT*p.OutputPrice) / 1_000_000.0
+					spanCost = math.Round(spanCost*1e6) / 1e6
+					s.Cost = &spanCost
+					s.CostCurrency = p.Currency
+					totalCost += spanCost
 					hasCost = true
 					if currency == "" {
 						currency = p.Currency
@@ -929,23 +930,11 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Collect traces in the time range.
-	type modelAgg struct {
-		cost         float64
-		tokens       uint64
-		inputTokens  uint64
-		outputTokens uint64
-		traceCount   int
-	}
-	aggByModel := make(map[string]*modelAgg)
+	// Traces in range with cost>0.
+	costlyTraces := make(map[[16]byte]struct{})
 	var totalCost float64
-	var totalTokens uint64
-	var totalInputTokens uint64
-	var totalOutputTokens uint64
-	traceCount := 0
 	var currency string
-
-	for traceID, t := range m.traces {
+	for tid, t := range m.traces {
 		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
 			continue
 		}
@@ -953,101 +942,98 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 			continue
 		}
 		if t.Cost == nil || *t.Cost == 0 {
-			continue // skip traces with no cost
+			continue
 		}
-
-		traceCount++
+		costlyTraces[tid] = struct{}{}
 		totalCost += *t.Cost
-		if t.TotalTokens != nil {
-			totalTokens += uint64(*t.TotalTokens)
-		}
 		if currency == "" && t.CostCurrency != "" {
 			currency = t.CostCurrency
 		}
+	}
+	traceCount := len(costlyTraces)
 
-		// Find the model name from spans.
-		modelName := ""
-		for _, s := range m.spans {
-			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel != "" {
-				modelName = *s.GenAIRequestModel
-				break // use the first span's model
-			}
-		}
-		if modelName == "" {
-			modelName = "(unknown)"
-		}
+	type modelAgg struct {
+		cost, input, cc, cr, output uint64
+		traces                       map[[16]byte]struct{}
+	}
+	agg := map[string]*modelAgg{}
+	var oIn, oCC, oCR, oOut uint64
 
-		entry, exists := aggByModel[modelName]
-		if !exists {
-			entry = &modelAgg{}
-			aggByModel[modelName] = entry
+	for i := range m.spans {
+		s := &m.spans[i]
+		if _, ok := costlyTraces[s.TraceID]; !ok {
+			continue
 		}
-		entry.cost += *t.Cost
-		if t.TotalTokens != nil {
-			entry.tokens += uint64(*t.TotalTokens)
+		if s.TotalTokens == nil {
+			continue
 		}
-		entry.traceCount++
-
-		// Also accumulate input/output tokens for the model entry.
-		// "Input" is gross prompt throughput: non-cached input + cache write + cache read.
-		for _, s := range m.spans {
-			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel == modelName {
-				if s.InputTokens != nil {
-					entry.inputTokens += uint64(*s.InputTokens)
-					totalInputTokens += uint64(*s.InputTokens)
-				}
-				if s.CacheCreationTokens != nil {
-					entry.inputTokens += uint64(*s.CacheCreationTokens)
-					totalInputTokens += uint64(*s.CacheCreationTokens)
-				}
-				if s.CacheReadTokens != nil {
-					entry.inputTokens += uint64(*s.CacheReadTokens)
-					totalInputTokens += uint64(*s.CacheReadTokens)
-				}
-				if s.OutputTokens != nil {
-					entry.outputTokens += uint64(*s.OutputTokens)
-					totalOutputTokens += uint64(*s.OutputTokens)
-				}
-			}
+		model := "(unknown)"
+		if s.GenAIRequestModel != nil && *s.GenAIRequestModel != "" {
+			model = *s.GenAIRequestModel
+		}
+		entry := agg[model]
+		if entry == nil {
+			entry = &modelAgg{traces: map[[16]byte]struct{}{}}
+			agg[model] = entry
+		}
+		entry.traces[s.TraceID] = struct{}{}
+		if s.Cost != nil {
+			entry.cost += uint64(math.Round(*s.Cost * 1e6))
+		}
+		if s.InputTokens != nil {
+			entry.input += uint64(*s.InputTokens)
+			oIn += uint64(*s.InputTokens)
+		}
+		if s.CacheCreationTokens != nil {
+			entry.cc += uint64(*s.CacheCreationTokens)
+			oCC += uint64(*s.CacheCreationTokens)
+		}
+		if s.CacheReadTokens != nil {
+			entry.cr += uint64(*s.CacheReadTokens)
+			oCR += uint64(*s.CacheReadTokens)
+		}
+		if s.OutputTokens != nil {
+			entry.output += uint64(*s.OutputTokens)
+			oOut += uint64(*s.OutputTokens)
 		}
 	}
 
-	// Build ByModel slice, sorted by cost descending.
-	byModel := make([]ModelCostItem, 0, len(aggByModel))
-	for model, agg := range aggByModel {
-		avgCost := 0.0
-		if agg.traceCount > 0 {
-			avgCost = agg.cost / float64(agg.traceCount)
+	byModel := make([]ModelCostItem, 0, len(agg))
+	for model, e := range agg {
+		tc := len(e.traces)
+		var costF float64
+		costF = float64(e.cost) / 1e6
+		avg := 0.0
+		if tc > 0 {
+			avg = math.Round(costF/float64(tc)*1e6) / 1e6
 		}
 		byModel = append(byModel, ModelCostItem{
-			Model:        model,
-			Cost:         agg.cost,
-			Tokens:       agg.tokens,
-			InputTokens:  agg.inputTokens,
-			OutputTokens: agg.outputTokens,
-			TraceCount:   agg.traceCount,
-			AvgCost:      avgCost,
+			Model: model, Cost: costF,
+			Tokens: e.input + e.cc + e.cr + e.output,
+			InputTokens: e.input, CacheCreationTokens: e.cc,
+			CacheReadTokens: e.cr, OutputTokens: e.output,
+			TraceCount: tc, AvgCost: avg,
 		})
 	}
-	sort.Slice(byModel, func(i, j int) bool {
-		return byModel[i].Cost > byModel[j].Cost
-	})
+	sort.Slice(byModel, func(i, j int) bool { return byModel[i].Cost > byModel[j].Cost })
 
-	avgCostPerTrace := 0.0
+	avgPerTrace := 0.0
 	if traceCount > 0 {
-		avgCostPerTrace = totalCost / float64(traceCount)
+		avgPerTrace = math.Round(totalCost/float64(traceCount)*1e6) / 1e6
 	}
 
 	return &CostSummaryResult{
 		Period:   "",
 		Currency: currency,
 		Overview: CostOverview{
-			TotalCost:         totalCost,
-			TotalTokens:       totalTokens,
-			TotalInputTokens:  totalInputTokens,
-			TotalOutputTokens: totalOutputTokens,
-			AvgCostPerTrace:   avgCostPerTrace,
-			TraceCount:        traceCount,
+			TotalCost:                totalCost,
+			TotalInputTokens:         oIn,
+			TotalCacheCreationTokens: oCC,
+			TotalCacheReadTokens:     oCR,
+			TotalOutputTokens:        oOut,
+			TotalTokens:              oIn + oCC + oCR + oOut,
+			AvgCostPerTrace:          avgPerTrace,
+			TraceCount:               traceCount,
 		},
 		ByModel: byModel,
 	}, nil
