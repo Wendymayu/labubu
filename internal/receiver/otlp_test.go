@@ -13,6 +13,7 @@ import (
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/storage"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
@@ -523,5 +524,177 @@ func TestStartFailFastOnHTTPConflict(t *testing.T) {
 		t.Errorf("gRPC port %d was not released after HTTP-conflict failure: %v", grpcPort, err)
 	} else {
 		ln2.Close()
+	}
+}
+
+// logCaptureStore wraps memTestStore and records logs passed to InsertLogs,
+// so HTTP handler tests can assert that a parsed payload actually reached storage.
+type logCaptureStore struct {
+	*memTestStore
+	logs []storage.LogRecord
+}
+
+func (s *logCaptureStore) InsertLogs(_ context.Context, logs []storage.LogRecord) error {
+	s.logs = append(s.logs, logs...)
+	return nil
+}
+
+// TestHTTPLogsJSON verifies the OTLP HTTP /v1/logs endpoint accepts JSON
+// (protojson) payloads, not just protobuf. The OTLP/HTTP spec requires
+// servers to accept application/json.
+func TestHTTPLogsJSON(t *testing.T) {
+	jsonPayload := `{
+		"resourceLogs": [{
+			"resource": {
+				"attributes": [
+					{"key": "service.name", "value": {"stringValue": "log-svc"}}
+				]
+			},
+			"scopeLogs": [{
+				"logRecords": [{
+					"timeUnixNano": "1608238394254000000",
+					"severityNumber": 9,
+					"severityText": "INFO",
+					"traceId": "MWYyZDRlNjcxY2VkNGI3NjgwMDAwMDAw",
+					"spanId": "YWJjMTIzNDU2Nzg5",
+					"body": {"stringValue": "hello from json"},
+					"attributes": [
+						{"key": "event.name", "value": {"stringValue": "user.login"}}
+					]
+				}]
+			}]
+		}]
+	}`
+
+	store := &logCaptureStore{memTestStore: &memTestStore{}}
+	r := New(nil, nil, store)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/logs", bytes.NewReader([]byte(jsonPayload)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	r.handleHTTPLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if len(store.logs) != 1 {
+		t.Fatalf("expected 1 log stored, got %d", len(store.logs))
+	}
+	got := store.logs[0]
+	if got.Body != "hello from json" {
+		t.Errorf("body: got %q, want %q", got.Body, "hello from json")
+	}
+	if got.Severity != "INFO" {
+		t.Errorf("severity: got %q, want %q", got.Severity, "INFO")
+	}
+	if got.EventName != "user.login" {
+		t.Errorf("event_name: got %q, want %q", got.EventName, "user.login")
+	}
+	if got.Timestamp != 1608238394254 {
+		t.Errorf("timestamp: got %d, want %d", got.Timestamp, uint64(1608238394254))
+	}
+}
+
+// TestHTTPLogsJSONWithCharset verifies JSON payloads with a charset parameter
+// (e.g. "application/json; charset=utf-8") are accepted.
+func TestHTTPLogsJSONWithCharset(t *testing.T) {
+	jsonPayload := `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"1608238394254000000","severityNumber":9,"body":{"stringValue":"x"}}]}]}]}`
+
+	store := &logCaptureStore{memTestStore: &memTestStore{}}
+	r := New(nil, nil, store)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/logs", bytes.NewReader([]byte(jsonPayload)))
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	rec := httptest.NewRecorder()
+
+	r.handleHTTPLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200 for charset Content-Type, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if len(store.logs) != 1 {
+		t.Errorf("expected 1 log stored, got %d", len(store.logs))
+	}
+}
+
+// TestSeverityTextFallback verifies that when SeverityNumber is UNSPECIFIED,
+// the severity is derived from SeverityText instead of falling back to the
+// "SEVERITY_NUMBER_0" placeholder. The OTLP spec requires this derivation.
+func TestSeverityTextFallback(t *testing.T) {
+	lr := &logspb.LogRecord{
+		SeverityNumber: logspb.SeverityNumber_SEVERITY_NUMBER_UNSPECIFIED,
+		SeverityText:   "WARNING",
+	}
+	rec := translateLogRecord(lr, nil, nil)
+	if rec.Severity != "WARN" {
+		t.Errorf("severity from text: got %q, want %q", rec.Severity, "WARN")
+	}
+}
+
+// TestSeverityTextFallbackCaseInsensitive verifies the text match is case-insensitive.
+func TestSeverityTextFallbackCaseInsensitive(t *testing.T) {
+	lr := &logspb.LogRecord{
+		SeverityNumber: logspb.SeverityNumber_SEVERITY_NUMBER_UNSPECIFIED,
+		SeverityText:   "error",
+	}
+	rec := translateLogRecord(lr, nil, nil)
+	if rec.Severity != "ERROR" {
+		t.Errorf("severity from lowercase text: got %q, want %q", rec.Severity, "ERROR")
+	}
+}
+
+// TestSeverityTextFallbackUnknown verifies that an unrecognized severity text
+// is preserved uppercased rather than becoming "SEVERITY_NUMBER_0".
+func TestSeverityTextFallbackUnknown(t *testing.T) {
+	lr := &logspb.LogRecord{
+		SeverityNumber: logspb.SeverityNumber_SEVERITY_NUMBER_UNSPECIFIED,
+		SeverityText:   "notice",
+	}
+	rec := translateLogRecord(lr, nil, nil)
+	if rec.Severity != "NOTICE" {
+		t.Errorf("unknown severity text: got %q, want %q", rec.Severity, "NOTICE")
+	}
+}
+
+// TestSeverityNumberPrecedence verifies that an explicit SeverityNumber wins
+// over SeverityText (text is only a fallback when number is UNSPECIFIED).
+func TestSeverityNumberPrecedence(t *testing.T) {
+	lr := &logspb.LogRecord{
+		SeverityNumber: logspb.SeverityNumber_SEVERITY_NUMBER_ERROR,
+		SeverityText:   "warning", // mismatched; number must take precedence
+	}
+	rec := translateLogRecord(lr, nil, nil)
+	if rec.Severity != "ERROR" {
+		t.Errorf("number should take precedence: got %q, want %q", rec.Severity, "ERROR")
+	}
+}
+
+// TestLogTimestampObservedTimeFallback verifies that when TimeUnixNano is
+// absent (0), the timestamp is derived from ObservedTimeUnixNano. The OTLP
+// spec says TimeUnixNano is optional and ObservedTimeUnixNano is the fallback.
+func TestLogTimestampObservedTimeFallback(t *testing.T) {
+	lr := &logspb.LogRecord{
+		TimeUnixNano:         0,
+		ObservedTimeUnixNano: 1608238394254000000,
+	}
+	rec := translateLogRecord(lr, nil, nil)
+	want := uint64(1608238394254)
+	if rec.Timestamp != want {
+		t.Errorf("timestamp fallback: got %d, want %d", rec.Timestamp, want)
+	}
+}
+
+// TestLogTimestampPrecedence verifies that TimeUnixNano takes precedence over
+// ObservedTimeUnixNano when both are set.
+func TestLogTimestampPrecedence(t *testing.T) {
+	lr := &logspb.LogRecord{
+		TimeUnixNano:         1608238394254000000,
+		ObservedTimeUnixNano: 1700000000000000000, // different; must be ignored
+	}
+	rec := translateLogRecord(lr, nil, nil)
+	want := uint64(1608238394254)
+	if rec.Timestamp != want {
+		t.Errorf("time should take precedence: got %d, want %d", rec.Timestamp, want)
 	}
 }

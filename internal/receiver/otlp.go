@@ -332,9 +332,17 @@ func (r *Receiver) handleHTTPLogs(w http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
 	var exportReq collogspb.ExportLogsServiceRequest
-	if err := proto.Unmarshal(body, &exportReq); err != nil {
-		http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
-		return
+	contentType := req.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		if err := protojson.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := proto.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
+			return
+		}
 	}
 
 	logs := translateLogs(exportReq.ResourceLogs)
