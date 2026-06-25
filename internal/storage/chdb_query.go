@@ -379,6 +379,12 @@ func buildLogWhereClause(q LogQuery) string {
 			"trace_id = unhex('%x')", q.TraceID,
 		))
 	}
+	var zeroSpan [8]byte
+	if q.SpanID != zeroSpan {
+		clauses = append(clauses, fmt.Sprintf(
+			"span_id = unhex('%x')", q.SpanID,
+		))
+	}
 	if q.StartTime > 0 {
 		clauses = append(clauses, fmt.Sprintf(
 			"timestamp >= %d", q.StartTime,

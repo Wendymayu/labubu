@@ -1592,6 +1592,10 @@ func buildSqliteLogWhereClause(q LogQuery) (string, []interface{}) {
 		clauses = append(clauses, `trace_id_hex = ?`)
 		args = append(args, TraceIDToHex(q.TraceID))
 	}
+	if q.SpanID != [8]byte{} {
+		clauses = append(clauses, `span_id_hex = ?`)
+		args = append(args, SpanIDToHex(q.SpanID))
+	}
 	if q.StartTime > 0 {
 		clauses = append(clauses, `timestamp >= ?`)
 		args = append(args, q.StartTime)

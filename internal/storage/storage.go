@@ -471,6 +471,7 @@ type LogQuery struct {
 	EventName string   // "" = all
 	Query     string   // full-text search on body
 	TraceID   [16]byte // zero value = no trace filter
+	SpanID    [8]byte  // zero value = no span filter
 	StartTime uint64
 	EndTime   uint64
 }

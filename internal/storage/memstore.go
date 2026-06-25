@@ -198,6 +198,10 @@ func (m *memStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, er
 		if q.TraceID != zeroTrace && l.TraceID != q.TraceID {
 			continue
 		}
+		var zeroSpan [8]byte
+		if q.SpanID != zeroSpan && l.SpanID != q.SpanID {
+			continue
+		}
 		if q.StartTime > 0 && l.Timestamp < q.StartTime {
 			continue
 		}
