@@ -81,14 +81,14 @@
           />
           <div v-if="activeInsight === 'logs'" class="log-overlay">
             <div v-if="logSpanFilter" class="log-filter-tag">
-              {{ t('logList.filteredBySpan', { name: logSpanFilter }) }}
+              {{ t('logList.filteredBySpan', { name: filteredSpanName }) }}
               <button class="filter-clear" @click="clearLogFilter">✕</button>
             </div>
             <div v-if="logsLoading" class="loading-state">{{ t('common.loading') }}</div>
-            <div v-else-if="filteredLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
+            <div v-else-if="pageLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
             <div v-else class="log-list-inline">
               <div
-                v-for="(log, idx) in filteredLogs"
+                v-for="(log, idx) in pageLogs"
                 :key="idx"
                 class="log-item"
               >
@@ -97,6 +97,12 @@
                 <span class="log-item-event">{{ log.event_name || '-' }}</span>
                 <span v-if="log.body" class="log-item-body">{{ formatLogBody(log.body) }}</span>
               </div>
+            </div>
+            <div v-if="!logsLoading && pageLogs.length > 0" class="log-pagination">
+              <button class="page-btn" :disabled="logPage <= 1" @click="prevLogPage">◀ {{ t('logList.prev') }}</button>
+              <span class="page-info">{{ t('logList.pageOf', { page: logPage, total: Math.max(1, Math.ceil(logTotal / logPageSize)) }) }}</span>
+              <button class="page-btn" :disabled="logPage * logPageSize >= logTotal" @click="nextLogPage">{{ t('logList.next') }} ▶</button>
+              <span class="page-total">{{ t('logList.logCount', { count: logTotal }) }}</span>
             </div>
           </div>
         </div>
@@ -180,7 +186,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getLogsByTrace, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
+import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
 import DiagnosisTab from '../components/DiagnosisTab.vue'
 import AgentBehaviorTab from '../components/AgentBehaviorTab.vue'
 import WaterfallChart from '../components/WaterfallChart.vue'
@@ -198,8 +204,12 @@ const loading = ref(true)
 const error = ref('')
 const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
-const traceLogs = ref<LogRecord[]>([])
+const pageLogs = ref<LogRecord[]>([])
 const logsLoading = ref(false)
+const logPage = ref(1)
+const logPageSize = 50
+const logTotal = ref(0)
+const logCounts = ref<Record<string, number>>({})
 const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | null>(null)
 
 function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent') {
@@ -262,21 +272,16 @@ const selectedSpanOutputTokens = computed(() => {
   return span.output_tokens ?? 0
 })
 
-const logCounts = computed(() => {
-  const counts: Record<string, number> = {}
-  for (const l of traceLogs.value) {
-    if (l.span_id_hex) {
-      counts[l.span_id_hex] = (counts[l.span_id_hex] || 0) + 1
-    }
-  }
-  return counts
+const totalLogCount = computed(() => {
+  let n = 0
+  for (const k in logCounts.value) n += logCounts.value[k]
+  return n
 })
 
-const totalLogCount = computed(() => traceLogs.value.length)
-
-const filteredLogs = computed(() => {
-  if (!logSpanFilter.value) return traceLogs.value
-  return traceLogs.value.filter(l => l.span_id_hex === logSpanFilter.value)
+const filteredSpanName = computed(() => {
+  if (!logSpanFilter.value || !trace.value) return logSpanFilter.value
+  const span = trace.value.spans.find(s => s.span_id === logSpanFilter.value)
+  return span?.name || logSpanFilter.value
 })
 
 const rootSpanName = computed(() => {
@@ -325,7 +330,8 @@ async function fetchTrace() {
   try {
     const result = await getTrace(traceIdHex)
     trace.value = result.trace
-    fetchTraceLogs()
+    fetchLogCounts()
+    fetchLogPage()
   } catch (e: any) {
     error.value = e.message || 'Failed to load trace'
   } finally {
@@ -406,25 +412,59 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
-async function fetchTraceLogs() {
+async function fetchLogCounts() {
+  try {
+    const result = await getLogCounts(traceIdHex)
+    logCounts.value = result.counts || {}
+  } catch {
+    logCounts.value = {}
+  }
+}
+
+async function fetchLogPage() {
   logsLoading.value = true
   try {
-    const result = await getLogsByTrace(traceIdHex)
-    traceLogs.value = result.logs || []
+    const result = await listLogs({
+      trace_id: traceIdHex,
+      span_id: logSpanFilter.value || undefined,
+      page: logPage.value,
+      page_size: logPageSize,
+    })
+    pageLogs.value = result.logs || []
+    logTotal.value = result.pagination?.total ?? 0
   } catch {
-    traceLogs.value = []
+    pageLogs.value = []
+    logTotal.value = 0
   } finally {
     logsLoading.value = false
   }
 }
 
+function prevLogPage() {
+  if (logPage.value > 1) {
+    logPage.value--
+    fetchLogPage()
+  }
+}
+
+function nextLogPage() {
+  if (logPage.value * logPageSize < logTotal.value) {
+    logPage.value++
+    fetchLogPage()
+  }
+}
+
 function filterLogsBySpan(spanId: string) {
   logSpanFilter.value = spanId
+  logPage.value = 1
   activeInsight.value = 'logs'
+  fetchLogPage()
 }
 
 function clearLogFilter() {
   logSpanFilter.value = ''
+  logPage.value = 1
+  fetchLogPage()
 }
 
 function formatLogTime(ts: number): string {
@@ -813,6 +853,35 @@ onUnmounted(() => {
   font-family: 'Courier New', monospace;
   white-space: pre-wrap;
 }
+
+.log-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-default);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.page-btn {
+  background: none;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.page-btn:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.page-info { color: var(--text-primary); }
+.page-total { margin-left: auto; }
 
 .loading-state, .empty-state { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 13px; }
 
