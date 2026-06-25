@@ -4,7 +4,7 @@ A local-first LLM observability platform. It receives OTLP traces and metrics fr
 
 ## Features
 
-- **OTLP Ingestion** — gRPC (port 4317) and HTTP (port 4318) for traces and metrics
+- **OTLP Ingestion** — gRPC (port 4317) and HTTP (port 4318) for traces and metrics; ports configurable via `--otlp-grpc-port` / `--otlp-http-port`
 - **Embedded chDB Storage** — ClickHouse-compatible, no external database required (optional, with in-memory fallback)
 - **Trace Explorer** — searchable trace list with service/status/duration filters
 - **Waterfall View** — span-level waterfall chart with slide-in detail drawer
