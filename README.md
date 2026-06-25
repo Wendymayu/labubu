@@ -47,6 +47,12 @@ The backend starts at:
 - **OTLP gRPC:** http://localhost:4317
 - **OTLP HTTP:** http://localhost:4318
 
+> To listen on different OTLP ports (e.g. to avoid conflicts with another collector), pass the flags explicitly — all three listening ports are then overridden:
+> ```bash
+> go run -tags dev ./cmd/labubu serve --port 18080 --otlp-grpc-port 14317 --otlp-http-port 14318
+> ```
+> If a port is already in use, startup now fails fast with a clear error instead of silently skipping the listener.
+
 ### 3. Start frontend (optional — for hot-reload dev)
 
 Open a second terminal:
@@ -96,6 +102,8 @@ Open http://localhost:8080 to explore traces, sessions, and metrics.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port` | `8080` | API and UI listen port |
+| `--otlp-grpc-port` | `4317` | OTLP gRPC listen port |
+| `--otlp-http-port` | `4318` | OTLP HTTP listen port |
 | `--data-dir` | `""` | chDB data directory (empty = in-memory) |
 | `--config` | `labubu.yaml` | YAML config file path |
 | `--buffer-size` | `1000` | Pipeline buffer capacity |
