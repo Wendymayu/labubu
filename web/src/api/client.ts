@@ -479,6 +479,7 @@ export interface LogQuery {
   event_name?: string
   q?: string
   trace_id?: string
+  span_id?: string
   start?: number
   end?: number
 }
@@ -496,6 +497,7 @@ export async function listLogs(query: LogQuery): Promise<LogListResponse> {
     event_name: query.event_name,
     q: query.q,
     trace_id: query.trace_id,
+    span_id: query.span_id,
     start: query.start,
     end: query.end,
   })
@@ -503,6 +505,10 @@ export async function listLogs(query: LogQuery): Promise<LogListResponse> {
 
 export async function getLogsByTrace(traceIdHex: string): Promise<{ logs: LogRecord[] }> {
   return get<{ logs: LogRecord[] }>(`${BASE_URL}/logs/${traceIdHex}`)
+}
+
+export async function getLogCounts(traceIdHex: string): Promise<{ counts: Record<string, number> }> {
+  return get<{ counts: Record<string, number> }>(`${BASE_URL}/logs/${traceIdHex}/counts`)
 }
 
 // --- Diagnosis types and API ---
