@@ -494,3 +494,34 @@ func TestStartFailFastOnConflict(t *testing.T) {
 		t.Errorf("expected error when gRPC port %d is in use, got nil", conflictPort)
 	}
 }
+
+// TestStartFailFastOnHTTPConflict verifies that when the HTTP port is already
+// in use, Start returns an error AND releases the gRPC listener it had just
+// bound (no listener leak on partial failure).
+func TestStartFailFastOnHTTPConflict(t *testing.T) {
+	// gRPC port is free and will bind successfully first.
+	grpcPort := freePort(t)
+	// Reserve the HTTP port on the same address Start binds (0.0.0.0) and hold it.
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("reserve listener: %v", err)
+	}
+	defer ln.Close()
+	httpPort := ln.Addr().(*net.TCPAddr).Port
+
+	store := &memTestStore{}
+	r := New(nil, nil, store)
+	if err := r.Start(grpcPort, httpPort); err == nil {
+		r.Shutdown(context.Background())
+		t.Errorf("expected error when HTTP port %d is in use, got nil", httpPort)
+	}
+
+	// The gRPC listener Start bound must have been released so it can be
+	// re-bound immediately. If grpcLis.Close() was skipped, this bind fails.
+	ln2, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", grpcPort))
+	if err != nil {
+		t.Errorf("gRPC port %d was not released after HTTP-conflict failure: %v", grpcPort, err)
+	} else {
+		ln2.Close()
+	}
+}
