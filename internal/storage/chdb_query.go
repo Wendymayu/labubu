@@ -416,6 +416,17 @@ func buildGetLogsByTraceSQL(traceID [16]byte) string {
 	)
 }
 
+// buildLogCountsByTraceSQL builds a query returning per-span log counts for a trace.
+func buildLogCountsByTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT hex(span_id) AS span_id_hex, COUNT(*) AS n
+		FROM logs
+		WHERE trace_id = unhex('%x')
+		GROUP BY span_id`,
+		traceID,
+	)
+}
+
 // buildLogEventNamesSQL builds a query to fetch distinct event_name values.
 func buildLogEventNamesSQL() string {
 	return `SELECT DISTINCT event_name FROM logs WHERE event_name != '' ORDER BY event_name`

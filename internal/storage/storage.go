@@ -367,6 +367,9 @@ type Store interface {
 	// GetLogsByTrace returns all log records for a given trace, ordered by timestamp.
 	GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error)
 
+	// GetLogCountsByTrace returns the number of logs per span_id_hex for a trace.
+	GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error)
+
 	// GetLogEventNames returns distinct event_name values for the filter dropdown.
 	GetLogEventNames(ctx context.Context) ([]string, error)
 

@@ -51,6 +51,9 @@ func (m *memTestStore) ListLogs(_ context.Context, _ storage.LogQuery) (*storage
 func (m *memTestStore) GetLogsByTrace(_ context.Context, _ [16]byte) ([]storage.LogListItem, error) {
 	return nil, nil
 }
+func (m *memTestStore) GetLogCountsByTrace(_ context.Context, _ [16]byte) (map[string]int, error) {
+	return nil, nil
+}
 func (m *memTestStore) GetLogEventNames(_ context.Context) ([]string, error) {
 	return nil, nil
 }

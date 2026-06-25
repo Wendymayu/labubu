@@ -27,6 +27,7 @@ type handlerMockStore struct {
 	llmConfigsErr     error
 	diagnosisResult   *storage.DiagnosisResult
 	diagnosisResultErr error
+	logCounts         map[string]int
 }
 
 func (m *handlerMockStore) InsertSpans(ctx context.Context, r storage.ResourceInfo, s storage.ScopeInfo, spans []storage.Span) error {
@@ -65,6 +66,10 @@ func (m *handlerMockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*s
 
 func (m *handlerMockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]storage.LogListItem, error) {
 	return nil, nil
+}
+
+func (m *handlerMockStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	return m.logCounts, nil
 }
 
 func (m *handlerMockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }

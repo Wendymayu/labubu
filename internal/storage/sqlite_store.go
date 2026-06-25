@@ -965,6 +965,32 @@ func (s *sqliteStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]L
 	return logs, nil
 }
 
+// GetLogCountsByTrace returns the per-span log count for a trace.
+func (s *sqliteStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT span_id_hex, COUNT(*) FROM logs WHERE trace_id_hex = ? GROUP BY span_id_hex`,
+		TraceIDToHex(traceID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("count logs by trace: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var spanIDHex string
+		var n int
+		if err := rows.Scan(&spanIDHex, &n); err != nil {
+			return nil, fmt.Errorf("scan log count: %w", err)
+		}
+		counts[spanIDHex] = n
+	}
+	return counts, nil
+}
+
 func (s *sqliteStore) GetLogEventNames(ctx context.Context) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -283,6 +283,21 @@ func (m *memStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogL
 	return items, nil
 }
 
+// GetLogCountsByTrace returns the per-span log count for a trace.
+func (m *memStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	counts := make(map[string]int)
+	for _, l := range m.logs {
+		if l.TraceID == traceID {
+			counts[SpanIDToHex(l.SpanID)]++
+		}
+	}
+	return counts, nil
+}
+
 func (m *memStore) GetLogEventNames(ctx context.Context) ([]string, error) {
 	_ = ctx
 	m.mu.RLock()
