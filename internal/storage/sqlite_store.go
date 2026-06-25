@@ -1260,58 +1260,71 @@ func (s *sqliteStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSum
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Overview: total cost/tokens/count
+	// Overview cost + count + currency from traces (no join, no fan-out).
 	var overview CostOverview
+	var currency string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT
-		    COALESCE(sum(cost), 0) AS total_cost,
-		    COALESCE(sum(total_tokens), 0) AS total_tokens,
-		    count(*) AS trace_count
+		    COALESCE(sum(cost), 0),
+		    count(*),
+		    COALESCE(max(cost_currency), 'USD')
 		 FROM traces
 		 WHERE start_time_ms >= ? AND start_time_ms <= ?
 		   AND cost IS NOT NULL AND cost > 0`,
 		q.StartTimeMS, q.EndTimeMS,
-	).Scan(&overview.TotalCost, &overview.TotalTokens, &overview.TraceCount)
+	).Scan(&overview.TotalCost, &overview.TraceCount, &currency)
 	if err != nil {
 		return nil, fmt.Errorf("query cost overview: %w", err)
 	}
-
 	if overview.TraceCount > 0 {
-		overview.AvgCostPerTrace = math.Round(overview.TotalCost/float64(overview.TraceCount)*1e6)/1e6
+		overview.AvgCostPerTrace = math.Round(overview.TotalCost/float64(overview.TraceCount)*1e6) / 1e6
 	}
 
-	// Get total input/output tokens from spans.
-	// "Input" here is gross prompt throughput: non-cached input + cache write + cache read.
+	// Token buckets from spans (the single source of truth).
 	err = s.db.QueryRowContext(ctx,
 		`SELECT
-		    COALESCE(sum(COALESCE(input_tokens,0) + COALESCE(cache_creation_tokens,0) + COALESCE(cache_read_tokens,0)), 0) AS total_input_tokens,
-		    COALESCE(sum(output_tokens), 0) AS total_output_tokens
+		    COALESCE(sum(input_tokens), 0),
+		    COALESCE(sum(cache_creation_tokens), 0),
+		    COALESCE(sum(cache_read_tokens), 0),
+		    COALESCE(sum(output_tokens), 0)
 		 FROM spans
-		 WHERE trace_id_hex IN (
-		    SELECT trace_id_hex FROM traces
-		    WHERE start_time_ms >= ? AND start_time_ms <= ?
-		      AND cost IS NOT NULL AND cost > 0
-		 ) AND total_tokens IS NOT NULL`,
+		 WHERE total_tokens IS NOT NULL
+		   AND trace_id_hex IN (
+		      SELECT trace_id_hex FROM traces
+		      WHERE start_time_ms >= ? AND start_time_ms <= ?
+		        AND cost IS NOT NULL AND cost > 0
+		   )`,
 		q.StartTimeMS, q.EndTimeMS,
-	).Scan(&overview.TotalInputTokens, &overview.TotalOutputTokens)
+	).Scan(&overview.TotalInputTokens, &overview.TotalCacheCreationTokens,
+		&overview.TotalCacheReadTokens, &overview.TotalOutputTokens)
 	if err != nil {
-		// Non-critical, continue with zeros
+		// Non-critical: leave buckets at zero.
 		overview.TotalInputTokens = 0
+		overview.TotalCacheCreationTokens = 0
+		overview.TotalCacheReadTokens = 0
 		overview.TotalOutputTokens = 0
 	}
+	overview.TotalTokens = overview.TotalInputTokens + overview.TotalCacheCreationTokens +
+		overview.TotalCacheReadTokens + overview.TotalOutputTokens
 
-	// By model aggregation
+	// by_model: group spans directly (no fan-out join).
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT
 		    COALESCE(gen_ai_request_model, '(unknown)') AS model,
-		    sum(t.cost) AS cost,
-		    COALESCE(sum(t.total_tokens), 0) AS tokens,
-		    count(DISTINCT t.trace_id_hex) AS trace_count
-		 FROM traces t
-		 LEFT JOIN spans sp ON t.trace_id_hex = sp.trace_id_hex AND sp.gen_ai_request_model IS NOT NULL
-		 WHERE t.start_time_ms >= ? AND t.start_time_ms <= ?
-		   AND t.cost IS NOT NULL AND t.cost > 0
-		 GROUP BY model
+		    COALESCE(sum(cost), 0) AS cost,
+		    COALESCE(sum(input_tokens), 0) AS input_tokens,
+		    COALESCE(sum(cache_creation_tokens), 0) AS cache_creation_tokens,
+		    COALESCE(sum(cache_read_tokens), 0) AS cache_read_tokens,
+		    COALESCE(sum(output_tokens), 0) AS output_tokens,
+		    count(DISTINCT trace_id_hex) AS trace_count
+		 FROM spans
+		 WHERE total_tokens IS NOT NULL
+		   AND trace_id_hex IN (
+		      SELECT trace_id_hex FROM traces
+		      WHERE start_time_ms >= ? AND start_time_ms <= ?
+		        AND cost IS NOT NULL AND cost > 0
+		   )
+		 GROUP BY gen_ai_request_model
 		 ORDER BY cost DESC`,
 		q.StartTimeMS, q.EndTimeMS,
 	)
@@ -1323,27 +1336,19 @@ func (s *sqliteStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSum
 	var byModel []ModelCostItem
 	for rows.Next() {
 		var m ModelCostItem
-		err := rows.Scan(&m.Model, &m.Cost, &m.Tokens, &m.TraceCount)
-		if err != nil {
+		if err := rows.Scan(&m.Model, &m.Cost, &m.InputTokens, &m.CacheCreationTokens,
+			&m.CacheReadTokens, &m.OutputTokens, &m.TraceCount); err != nil {
 			return nil, fmt.Errorf("scan model cost: %w", err)
 		}
+		m.Tokens = m.InputTokens + m.CacheCreationTokens + m.CacheReadTokens + m.OutputTokens
 		if m.TraceCount > 0 {
-			m.AvgCost = math.Round(m.Cost/float64(m.TraceCount)*1e6)/1e6
+			m.AvgCost = math.Round(m.Cost/float64(m.TraceCount)*1e6) / 1e6
 		}
 		byModel = append(byModel, m)
 	}
-
 	if byModel == nil {
 		byModel = []ModelCostItem{}
 	}
-
-	// Determine currency from traces
-	var currency string
-	s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(max(cost_currency), 'USD') FROM traces WHERE cost IS NOT NULL AND cost > 0
-		 AND start_time_ms >= ? AND start_time_ms <= ?`,
-		q.StartTimeMS, q.EndTimeMS,
-	).Scan(&currency)
 
 	return &CostSummaryResult{
 		Currency: currency,

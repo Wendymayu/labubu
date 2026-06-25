@@ -138,3 +138,68 @@ func TestMergeTotalTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestGetCostSummaryReconcilesAndBreaksOutCache(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	store.UpsertModelPricing(ctx, ModelPricing{
+		ModelName: "glm-5.2", InputPrice: 10.0, OutputPrice: 30.0, Currency: "CNY",
+	})
+
+	var tid [16]byte
+	tid[15] = 9
+	res := ResourceInfo{Attributes: map[string]string{"service.name": "test"}}
+	mdl := "glm-5.2"
+	u := func(v uint32) *uint32 { return &v }
+	// span: input=2, output=100, cache_creation=189194, cache_read=5000 -> total=194296
+	span := Span{TraceID: tid, SpanID: [8]byte{9}, Name: "llm", Kind: 2,
+		StartTimeMS: 1000, EndTimeMS: 2000, DurationMS: 1000,
+		InputTokens: u(2), OutputTokens: u(100),
+		CacheCreationTokens: u(189194), CacheReadTokens: u(5000),
+		TotalTokens: u(194296), GenAIRequestModel: &mdl}
+	store.InsertSpans(ctx, res, ScopeInfo{}, []Span{span})
+	store.UpdateTraceCost(ctx, tid)
+
+	s, err := store.GetCostSummary(ctx, CostQuery{StartTimeMS: 0, EndTimeMS: 100000})
+	if err != nil {
+		t.Fatalf("GetCostSummary: %v", err)
+	}
+	o := s.Overview
+	// total = input + cache_creation + cache_read + output
+	if o.TotalTokens != 2+189194+5000+100 {
+		t.Errorf("overview total_tokens = %d, want %d", o.TotalTokens, 2+189194+5000+100)
+	}
+	if o.TotalInputTokens != 2 {
+		t.Errorf("input = %d, want 2", o.TotalInputTokens)
+	}
+	if o.TotalCacheCreationTokens != 189194 {
+		t.Errorf("cache_creation = %d, want 189194", o.TotalCacheCreationTokens)
+	}
+	if o.TotalCacheReadTokens != 5000 {
+		t.Errorf("cache_read = %d, want 5000", o.TotalCacheReadTokens)
+	}
+	if o.TotalOutputTokens != 100 {
+		t.Errorf("output = %d, want 100", o.TotalOutputTokens)
+	}
+	if o.TotalTokens != o.TotalInputTokens+o.TotalCacheCreationTokens+o.TotalCacheReadTokens+o.TotalOutputTokens {
+		t.Errorf("invariant broken: total != input+cc+cr+output")
+	}
+	// by_model: one row, no fan-out.
+	if len(s.ByModel) != 1 {
+		t.Fatalf("by_model rows = %d, want 1", len(s.ByModel))
+	}
+	m := s.ByModel[0]
+	if m.Model != "glm-5.2" {
+		t.Errorf("model = %s, want glm-5.2", m.Model)
+	}
+	if m.Tokens != o.TotalTokens {
+		t.Errorf("by_model tokens = %d, want %d (no fan-out)", m.Tokens, o.TotalTokens)
+	}
+	if m.CacheReadTokens != 5000 {
+		t.Errorf("by_model cache_read = %d, want 5000", m.CacheReadTokens)
+	}
+	// by_model cost == overview cost (every span lands in exactly one model bucket).
+	if m.Cost < o.TotalCost-0.000001 || m.Cost > o.TotalCost+0.000001 {
+		t.Errorf("by_model cost = %v, overview = %v (must match)", m.Cost, o.TotalCost)
+	}
+}
