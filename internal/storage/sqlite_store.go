@@ -275,6 +275,23 @@ func parseUint32Attr(attrs map[string]string, keys ...string) uint32 {
 	return 0
 }
 
+// mergeTotalTokens combines a previously-stored trace total with the current
+// batch's total. Accumulates across batches (existing + new); preserves the
+// existing total when the new batch has none; returns the new batch's value
+// (possibly nil) when there is no prior total.
+func mergeTotalTokens(existing sql.NullInt32, newTotal *uint32) *uint32 {
+	if !existing.Valid {
+		return newTotal
+	}
+	ex := uint32(existing.Int32)
+	if newTotal == nil {
+		v := ex
+		return &v
+	}
+	sum := ex + *newTotal
+	return &sum
+}
+
 // --- Trace methods ---
 
 func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope ScopeInfo, inSpans []Span) error {
@@ -363,10 +380,10 @@ func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, sc
 			if (trace.ResourceAttrs == nil || len(trace.ResourceAttrs) == 0) && existingResAttrsJSON != "" && existingResAttrsJSON != "{}" && existingResAttrsJSON != "null" {
 				trace.ResourceAttrs = jsonToMap(existingResAttrsJSON)
 			}
-			if trace.TotalTokens == nil && existingTotalTokens.Valid {
-				v := uint32(existingTotalTokens.Int32)
-				trace.TotalTokens = &v
-			}
+			// Accumulate total_tokens across batches (a trace often arrives
+			// in multiple OTLP batches). Re-sending the same span_id would
+			// double-count — accepted rare edge, corrected by UpdateTraceCost.
+			trace.TotalTokens = mergeTotalTokens(existingTotalTokens, trace.TotalTokens)
 			if trace.Cost == nil && existingCost.Valid {
 				v := existingCost.Float64
 				trace.Cost = &v
