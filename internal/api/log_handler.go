@@ -27,6 +27,11 @@ func (h *LogHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	traceIDHex := strings.TrimPrefix(path, "/")
+	if strings.HasSuffix(traceIDHex, "/counts") {
+		id := strings.TrimSuffix(traceIDHex, "/counts")
+		h.GetLogCountsByTrace(w, r, id)
+		return
+	}
 	h.GetLogsByTrace(w, r, traceIDHex)
 }
 
@@ -75,6 +80,31 @@ func (h *LogHandler) GetLogsByTrace(w http.ResponseWriter, r *http.Request, trac
 	})
 }
 
+// GetLogCountsByTrace handles GET /api/v1/logs/{traceIdHex}/counts.
+func (h *LogHandler) GetLogCountsByTrace(w http.ResponseWriter, r *http.Request, traceIDHex string) {
+	traceID, err := hex.DecodeString(traceIDHex)
+	if err != nil || len(traceID) != 16 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid trace_id"})
+		return
+	}
+
+	var tid [16]byte
+	copy(tid[:], traceID)
+
+	counts, err := h.store.GetLogCountsByTrace(r.Context(), tid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if counts == nil {
+		counts = map[string]int{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"counts": counts,
+	})
+}
+
 // GetEventNames handles GET /api/v1/log-event-names.
 func (h *LogHandler) GetEventNames(w http.ResponseWriter, r *http.Request) {
 	names, err := h.store.GetLogEventNames(r.Context())
@@ -116,6 +146,11 @@ func parseLogQuery(r *http.Request) storage.LogQuery {
 	if v := r.URL.Query().Get("trace_id"); v != "" {
 		if b, err := hex.DecodeString(v); err == nil && len(b) == 16 {
 			copy(q.TraceID[:], b)
+		}
+	}
+	if v := r.URL.Query().Get("span_id"); v != "" {
+		if b, err := hex.DecodeString(v); err == nil && len(b) == 8 {
+			copy(q.SpanID[:], b)
 		}
 	}
 
