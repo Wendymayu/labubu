@@ -63,7 +63,15 @@
             : activeInsight === 'diagnosis' ? t('diagnosis.tab')
             : t('agentStats.agentBehavior')
           }}</span>
-          <button class="insight-overlay-close" @click="activeInsight = null" title="Close">✕</button>
+          <div class="insight-overlay-actions">
+            <button
+              v-if="activeInsight === 'logs'"
+              class="insight-overlay-action"
+              @click="downloadTraceLogs"
+              :title="t('logList.download')"
+            >⬇</button>
+            <button class="insight-overlay-close" @click="activeInsight = null" title="Close">✕</button>
+          </div>
         </div>
         <div class="insight-overlay-body">
           <DiagnosisTab
@@ -492,6 +500,43 @@ async function downloadTraceOTLP() {
   }
 }
 
+async function downloadTraceLogs() {
+  try {
+    const result = await getLogsByTrace(traceIdHex)
+    const logs = result.logs || []
+    const text = formatLogsAsText(logs)
+    downloadBlob(text, `trace-${traceIdHex}-logs.txt`)
+  } catch (e: any) {
+    alert(`Log download failed: ${e.message}`)
+  }
+}
+
+function formatLogsAsText(logs: LogRecord[]): string {
+  const lines: string[] = []
+  lines.push(`# trace ${traceIdHex} — ${logs.length} logs`)
+  lines.push('')
+  for (const log of logs) {
+    const ts = formatLogTimestamp(log.timestamp)
+    const event = log.event_name || '-'
+    lines.push(`[${ts}] ${log.severity}  span=${log.span_id_hex || '-'}  event=${event}`)
+    if (log.body) {
+      lines.push(log.body)
+    }
+    if (log.attributes && Object.keys(log.attributes).length > 0) {
+      const attrs = Object.entries(log.attributes).map(([k, v]) => `${k}=${v}`).join(', ')
+      lines.push(`attrs: ${attrs}`)
+    }
+    lines.push('---')
+  }
+  return lines.join('\n')
+}
+
+function formatLogTimestamp(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number, l = 2) => String(n).padStart(l, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
+}
+
 function downloadBlob(content: string, filename: string) {
   const blob = new Blob([content], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
@@ -666,6 +711,25 @@ onUnmounted(() => {
   line-height: 1;
 }
 .insight-overlay-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover-subtle);
+}
+.insight-overlay-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.insight-overlay-action {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.insight-overlay-action:hover {
   color: var(--text-primary);
   background: var(--bg-surface-hover-subtle);
 }
