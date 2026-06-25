@@ -1122,10 +1122,8 @@ func (s *sqliteStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) err
 
 	traceIDHex := TraceIDToHex(traceID)
 
-	// Get all pricing configs
 	pricingRows, err := s.db.QueryContext(ctx,
-		`SELECT model_name, input_price, output_price, currency FROM model_pricing`,
-	)
+		`SELECT model_name, input_price, output_price, currency FROM model_pricing`)
 	if err != nil {
 		return fmt.Errorf("query pricing: %w", err)
 	}
@@ -1140,71 +1138,71 @@ func (s *sqliteStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) err
 	}
 	pricingRows.Close()
 
-	// Get spans with token data
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
+		`SELECT span_id_hex, input_tokens, output_tokens, total_tokens,
+		        cache_creation_tokens, cache_read_tokens, gen_ai_request_model
 		 FROM spans WHERE trace_id_hex = ? AND total_tokens IS NOT NULL`,
-		traceIDHex,
-	)
+		traceIDHex)
 	if err != nil {
 		return fmt.Errorf("query span tokens: %w", err)
 	}
 
-	// Anthropic prompt-caching differential rates (cache write = 1.25×, cache read = 0.1× input).
 	const cacheCreateRate = 1.25
 	const cacheReadRate = 0.1
 
 	var totalCost float64
-	var totalInputTokens, totalOutputTokens uint32
+	var traceTotalTokens uint64
 	var currency string
 	var unpricedCount int
+	type spanCostRow struct {
+		spanID       string
+		cost         float64
+		costCurrency string
+	}
+	var spanCosts []spanCostRow
 
 	for rows.Next() {
+		var spanID string
 		var inputTokens, outputTokens, totalTokens, cacheCreationTokens, cacheReadTokens sql.NullInt32
 		var genAIModel sql.NullString
-		err := rows.Scan(&inputTokens, &outputTokens, &totalTokens, &cacheCreationTokens, &cacheReadTokens, &genAIModel)
-		if err != nil {
+		if err := rows.Scan(&spanID, &inputTokens, &outputTokens, &totalTokens,
+			&cacheCreationTokens, &cacheReadTokens, &genAIModel); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan span token: %w", err)
 		}
-
-		if !totalTokens.Valid {
-			continue
+		// Trace total = sum of all span total_tokens (pricing-independent).
+		if totalTokens.Valid {
+			traceTotalTokens += uint64(totalTokens.Int32)
 		}
 
 		modelName := "(unknown)"
 		if genAIModel.Valid {
 			modelName = genAIModel.String
 		}
-
 		p, ok := pricingMap[modelName]
 		if !ok {
 			unpricedCount++
+			spanCosts = append(spanCosts, spanCostRow{spanID: spanID})
 			continue
 		}
 
 		inT := uint32(0)
 		if inputTokens.Valid {
 			inT = uint32(inputTokens.Int32)
-			totalInputTokens += inT
 		}
 		outT := uint32(0)
 		if outputTokens.Valid {
 			outT = uint32(outputTokens.Int32)
-			totalOutputTokens += outT
 		}
 		ccT := uint32(0)
 		if cacheCreationTokens.Valid {
 			ccT = uint32(cacheCreationTokens.Int32)
-			totalInputTokens += ccT
 		}
 		crT := uint32(0)
 		if cacheReadTokens.Valid {
 			crT = uint32(cacheReadTokens.Int32)
-			totalInputTokens += crT
 		}
 
-		// Inline cost calculation with differential cache rates.
 		spanCost := (float64(inT)*p.InputPrice +
 			float64(ccT)*p.InputPrice*cacheCreateRate +
 			float64(crT)*p.InputPrice*cacheReadRate +
@@ -1214,21 +1212,30 @@ func (s *sqliteStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) err
 		if currency == "" {
 			currency = p.Currency
 		}
+		spanCosts = append(spanCosts, spanCostRow{spanID: spanID, cost: spanCost, costCurrency: p.Currency})
 	}
 	rows.Close()
 
+	// Write per-span cost (including 0 for unpriced, so by_model has no NULLs).
+	for _, sc := range spanCosts {
+		s.db.ExecContext(ctx,
+			`UPDATE spans SET cost = ?, cost_currency = ? WHERE trace_id_hex = ? AND span_id_hex = ?`,
+			sc.cost, sc.costCurrency, traceIDHex, sc.spanID)
+	}
+
 	if totalCost == 0 && unpricedCount == 0 {
-		// No token data at all, skip
+		// Still set trace total_tokens even with no cost.
+		if traceTotalTokens > 0 {
+			s.db.ExecContext(ctx, `UPDATE traces SET total_tokens = ? WHERE trace_id_hex = ?`,
+				traceTotalTokens, traceIDHex)
+		}
 		return nil
 	}
 
-	// Round to 6 decimal places
-	totalCost = math.Round(totalCost*1e6)/1e6
-
+	totalCost = math.Round(totalCost*1e6) / 1e6
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE traces SET cost = ?, cost_currency = ? WHERE trace_id_hex = ?`,
-		totalCost, currency, traceIDHex,
-	)
+		`UPDATE traces SET total_tokens = ?, cost = ?, cost_currency = ? WHERE trace_id_hex = ?`,
+		traceTotalTokens, totalCost, currency, traceIDHex)
 	return err
 }
 
