@@ -421,30 +421,8 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 	// that getUint32Attr/getStringAttr look for.
 	attrs := normalizeAttributes(keyValueToMap(ps.Attributes))
 
-	inputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.input_tokens")
-	outputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.output_tokens")
-	cacheCreationTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.cache_creation_input_tokens")
-	cacheReadTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.cache_read_input_tokens")
-	var totalTokens *uint32
-	if inputTokens != nil || outputTokens != nil || cacheCreationTokens != nil || cacheReadTokens != nil {
-		var sum uint32
-		if inputTokens != nil {
-			sum += *inputTokens
-		}
-		if outputTokens != nil {
-			sum += *outputTokens
-		}
-		if cacheCreationTokens != nil {
-			sum += *cacheCreationTokens
-		}
-		if cacheReadTokens != nil {
-			sum += *cacheReadTokens
-		}
-		if tt := getUint32AttrFromMap(attrs, "gen_ai.usage.total_tokens"); tt != nil {
-			sum = *tt
-		}
-		totalTokens = &sum
-	}
+	inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, totalTokens :=
+		storage.DeriveTokenBuckets(attrs)
 	genAIModel := getStringAttrFromMap(attrs, "gen_ai.request.model")
 
 	eventsJSON := serializeEvents(ps.Events)

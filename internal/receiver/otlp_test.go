@@ -282,8 +282,6 @@ func TestNormalizeAttributes(t *testing.T) {
 }
 
 func TestTokenExtractionAfterNormalize(t *testing.T) {
-	// Verify that fallback keys produce typed token columns
-	// after normalizeAttributes copies them to standard keys.
 	tests := []struct {
 		name         string
 		input        map[string]string
@@ -315,12 +313,8 @@ func TestTokenExtractionAfterNormalize(t *testing.T) {
 		{
 			name:         "no token keys → nil",
 			input:        map[string]string{"other_attr": "value"},
-			expectInput:  nil,
-			expectOutput: nil,
-			expectTotal:  nil,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			attrs := make(map[string]string, len(tt.input))
@@ -328,32 +322,15 @@ func TestTokenExtractionAfterNormalize(t *testing.T) {
 				attrs[k] = v
 			}
 			normalizeAttributes(attrs)
-
-			inputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.input_tokens")
-			outputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.output_tokens")
-			var totalTokens *uint32
-			if inputTokens != nil || outputTokens != nil {
-				var sum uint32
-				if inputTokens != nil {
-					sum += *inputTokens
-				}
-				if outputTokens != nil {
-					sum += *outputTokens
-				}
-				if t := getUint32AttrFromMap(attrs, "gen_ai.usage.total_tokens"); t != nil {
-					sum = *t
-				}
-				totalTokens = &sum
+			in, out, _, _, tot := storage.DeriveTokenBuckets(attrs)
+			if !uint32PtrEqual(in, tt.expectInput) {
+				t.Errorf("inputTokens: got %v, want %v", in, tt.expectInput)
 			}
-
-			if !uint32PtrEqual(inputTokens, tt.expectInput) {
-				t.Errorf("inputTokens: got %v, want %v", inputTokens, tt.expectInput)
+			if !uint32PtrEqual(out, tt.expectOutput) {
+				t.Errorf("outputTokens: got %v, want %v", out, tt.expectOutput)
 			}
-			if !uint32PtrEqual(outputTokens, tt.expectOutput) {
-				t.Errorf("outputTokens: got %v, want %v", outputTokens, tt.expectOutput)
-			}
-			if !uint32PtrEqual(totalTokens, tt.expectTotal) {
-				t.Errorf("totalTokens: got %v, want %v", totalTokens, tt.expectTotal)
+			if !uint32PtrEqual(tot, tt.expectTotal) {
+				t.Errorf("totalTokens: got %v, want %v", tot, tt.expectTotal)
 			}
 		})
 	}
@@ -696,5 +673,25 @@ func TestLogTimestampPrecedence(t *testing.T) {
 	want := uint64(1608238394254)
 	if rec.Timestamp != want {
 		t.Errorf("time should take precedence: got %d, want %d", rec.Timestamp, want)
+	}
+}
+
+// TestTranslateSpanIgnoresSelfReportedTotal verifies that a self-reported
+// gen_ai.usage.total_tokens is IGNORED — total is always the bucket sum.
+func TestTranslateSpanIgnoresSelfReportedTotal(t *testing.T) {
+	span := &tracepb.Span{
+		TraceId: make([]byte, 16),
+		SpanId:  make([]byte, 8),
+		Name:    "claude_code.llm_request",
+		Attributes: []*commonpb.KeyValue{
+			intKV("input_tokens", 100),
+			intKV("output_tokens", 50),
+			intKV("total_tokens", 999),
+		},
+	}
+	got := translateSpan(span)
+	// total = 100 + 50 = 150 (the 999 must be ignored)
+	if !uint32PtrEqual(got.TotalTokens, uint32Ptr(150)) {
+		t.Errorf("TotalTokens: got %v, want 150 (self-reported 999 ignored)", got.TotalTokens)
 	}
 }
