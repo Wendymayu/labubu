@@ -237,10 +237,11 @@ func (s *sqliteStore) backfillCacheTokens(ctx context.Context) {
 
 // backfillSpanCost populates spans.cost/cost_currency for pre-existing
 // spans (added alongside the span-level cost column). Idempotent: only
-// touches traces that still have a span with NULL cost.
+// touches traces that still have an LLM span (total_tokens IS NOT NULL)
+// with NULL cost; non-LLM spans are never costed and stay NULL.
 func (s *sqliteStore) backfillSpanCost(ctx context.Context) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT trace_id_hex FROM spans WHERE cost IS NULL`)
+		`SELECT DISTINCT trace_id_hex FROM spans WHERE cost IS NULL AND total_tokens IS NOT NULL`)
 	if err != nil {
 		return
 	}
