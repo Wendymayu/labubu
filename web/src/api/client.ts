@@ -324,6 +324,8 @@ export interface CostOverview {
   total_cost: number
   total_tokens: number
   total_input_tokens: number
+  total_cache_creation_tokens: number
+  total_cache_read_tokens: number
   total_output_tokens: number
   avg_cost_per_trace: number
   trace_count: number
@@ -334,6 +336,8 @@ export interface ModelCost {
   cost: number
   tokens: number
   input_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
   output_tokens: number
   trace_count: number
   avg_cost: number
