@@ -29,6 +29,11 @@
           <div class="card-sub">{{ formatNumber(summary.overview.total_input_tokens) }} in / {{ formatNumber(summary.overview.total_output_tokens) }} out</div>
         </div>
         <div class="card">
+          <div class="card-label">{{ t('costDashboard.cache') }}</div>
+          <div class="card-value">{{ formatNumber(summary.overview.total_cache_read_tokens + summary.overview.total_cache_creation_tokens) }}</div>
+          <div class="card-sub">{{ t('costDashboard.cacheRead') }}: {{ formatNumber(summary.overview.total_cache_read_tokens) }} / {{ t('costDashboard.cacheWrite') }}: {{ formatNumber(summary.overview.total_cache_creation_tokens) }}</div>
+        </div>
+        <div class="card">
           <div class="card-label">{{ t('costDashboard.avgCostPerTrace') }}</div>
           <div class="card-value">{{ formatCost(summary.overview.avg_cost_per_trace, summary.currency) }}</div>
         </div>
@@ -46,6 +51,7 @@
             <th>{{ t('costDashboard.model') }}</th>
             <th>{{ t('costDashboard.cost') }}</th>
             <th>{{ t('costDashboard.tokens') }}</th>
+            <th>{{ t('costDashboard.cache') }}</th>
             <th>{{ t('costDashboard.traces') }}</th>
             <th>{{ t('costDashboard.avgCost') }}</th>
           </tr>
@@ -55,6 +61,7 @@
             <td>{{ m.model }}</td>
             <td>{{ formatCost(m.cost, summary.currency) }}</td>
             <td>{{ formatNumber(m.tokens) }}</td>
+            <td>{{ formatNumber(m.cache_read_tokens + m.cache_creation_tokens) }}</td>
             <td>{{ m.trace_count }}</td>
             <td>{{ formatCost(m.avg_cost, summary.currency) }}</td>
           </tr>
@@ -168,7 +175,7 @@ onMounted(() => {
 
 .overview-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
