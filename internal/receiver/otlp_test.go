@@ -3,6 +3,8 @@ package receiver
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -425,5 +427,70 @@ func TestTranslateSpanNoTokens(t *testing.T) {
 		got.CacheCreationTokens != nil || got.CacheReadTokens != nil {
 		t.Errorf("expected nil token columns for non-LLM span, got input=%v output=%v total=%v cc=%v cr=%v",
 			got.InputTokens, got.OutputTokens, got.TotalTokens, got.CacheCreationTokens, got.CacheReadTokens)
+	}
+}
+
+// freePort returns a currently-free TCP port on localhost. The listener is
+// closed before returning, so there is a small race window before the caller
+// re-binds it; this is the standard technique for test port allocation and is
+// acceptable for test reliability.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("free port: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// dialCheck verifies that something is listening on the given localhost port.
+func dialCheck(port int) error {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 1*time.Second)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
+// TestStartCustomPorts verifies Start binds to the provided gRPC and HTTP ports
+// (not the hardcoded 4317/4318) and that both listeners actually accept connections.
+func TestStartCustomPorts(t *testing.T) {
+	grpcPort := freePort(t)
+	httpPort := freePort(t)
+
+	store := &memTestStore{}
+	r := New(nil, nil, store) // pipeline/metrics nil: we only test binding, not export
+	if err := r.Start(grpcPort, httpPort); err != nil {
+		t.Fatalf("Start(%d, %d): %v", grpcPort, httpPort, err)
+	}
+	defer r.Shutdown(context.Background())
+
+	if err := dialCheck(grpcPort); err != nil {
+		t.Errorf("gRPC port %d not listening: %v", grpcPort, err)
+	}
+	if err := dialCheck(httpPort); err != nil {
+		t.Errorf("HTTP port %d not listening: %v", httpPort, err)
+	}
+}
+
+// TestStartFailFastOnConflict verifies that a port conflict returns an error
+// from Start (rather than silently starting a non-listening server).
+func TestStartFailFastOnConflict(t *testing.T) {
+	// Reserve a port on the same address Start binds (0.0.0.0) and keep it held
+	// so Start's bind is an exact collision.
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("reserve listener: %v", err)
+	}
+	defer ln.Close()
+	conflictPort := ln.Addr().(*net.TCPAddr).Port
+	httpPort := freePort(t)
+
+	store := &memTestStore{}
+	r := New(nil, nil, store)
+	if err := r.Start(conflictPort, httpPort); err == nil {
+		r.Shutdown(context.Background())
+		t.Errorf("expected error when gRPC port %d is in use, got nil", conflictPort)
 	}
 }

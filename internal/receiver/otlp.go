@@ -45,8 +45,10 @@ func New(p *pipeline.Pipeline, ms metrics.Store, s storage.Store) *Receiver {
 	}
 }
 
-// Start begins listening on separate ports for gRPC (:4317) and HTTP (:4318).
-func (r *Receiver) Start() error {
+// Start begins listening on the given gRPC and HTTP ports for OTLP data.
+// Both listeners are bound synchronously so a port conflict fails fast and
+// returns an error, rather than starting a server that silently does not listen.
+func (r *Receiver) Start(grpcPort, httpPort int) error {
 	// gRPC server.
 	r.grpcSrv = grpc.NewServer()
 	coltracepb.RegisterTraceServiceServer(r.grpcSrv, &traceService{pipeline: r.pipeline})
@@ -57,7 +59,7 @@ func (r *Receiver) Start() error {
 		collogspb.RegisterLogsServiceServer(r.grpcSrv, &logsService{store: r.store})
 	}
 
-	// HTTP server for OTLP HTTP (/v1/traces).
+	// HTTP server for OTLP HTTP (/v1/traces, /v1/metrics, /v1/logs).
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", r.handleHTTPTraces)
 	if r.metricStore != nil {
@@ -68,26 +70,25 @@ func (r *Receiver) Start() error {
 	}
 	r.httpSrv = &http.Server{Handler: mux}
 
-	// Start gRPC on :4317.
+	// Bind synchronously so port conflicts fail fast.
+	grpcLis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", grpcPort))
+	if err != nil {
+		return fmt.Errorf("OTLP gRPC listen on :%d: %w", grpcPort, err)
+	}
+	httpLis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", httpPort))
+	if err != nil {
+		grpcLis.Close()
+		return fmt.Errorf("OTLP HTTP listen on :%d: %w", httpPort, err)
+	}
+
+	// Serve in goroutines; listeners are already bound.
 	go func() {
-		grpcLis, err := net.Listen("tcp", "0.0.0.0:4317")
-		if err != nil {
-			fmt.Printf("receiver: gRPC listen error: %v\n", err)
-			return
-		}
 		fmt.Printf("OTLP gRPC listening on %s\n", grpcLis.Addr())
 		if err := r.grpcSrv.Serve(grpcLis); err != nil {
 			fmt.Printf("receiver: gRPC serve error: %v\n", err)
 		}
 	}()
-
-	// Start HTTP on :4318.
 	go func() {
-		httpLis, err := net.Listen("tcp", "0.0.0.0:4318")
-		if err != nil {
-			fmt.Printf("receiver: HTTP listen error: %v\n", err)
-			return
-		}
 		fmt.Printf("OTLP HTTP listening on %s\n", httpLis.Addr())
 		if err := r.httpSrv.Serve(httpLis); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("receiver: HTTP serve error: %v\n", err)
