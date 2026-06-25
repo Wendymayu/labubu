@@ -505,7 +505,6 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 				ScopeSchemaURL:    scope.SchemaURL,
 				StatusCode:        span.StatusCode,
 				StatusMessage:     span.StatusMessage,
-				TotalTokens:       span.TotalTokens,
 			}
 		}
 		if isRootSpan(span.ParentSpanID) {
