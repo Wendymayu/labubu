@@ -43,6 +43,9 @@
           </div>
         </div>
         <div class="summary-actions">
+          <button :class="['btn-insight', { active: activeInsight === 'logs' }]" @click="toggleInsight('logs')">
+            📋 {{ t('logList.logCount', { count: totalLogCount }) }}
+          </button>
           <button :class="['btn-insight', { active: activeInsight === 'diagnosis' }]" @click="toggleInsight('diagnosis')">
             🔍 {{ t('diagnosis.tab') }}
           </button>
@@ -55,7 +58,11 @@
       <div v-if="activeInsight" class="insight-backdrop" @click="activeInsight = null"></div>
       <div v-if="activeInsight" class="insight-overlay">
         <div class="insight-overlay-header">
-          <span class="insight-overlay-title">{{ activeInsight === 'diagnosis' ? t('diagnosis.tab') : t('agentStats.agentBehavior') }}</span>
+          <span class="insight-overlay-title">{{
+            activeInsight === 'logs' ? t('logList.logCount', { count: totalLogCount })
+            : activeInsight === 'diagnosis' ? t('diagnosis.tab')
+            : t('agentStats.agentBehavior')
+          }}</span>
           <button class="insight-overlay-close" @click="activeInsight = null" title="Close">✕</button>
         </div>
         <div class="insight-overlay-body">
@@ -72,6 +79,26 @@
             v-if="activeInsight === 'agent'"
             :spans="trace.spans"
           />
+          <div v-if="activeInsight === 'logs'" class="log-overlay">
+            <div v-if="logSpanFilter" class="log-filter-tag">
+              {{ t('logList.filteredBySpan', { name: logSpanFilter }) }}
+              <button class="filter-clear" @click="clearLogFilter">✕</button>
+            </div>
+            <div v-if="logsLoading" class="loading-state">{{ t('common.loading') }}</div>
+            <div v-else-if="filteredLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
+            <div v-else class="log-list-inline">
+              <div
+                v-for="(log, idx) in filteredLogs"
+                :key="idx"
+                class="log-item"
+              >
+                <span class="log-item-time">{{ formatLogTime(log.timestamp) }}</span>
+                <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
+                <span class="log-item-event">{{ log.event_name || '-' }}</span>
+                <span v-if="log.body" class="log-item-body">{{ formatLogBody(log.body) }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -86,45 +113,6 @@
             @select-span="openDrawer"
             @filter-logs="filterLogsBySpan"
           />
-
-        <!-- Tab bar and Log panel -->
-        <div class="detail-panel" v-if="!drawerOpen">
-          <div class="panel-tabs">
-            <button :class="['tab-btn', { active: activeTab === 'spans' }]" @click="switchTab('spans')">
-              Spans
-            </button>
-            <button :class="['tab-btn', { active: activeTab === 'logs' }]" @click="switchTab('logs')">
-              {{ t('logList.logCount', { count: totalLogCount }) }}
-            </button>
-          </div>
-
-          <div v-if="activeTab === 'logs'" class="log-panel">
-            <div v-if="logSpanFilter" class="log-filter-tag">
-              {{ t('logList.filteredBySpan', { name: logSpanFilter }) }}
-              <button class="filter-clear" @click="clearLogFilter">✕</button>
-            </div>
-            <div v-if="logsLoading" class="loading-state">{{ t('common.loading') }}</div>
-            <div v-else-if="filteredLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
-            <div v-else class="log-list-inline">
-              <div
-                v-for="(log, idx) in filteredLogs"
-                :key="idx"
-                :class="['log-item', { expanded: logExpandedIdx === idx }]"
-                @click="logExpandedIdx = logExpandedIdx === idx ? null : idx"
-              >
-                <div class="log-item-header">
-                  <span class="log-item-time">{{ formatLogTime(log.timestamp) }}</span>
-                  <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
-                  <span class="log-item-event">{{ log.event_name || '-' }}</span>
-                  <span class="log-item-expand">{{ logExpandedIdx === idx ? '▼' : '▶' }}</span>
-                </div>
-                <pre v-if="logExpandedIdx === idx" class="log-item-body">{{ formatLogBody(log.body) }}</pre>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="activeTab === 'spans'" class="hint-click">Click any span to view details</div>
-        </div>
         </div>
 
         <div v-if="drawerOpen" class="drawer-backdrop" @click="closeDrawer"></div>
@@ -212,10 +200,9 @@ const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
 const traceLogs = ref<LogRecord[]>([])
 const logsLoading = ref(false)
-const activeTab = ref<'spans' | 'logs'>('spans')
-const activeInsight = ref<'diagnosis' | 'agent' | null>(null)
+const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | null>(null)
 
-function toggleInsight(insight: 'diagnosis' | 'agent') {
+function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent') {
   if (activeInsight.value === insight) {
     activeInsight.value = null
   } else {
@@ -223,7 +210,6 @@ function toggleInsight(insight: 'diagnosis' | 'agent') {
   }
 }
 const logSpanFilter = ref('')
-const logExpandedIdx = ref<number | null>(null)
 const viewMode = ref<'structured' | 'json'>('structured')
 const jsonSearch = ref('')
 const contentSearch = ref('')
@@ -402,7 +388,6 @@ async function pollDiagnosisResult() {
 }
 
 function onDiagnosisNavigateSpan(spanIndex: number) {
-  activeTab.value = 'spans'
   drawerOpen.value = false
   nextTick(() => {
     if (trace.value?.spans && trace.value.spans[spanIndex]) {
@@ -435,15 +420,11 @@ async function fetchTraceLogs() {
 
 function filterLogsBySpan(spanId: string) {
   logSpanFilter.value = spanId
-  activeTab.value = 'logs'
+  activeInsight.value = 'logs'
 }
 
 function clearLogFilter() {
   logSpanFilter.value = ''
-}
-
-function switchTab(tab: 'spans' | 'logs') {
-  activeTab.value = tab
 }
 
 function formatLogTime(ts: number): string {
@@ -682,13 +663,6 @@ onUnmounted(() => {
   overflow-x: auto;
 }
 
-.hint-click {
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 24px 0;
-}
-
 /* === Drawer (overlay) === */
 .detail-drawer {
   position: fixed;
@@ -779,37 +753,7 @@ onUnmounted(() => {
   }
 }
 
-/* === Tab bar and Log panel === */
-.detail-panel {
-  margin-top: 16px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.panel-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border-default);
-  background: var(--bg-surface);
-}
-.tab-btn {
-  padding: 10px 20px;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-}
-.tab-btn.active {
-  color: var(--accent-blue);
-  border-bottom-color: var(--accent-blue);
-}
-.tab-btn:hover { color: var(--text-primary); }
-
-.log-panel {
-  max-height: 320px;
-  overflow-y: auto;
-}
+/* === Log items (rendered inside the insight overlay) === */
 .log-filter-tag {
   display: flex;
   align-items: center;
@@ -833,20 +777,23 @@ onUnmounted(() => {
 .log-list-inline { }
 .log-item {
   border-bottom: 1px solid var(--bg-surface-deep);
-  cursor: pointer;
-}
-.log-item:hover { background: var(--bg-surface); }
-.log-item.expanded { background: var(--bg-surface-hover-subtle); }
-.log-item-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   padding: 8px 12px;
   font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
-.log-item-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.log-item-event { color: var(--text-secondary); font-family: 'Courier New', monospace; font-size: 11px; }
-.log-item-expand { color: var(--text-secondary); font-size: 10px; margin-left: auto; }
+.log-item .severity-badge { margin-right: 10px; }
+.log-item-time {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-right: 10px;
+}
+.log-item-event {
+  color: var(--text-secondary);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  margin-right: 10px;
+}
 
 .severity-badge {
   display: inline-block;
@@ -862,16 +809,9 @@ onUnmounted(() => {
 .severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-secondary); }
 
 .log-item-body {
-  margin: 0;
-  padding: 8px 16px 12px;
-  font-size: 12px;
-  font-family: 'Courier New', monospace;
   color: var(--text-primary);
+  font-family: 'Courier New', monospace;
   white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 240px;
-  overflow-y: auto;
-  background: var(--bg-surface-deep);
 }
 
 .loading-state, .empty-state { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 13px; }
