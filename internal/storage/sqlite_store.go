@@ -296,14 +296,16 @@ func (s *sqliteStore) InsertSpans(ctx context.Context, resource ResourceInfo, sc
 				start_time_ms, end_time_ms, duration_ms, attributes,
 				dropped_attributes_count, events, dropped_events_count,
 				links, dropped_links_count, status_code, status_message,
-				input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model,
+				cost, cost_currency
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			TraceIDToHex(sp.TraceID), SpanIDToHex(sp.SpanID), SpanIDToHex(sp.ParentSpanID),
 			sp.TraceState, sp.Name, KindToString(sp.Kind),
 			sp.StartTimeMS, sp.EndTimeMS, sp.DurationMS, string(attrsJSON),
 			0, sp.Events, 0, sp.Links, 0,
 			StatusCodeToString(sp.StatusCode), sp.StatusMessage,
 			sp.InputTokens, sp.OutputTokens, sp.TotalTokens, sp.CacheCreationTokens, sp.CacheReadTokens, sp.GenAIRequestModel,
+			sp.Cost, sp.CostCurrency,
 		)
 		if err != nil {
 			return fmt.Errorf("insert span: %w", err)
