@@ -31,6 +31,8 @@ type Span struct {
 	CacheCreationTokens    *uint32 // prompt-caching write tokens (Claude/Anthropic)
 	CacheReadTokens        *uint32 // prompt-caching read tokens (Claude/Anthropic)
 	GenAIRequestModel      *string // nullable
+	Cost                   *float64 // per-span cost (differential cache rates applied)
+	CostCurrency           string   // currency of Cost, empty if no cost
 	TraceState             string
 }
 
@@ -93,23 +95,27 @@ type CostQuery struct {
 
 // CostOverview holds aggregated cost totals.
 type CostOverview struct {
-	TotalCost         float64 `json:"total_cost"`
-	TotalTokens       uint64  `json:"total_tokens"`
-	TotalInputTokens  uint64  `json:"total_input_tokens"`
-	TotalOutputTokens uint64  `json:"total_output_tokens"`
-	AvgCostPerTrace   float64 `json:"avg_cost_per_trace"`
-	TraceCount        int     `json:"trace_count"`
+	TotalCost                float64 `json:"total_cost"`
+	TotalTokens              uint64  `json:"total_tokens"`
+	TotalInputTokens         uint64  `json:"total_input_tokens"`
+	TotalCacheCreationTokens uint64  `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     uint64  `json:"total_cache_read_tokens"`
+	TotalOutputTokens        uint64  `json:"total_output_tokens"`
+	AvgCostPerTrace          float64 `json:"avg_cost_per_trace"`
+	TraceCount               int     `json:"trace_count"`
 }
 
 // ModelCostItem holds cost aggregation for a single model.
 type ModelCostItem struct {
-	Model        string  `json:"model"`
-	Cost         float64 `json:"cost"`
-	Tokens       uint64  `json:"tokens"`
-	InputTokens  uint64  `json:"input_tokens"`
-	OutputTokens uint64  `json:"output_tokens"`
-	TraceCount   int     `json:"trace_count"`
-	AvgCost      float64 `json:"avg_cost"`
+	Model               string  `json:"model"`
+	Cost                float64 `json:"cost"`
+	Tokens              uint64  `json:"tokens"`
+	InputTokens         uint64  `json:"input_tokens"`
+	CacheCreationTokens uint64  `json:"cache_creation_tokens"`
+	CacheReadTokens     uint64  `json:"cache_read_tokens"`
+	OutputTokens        uint64  `json:"output_tokens"`
+	TraceCount          int     `json:"trace_count"`
+	AvgCost             float64 `json:"avg_cost"`
 }
 
 // CostSummaryResult holds the full cost dashboard response.
