@@ -91,6 +91,7 @@ type TraceQuery struct {
 type CostQuery struct {
 	StartTimeMS uint64
 	EndTimeMS   uint64
+	GroupBy     string // "model" (default) or "service"
 }
 
 // CostOverview holds aggregated cost totals.
@@ -118,12 +119,28 @@ type ModelCostItem struct {
 	AvgCost             float64 `json:"avg_cost"`
 }
 
+// ServiceCostItem holds cost aggregation for a single service.
+// Mirrors ModelCostItem; the dimension value is the trace's service.name.
+type ServiceCostItem struct {
+	Service             string  `json:"service"`
+	Cost                float64 `json:"cost"`
+	Tokens              uint64  `json:"tokens"`
+	InputTokens         uint64  `json:"input_tokens"`
+	CacheCreationTokens uint64  `json:"cache_creation_tokens"`
+	CacheReadTokens     uint64  `json:"cache_read_tokens"`
+	OutputTokens        uint64  `json:"output_tokens"`
+	TraceCount          int     `json:"trace_count"`
+	AvgCost             float64 `json:"avg_cost"`
+}
+
 // CostSummaryResult holds the full cost dashboard response.
 type CostSummaryResult struct {
-	Period   string          `json:"period"`
-	Currency string          `json:"currency"`
-	Overview CostOverview    `json:"overview"`
-	ByModel  []ModelCostItem `json:"by_model"`
+	Period    string            `json:"period"`
+	Currency  string            `json:"currency"`
+	Overview  CostOverview      `json:"overview"`
+	GroupBy   string            `json:"group_by"`
+	ByModel   []ModelCostItem   `json:"by_model"`
+	ByService []ServiceCostItem `json:"by_service"`
 }
 
 // TraceListResult holds a page of trace summaries.
