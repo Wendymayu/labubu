@@ -131,3 +131,13 @@ func TestOpenAPIHandler_ServesValidSpec(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAPIHandler_RejectsNonGet(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		rec := httptest.NewRecorder()
+		OpenAPIHandler(rec, httptest.NewRequest(method, "/api/v1/openapi.json", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s /api/v1/openapi.json: status = %d, want 405", method, rec.Code)
+		}
+	}
+}
