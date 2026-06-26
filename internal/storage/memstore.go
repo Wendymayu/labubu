@@ -971,6 +971,96 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 	}
 	traceCount := len(costlyTraces)
 
+	if q.GroupBy == "service" {
+		type svcAgg struct {
+			cost, input, cc, cr, output uint64
+			traces                       map[[16]byte]struct{}
+		}
+		sagg := map[string]*svcAgg{}
+		var oIn, oCC, oCR, oOut uint64
+
+		for i := range m.spans {
+			s := &m.spans[i]
+			if _, ok := costlyTraces[s.TraceID]; !ok {
+				continue
+			}
+			if s.TotalTokens == nil {
+				continue
+			}
+			svc := "(unknown)"
+			if t, ok := m.traces[s.TraceID]; ok {
+				if name := t.ResourceAttrs["service.name"]; name != "" {
+					svc = name
+				}
+			}
+			entry := sagg[svc]
+			if entry == nil {
+				entry = &svcAgg{traces: map[[16]byte]struct{}{}}
+				sagg[svc] = entry
+			}
+			entry.traces[s.TraceID] = struct{}{}
+			if s.Cost != nil {
+				entry.cost += uint64(math.Round(*s.Cost * 1e6))
+			}
+			if s.InputTokens != nil {
+				entry.input += uint64(*s.InputTokens)
+				oIn += uint64(*s.InputTokens)
+			}
+			if s.CacheCreationTokens != nil {
+				entry.cc += uint64(*s.CacheCreationTokens)
+				oCC += uint64(*s.CacheCreationTokens)
+			}
+			if s.CacheReadTokens != nil {
+				entry.cr += uint64(*s.CacheReadTokens)
+				oCR += uint64(*s.CacheReadTokens)
+			}
+			if s.OutputTokens != nil {
+				entry.output += uint64(*s.OutputTokens)
+				oOut += uint64(*s.OutputTokens)
+			}
+		}
+
+		byService := make([]ServiceCostItem, 0, len(sagg))
+		for svc, e := range sagg {
+			tc := len(e.traces)
+			costF := float64(e.cost) / 1e6
+			avg := 0.0
+			if tc > 0 {
+				avg = math.Round(costF/float64(tc)*1e6) / 1e6
+			}
+			byService = append(byService, ServiceCostItem{
+				Service: svc, Cost: costF,
+				Tokens:              e.input + e.cc + e.cr + e.output,
+				InputTokens:         e.input, CacheCreationTokens: e.cc,
+				CacheReadTokens:     e.cr, OutputTokens: e.output,
+				TraceCount:          tc, AvgCost: avg,
+			})
+		}
+		sort.Slice(byService, func(i, j int) bool { return byService[i].Cost > byService[j].Cost })
+
+		avgPerTrace := 0.0
+		if traceCount > 0 {
+			avgPerTrace = math.Round(totalCost/float64(traceCount)*1e6) / 1e6
+		}
+
+		return &CostSummaryResult{
+			Period:   "",
+			Currency: currency,
+			Overview: CostOverview{
+				TotalCost:                totalCost,
+				TotalInputTokens:         oIn,
+				TotalCacheCreationTokens: oCC,
+				TotalCacheReadTokens:     oCR,
+				TotalOutputTokens:        oOut,
+				TotalTokens:              oIn + oCC + oCR + oOut,
+				AvgCostPerTrace:          avgPerTrace,
+				TraceCount:               traceCount,
+			},
+			GroupBy:   "service",
+			ByService: byService,
+		}, nil
+	}
+
 	type modelAgg struct {
 		cost, input, cc, cr, output uint64
 		traces                       map[[16]byte]struct{}
@@ -1054,6 +1144,7 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 			AvgCostPerTrace:          avgPerTrace,
 			TraceCount:               traceCount,
 		},
+		GroupBy: "model",
 		ByModel: byModel,
 	}, nil
 }
