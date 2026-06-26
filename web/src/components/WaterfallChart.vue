@@ -67,6 +67,7 @@
         <span v-else class="toggle-icon toggle-placeholder"></span>
         <span :class="['kind-dot', kindDotClass(span.kind)]"></span>
         <span :class="{ 'match-text': span._searchMatch && searchQuery }">{{ span.name }}</span>
+        <span v-if="span.tool_name" class="tool-name-tag"> · {{ span.tool_name }}</span>
         <span v-if="selectedSpanId === span.span_id" class="selected-marker">◀</span>
       </span>
 
@@ -560,4 +561,5 @@ function formatTokens(tokens: number): string {
   opacity: 0.6;
 }
 .match-text { font-weight: 700; color: var(--status-error-accent); }
+.tool-name-tag { font-weight: 500; color: var(--text-primary); }
 </style>
