@@ -61,6 +61,10 @@ func (m *mockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]sto
 	return nil, nil
 }
 
+func (m *mockStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	return nil, nil
+}
+
 func (m *mockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
 
 func (m *mockStore) GetLLMConfigs(ctx context.Context) ([]storage.LLMConfig, error) {

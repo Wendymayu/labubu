@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS spans (
     cache_creation_tokens INTEGER,
     cache_read_tokens  INTEGER,
     gen_ai_request_model TEXT,
+    cost               REAL,
+    cost_currency      TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (trace_id_hex, span_id_hex)
 );
 

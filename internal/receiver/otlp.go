@@ -45,8 +45,10 @@ func New(p *pipeline.Pipeline, ms metrics.Store, s storage.Store) *Receiver {
 	}
 }
 
-// Start begins listening on separate ports for gRPC (:4317) and HTTP (:4318).
-func (r *Receiver) Start() error {
+// Start begins listening on the given gRPC and HTTP ports for OTLP data.
+// Both listeners are bound synchronously so a port conflict fails fast and
+// returns an error, rather than starting a server that silently does not listen.
+func (r *Receiver) Start(grpcPort, httpPort int) error {
 	// gRPC server.
 	r.grpcSrv = grpc.NewServer()
 	coltracepb.RegisterTraceServiceServer(r.grpcSrv, &traceService{pipeline: r.pipeline})
@@ -57,7 +59,7 @@ func (r *Receiver) Start() error {
 		collogspb.RegisterLogsServiceServer(r.grpcSrv, &logsService{store: r.store})
 	}
 
-	// HTTP server for OTLP HTTP (/v1/traces).
+	// HTTP server for OTLP HTTP (/v1/traces, /v1/metrics, /v1/logs).
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", r.handleHTTPTraces)
 	if r.metricStore != nil {
@@ -68,26 +70,25 @@ func (r *Receiver) Start() error {
 	}
 	r.httpSrv = &http.Server{Handler: mux}
 
-	// Start gRPC on :4317.
+	// Bind synchronously so port conflicts fail fast.
+	grpcLis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", grpcPort))
+	if err != nil {
+		return fmt.Errorf("OTLP gRPC listen on :%d: %w", grpcPort, err)
+	}
+	httpLis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", httpPort))
+	if err != nil {
+		grpcLis.Close()
+		return fmt.Errorf("OTLP HTTP listen on :%d: %w", httpPort, err)
+	}
+
+	// Serve in goroutines; listeners are already bound.
 	go func() {
-		grpcLis, err := net.Listen("tcp", "0.0.0.0:4317")
-		if err != nil {
-			fmt.Printf("receiver: gRPC listen error: %v\n", err)
-			return
-		}
 		fmt.Printf("OTLP gRPC listening on %s\n", grpcLis.Addr())
 		if err := r.grpcSrv.Serve(grpcLis); err != nil {
 			fmt.Printf("receiver: gRPC serve error: %v\n", err)
 		}
 	}()
-
-	// Start HTTP on :4318.
 	go func() {
-		httpLis, err := net.Listen("tcp", "0.0.0.0:4318")
-		if err != nil {
-			fmt.Printf("receiver: HTTP listen error: %v\n", err)
-			return
-		}
 		fmt.Printf("OTLP HTTP listening on %s\n", httpLis.Addr())
 		if err := r.httpSrv.Serve(httpLis); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("receiver: HTTP serve error: %v\n", err)
@@ -331,9 +332,17 @@ func (r *Receiver) handleHTTPLogs(w http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
 	var exportReq collogspb.ExportLogsServiceRequest
-	if err := proto.Unmarshal(body, &exportReq); err != nil {
-		http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
-		return
+	contentType := req.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		if err := protojson.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := proto.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
+			return
+		}
 	}
 
 	logs := translateLogs(exportReq.ResourceLogs)
@@ -412,30 +421,8 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 	// that getUint32Attr/getStringAttr look for.
 	attrs := normalizeAttributes(keyValueToMap(ps.Attributes))
 
-	inputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.input_tokens")
-	outputTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.output_tokens")
-	cacheCreationTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.cache_creation_input_tokens")
-	cacheReadTokens := getUint32AttrFromMap(attrs, "gen_ai.usage.cache_read_input_tokens")
-	var totalTokens *uint32
-	if inputTokens != nil || outputTokens != nil || cacheCreationTokens != nil || cacheReadTokens != nil {
-		var sum uint32
-		if inputTokens != nil {
-			sum += *inputTokens
-		}
-		if outputTokens != nil {
-			sum += *outputTokens
-		}
-		if cacheCreationTokens != nil {
-			sum += *cacheCreationTokens
-		}
-		if cacheReadTokens != nil {
-			sum += *cacheReadTokens
-		}
-		if tt := getUint32AttrFromMap(attrs, "gen_ai.usage.total_tokens"); tt != nil {
-			sum = *tt
-		}
-		totalTokens = &sum
-	}
+	inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, totalTokens :=
+		storage.DeriveTokenBuckets(attrs)
 	genAIModel := getStringAttrFromMap(attrs, "gen_ai.request.model")
 
 	eventsJSON := serializeEvents(ps.Events)

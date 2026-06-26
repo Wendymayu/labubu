@@ -31,6 +31,8 @@ type Span struct {
 	CacheCreationTokens    *uint32 // prompt-caching write tokens (Claude/Anthropic)
 	CacheReadTokens        *uint32 // prompt-caching read tokens (Claude/Anthropic)
 	GenAIRequestModel      *string // nullable
+	Cost                   *float64 // per-span cost (differential cache rates applied)
+	CostCurrency           string   // currency of Cost, empty if no cost
 	TraceState             string
 }
 
@@ -89,35 +91,56 @@ type TraceQuery struct {
 type CostQuery struct {
 	StartTimeMS uint64
 	EndTimeMS   uint64
+	GroupBy     string // "model" (default) or "service"
 }
 
 // CostOverview holds aggregated cost totals.
 type CostOverview struct {
-	TotalCost         float64 `json:"total_cost"`
-	TotalTokens       uint64  `json:"total_tokens"`
-	TotalInputTokens  uint64  `json:"total_input_tokens"`
-	TotalOutputTokens uint64  `json:"total_output_tokens"`
-	AvgCostPerTrace   float64 `json:"avg_cost_per_trace"`
-	TraceCount        int     `json:"trace_count"`
+	TotalCost                float64 `json:"total_cost"`
+	TotalTokens              uint64  `json:"total_tokens"`
+	TotalInputTokens         uint64  `json:"total_input_tokens"`
+	TotalCacheCreationTokens uint64  `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     uint64  `json:"total_cache_read_tokens"`
+	TotalOutputTokens        uint64  `json:"total_output_tokens"`
+	AvgCostPerTrace          float64 `json:"avg_cost_per_trace"`
+	TraceCount               int     `json:"trace_count"`
 }
 
 // ModelCostItem holds cost aggregation for a single model.
 type ModelCostItem struct {
-	Model        string  `json:"model"`
-	Cost         float64 `json:"cost"`
-	Tokens       uint64  `json:"tokens"`
-	InputTokens  uint64  `json:"input_tokens"`
-	OutputTokens uint64  `json:"output_tokens"`
-	TraceCount   int     `json:"trace_count"`
-	AvgCost      float64 `json:"avg_cost"`
+	Model               string  `json:"model"`
+	Cost                float64 `json:"cost"`
+	Tokens              uint64  `json:"tokens"`
+	InputTokens         uint64  `json:"input_tokens"`
+	CacheCreationTokens uint64  `json:"cache_creation_tokens"`
+	CacheReadTokens     uint64  `json:"cache_read_tokens"`
+	OutputTokens        uint64  `json:"output_tokens"`
+	TraceCount          int     `json:"trace_count"`
+	AvgCost             float64 `json:"avg_cost"`
+}
+
+// ServiceCostItem holds cost aggregation for a single service.
+// Mirrors ModelCostItem; the dimension value is the trace's service.name.
+type ServiceCostItem struct {
+	Service             string  `json:"service"`
+	Cost                float64 `json:"cost"`
+	Tokens              uint64  `json:"tokens"`
+	InputTokens         uint64  `json:"input_tokens"`
+	CacheCreationTokens uint64  `json:"cache_creation_tokens"`
+	CacheReadTokens     uint64  `json:"cache_read_tokens"`
+	OutputTokens        uint64  `json:"output_tokens"`
+	TraceCount          int     `json:"trace_count"`
+	AvgCost             float64 `json:"avg_cost"`
 }
 
 // CostSummaryResult holds the full cost dashboard response.
 type CostSummaryResult struct {
-	Period   string          `json:"period"`
-	Currency string          `json:"currency"`
-	Overview CostOverview    `json:"overview"`
-	ByModel  []ModelCostItem `json:"by_model"`
+	Period    string            `json:"period"`
+	Currency  string            `json:"currency"`
+	Overview  CostOverview      `json:"overview"`
+	GroupBy   string            `json:"group_by"`
+	ByModel   []ModelCostItem   `json:"by_model"`
+	ByService []ServiceCostItem `json:"by_service"`
 }
 
 // TraceListResult holds a page of trace summaries.
@@ -361,6 +384,9 @@ type Store interface {
 	// GetLogsByTrace returns all log records for a given trace, ordered by timestamp.
 	GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error)
 
+	// GetLogCountsByTrace returns the number of logs per span_id_hex for a trace.
+	GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error)
+
 	// GetLogEventNames returns distinct event_name values for the filter dropdown.
 	GetLogEventNames(ctx context.Context) ([]string, error)
 
@@ -465,6 +491,7 @@ type LogQuery struct {
 	EventName string   // "" = all
 	Query     string   // full-text search on body
 	TraceID   [16]byte // zero value = no trace filter
+	SpanID    [8]byte  // zero value = no span filter
 	StartTime uint64
 	EndTime   uint64
 }

@@ -46,6 +46,9 @@
         </span>
         <span class="model-name">{{ t('diagnosis.modelLabel') }}: {{ result.model_name }}</span>
         <span class="timestamp">{{ formatTime(result.created_at) }}</span>
+        <button class="btn-rediagnose" @click="exportMarkdown">
+          {{ t('diagnosis.exportMarkdown') }}
+        </button>
         <button class="btn-rediagnose" @click="emit('diagnose')">
           {{ t('diagnosis.rediagnose') }}
         </button>
@@ -91,7 +94,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { DiagnosisResult } from '../api/client'
+import type { DiagnosisResult, DiagnosisFinding } from '../api/client'
 
 const { t } = useI18n()
 
@@ -144,6 +147,76 @@ function onFindingClick(finding: { span_index?: number }) {
   if (finding.span_index !== undefined) {
     emit('navigate-span', finding.span_index)
   }
+}
+
+/** Render the diagnosis result as a Markdown report, mirroring the on-screen layout. */
+function diagnosisToMarkdown(result: DiagnosisResult): string {
+  const L = (k: string) => t(`diagnosis.${k}`)
+  const out: string[] = []
+
+  out.push(`# ${L('tab')}`)
+  out.push('')
+  out.push(`**${L('traceId')}**: \`${result.trace_id_hex}\``)
+  out.push(`**${L('modelLabel')}**: ${result.model_name}`)
+  out.push(`**${L('generated')}**: ${new Date(result.created_at).toLocaleString()}`)
+  out.push(`**${L('overall')}**: ${result.overall_score}/100`)
+  out.push('')
+
+  if (result.stale) {
+    out.push(`> ⚠️ ${L('stale')}`)
+    out.push('')
+  }
+
+  out.push(`## ${L('dimensionScores')}`)
+  out.push('')
+  for (const d of dimensions) {
+    out.push(`- **${L(d.key)}**: ${result.scores[d.key]}/100`)
+  }
+  out.push('')
+
+  out.push(`## ${L('summary')}`)
+  out.push('')
+  out.push(result.summary)
+  out.push('')
+
+  const writeFindings = (label: string, items: DiagnosisFinding[]) => {
+    if (!items.length) return
+    out.push(`## ${label} (${items.length})`)
+    out.push('')
+    for (const f of items) {
+      out.push(`### ${f.title}`)
+      const meta = [`\`${f.severity}\``, `\`${f.dimension}\``]
+      if (f.span_name) meta.push(`${L('span')}: ${f.span_name}`)
+      out.push(meta.join(' · '))
+      out.push('')
+      out.push(f.description)
+      out.push('')
+      out.push(`💡 ${f.suggestion}`)
+      out.push('')
+    }
+  }
+  writeFindings(L('critical'), result.findings.filter(f => f.severity === 'error'))
+  writeFindings(L('suggestions'), result.findings.filter(f => f.severity !== 'error'))
+
+  return out.join('\n')
+}
+
+function downloadBlob(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+function exportMarkdown() {
+  const r = props.result
+  if (!r) return
+  downloadBlob(diagnosisToMarkdown(r), `diagnosis-${r.trace_id_hex}.md`)
 }
 </script>
 

@@ -23,10 +23,12 @@ type handlerMockStore struct {
 	detailErr         error
 	costSummary       *storage.CostSummaryResult
 	costSummaryErr    error
+	lastCostQuery     storage.CostQuery
 	llmConfigs        []storage.LLMConfig
 	llmConfigsErr     error
 	diagnosisResult   *storage.DiagnosisResult
 	diagnosisResultErr error
+	logCounts         map[string]int
 }
 
 func (m *handlerMockStore) InsertSpans(ctx context.Context, r storage.ResourceInfo, s storage.ScopeInfo, spans []storage.Span) error {
@@ -67,6 +69,10 @@ func (m *handlerMockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte)
 	return nil, nil
 }
 
+func (m *handlerMockStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	return m.logCounts, nil
+}
+
 func (m *handlerMockStore) GetLogEventNames(ctx context.Context) ([]string, error) { return nil, nil }
 
 func (m *handlerMockStore) GetLLMConfigs(ctx context.Context) ([]storage.LLMConfig, error) {
@@ -95,6 +101,7 @@ func (m *handlerMockStore) UpdateTraceCost(ctx context.Context, traceID [16]byte
 	return fmt.Errorf("not implemented")
 }
 func (m *handlerMockStore) GetCostSummary(ctx context.Context, q storage.CostQuery) (*storage.CostSummaryResult, error) {
+	m.lastCostQuery = q
 	return m.costSummary, m.costSummaryErr
 }
 

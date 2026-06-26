@@ -379,6 +379,12 @@ func buildLogWhereClause(q LogQuery) string {
 			"trace_id = unhex('%x')", q.TraceID,
 		))
 	}
+	var zeroSpan [8]byte
+	if q.SpanID != zeroSpan {
+		clauses = append(clauses, fmt.Sprintf(
+			"span_id = unhex('%x')", q.SpanID,
+		))
+	}
 	if q.StartTime > 0 {
 		clauses = append(clauses, fmt.Sprintf(
 			"timestamp >= %d", q.StartTime,
@@ -406,6 +412,17 @@ func buildGetLogsByTraceSQL(traceID [16]byte) string {
 		FROM logs
 		WHERE trace_id = unhex('%x')
 		ORDER BY timestamp ASC`,
+		traceID,
+	)
+}
+
+// buildLogCountsByTraceSQL builds a query returning per-span log counts for a trace.
+func buildLogCountsByTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT hex(span_id) AS span_id_hex, COUNT(*) AS n
+		FROM logs
+		WHERE trace_id = unhex('%x')
+		GROUP BY span_id`,
 		traceID,
 	)
 }
@@ -505,7 +522,6 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 				ScopeSchemaURL:    scope.SchemaURL,
 				StatusCode:        span.StatusCode,
 				StatusMessage:     span.StatusMessage,
-				TotalTokens:       span.TotalTokens,
 			}
 		}
 		if isRootSpan(span.ParentSpanID) {

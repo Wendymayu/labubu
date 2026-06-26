@@ -288,6 +288,16 @@ func (s *chDBStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]Log
 	return parseLogListItems(result)
 }
 
+// GetLogCountsByTrace returns the per-span log count for a trace.
+func (s *chDBStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	sql := buildLogCountsByTraceSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get log counts by trace: %w", err)
+	}
+	return parseLogCounts(result), nil
+}
+
 // GetLogEventNames returns distinct event_name values.
 func (s *chDBStore) GetLogEventNames(ctx context.Context) ([]string, error) {
 	sql := buildLogEventNamesSQL() + " FORMAT JSONEachRow"
@@ -757,6 +767,25 @@ func parseCount(result string) int {
 		return 0
 	}
 	return rows[0].Count
+}
+
+// parseLogCounts parses JSONEachRow rows of {span_id_hex, n} into a map.
+func parseLogCounts(result string) map[string]int {
+	counts := make(map[string]int)
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			SpanIDHex string `json:"span_id_hex"`
+			N         int    `json:"n"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		counts[row.SpanIDHex] = row.N
+	}
+	return counts
 }
 
 func parseTraceListItems(result string) ([]TraceListItem, error) {

@@ -49,9 +49,19 @@ func (h *CostHandler) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	groupBy := q.Get("group_by")
+	if groupBy == "" {
+		groupBy = "model"
+	}
+	if groupBy != "model" && groupBy != "service" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid group_by, use: model or service"})
+		return
+	}
+
 	result, err := h.store.GetCostSummary(r.Context(), storage.CostQuery{
 		StartTimeMS: startMS,
 		EndTimeMS:   endMS,
+		GroupBy:     groupBy,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -60,6 +70,7 @@ func (h *CostHandler) summary(w http.ResponseWriter, r *http.Request) {
 
 	// Set the period label in the result.
 	result.Period = period
+	result.GroupBy = groupBy
 
 	writeJSON(w, http.StatusOK, result)
 }

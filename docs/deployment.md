@@ -88,6 +88,8 @@ labubu serve \
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--port` | 8080 | Web UI 和 API 端口 |
+| `--otlp-grpc-port` | 4317 | OTLP gRPC 接收端口 |
+| `--otlp-http-port` | 4318 | OTLP HTTP 接收端口 |
 | `--data-dir` | "" | Trace 数据目录(空=纯内存，重启丢失) |
 | `--metrics-data-dir` | "" | Metrics 数据目录(空=纯内存) |
 | `--metrics-enabled` | true | 是否启用指标接收 |
@@ -102,6 +104,8 @@ labubu serve \
 systemctl daemon-reload
 systemctl restart labubu
 ```
+
+如需修改 OTLP 接收端口（默认 4317/4318），在 `ExecStart` 中加上 `--otlp-grpc-port <port>` 和/或 `--otlp-http-port <port>`，然后执行 `systemctl daemon-reload && systemctl restart labubu`。
 
 ## 首次部署记录
 

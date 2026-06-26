@@ -43,6 +43,9 @@
           </div>
         </div>
         <div class="summary-actions">
+          <button :class="['btn-insight', { active: activeInsight === 'logs' }]" @click="toggleInsight('logs')">
+            📋 {{ t('logList.logCount', { count: totalLogCount }) }}
+          </button>
           <button :class="['btn-insight', { active: activeInsight === 'diagnosis' }]" @click="toggleInsight('diagnosis')">
             🔍 {{ t('diagnosis.tab') }}
           </button>
@@ -55,8 +58,20 @@
       <div v-if="activeInsight" class="insight-backdrop" @click="activeInsight = null"></div>
       <div v-if="activeInsight" class="insight-overlay">
         <div class="insight-overlay-header">
-          <span class="insight-overlay-title">{{ activeInsight === 'diagnosis' ? t('diagnosis.tab') : t('agentStats.agentBehavior') }}</span>
-          <button class="insight-overlay-close" @click="activeInsight = null" title="Close">✕</button>
+          <span class="insight-overlay-title">{{
+            activeInsight === 'logs' ? t('logList.logCount', { count: totalLogCount })
+            : activeInsight === 'diagnosis' ? t('diagnosis.tab')
+            : t('agentStats.agentBehavior')
+          }}</span>
+          <div class="insight-overlay-actions">
+            <button
+              v-if="activeInsight === 'logs'"
+              class="insight-overlay-action"
+              @click="downloadTraceLogs"
+              :title="t('logList.download')"
+            >⬇</button>
+            <button class="insight-overlay-close" @click="activeInsight = null" title="Close">✕</button>
+          </div>
         </div>
         <div class="insight-overlay-body">
           <DiagnosisTab
@@ -72,6 +87,32 @@
             v-if="activeInsight === 'agent'"
             :spans="trace.spans"
           />
+          <div v-if="activeInsight === 'logs'" class="log-overlay">
+            <div v-if="logSpanFilter" class="log-filter-tag">
+              {{ t('logList.filteredBySpan', { name: filteredSpanName }) }}
+              <button class="filter-clear" @click="clearLogFilter">✕</button>
+            </div>
+            <div v-if="logsLoading" class="loading-state">{{ t('common.loading') }}</div>
+            <div v-else-if="pageLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
+            <div v-else class="log-list-inline">
+              <div
+                v-for="(log, idx) in pageLogs"
+                :key="idx"
+                class="log-item"
+              >
+                <span class="log-item-time">{{ formatLogTime(log.timestamp) }}</span>
+                <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
+                <span class="log-item-event">{{ log.event_name || '-' }}</span>
+                <span v-if="log.body" class="log-item-body">{{ formatLogBody(log.body) }}</span>
+              </div>
+            </div>
+            <div v-if="!logsLoading && pageLogs.length > 0" class="log-pagination">
+              <button class="page-btn" :disabled="logPage <= 1" @click="prevLogPage">◀ {{ t('logList.prev') }}</button>
+              <span class="page-info">{{ t('logList.pageOf', { page: logPage, total: Math.max(1, Math.ceil(logTotal / logPageSize)) }) }}</span>
+              <button class="page-btn" :disabled="logPage * logPageSize >= logTotal" @click="nextLogPage">{{ t('logList.next') }} ▶</button>
+              <span class="page-total">{{ t('logList.logCount', { count: logTotal }) }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -86,45 +127,6 @@
             @select-span="openDrawer"
             @filter-logs="filterLogsBySpan"
           />
-
-        <!-- Tab bar and Log panel -->
-        <div class="detail-panel" v-if="!drawerOpen">
-          <div class="panel-tabs">
-            <button :class="['tab-btn', { active: activeTab === 'spans' }]" @click="switchTab('spans')">
-              Spans
-            </button>
-            <button :class="['tab-btn', { active: activeTab === 'logs' }]" @click="switchTab('logs')">
-              {{ t('logList.logCount', { count: totalLogCount }) }}
-            </button>
-          </div>
-
-          <div v-if="activeTab === 'logs'" class="log-panel">
-            <div v-if="logSpanFilter" class="log-filter-tag">
-              {{ t('logList.filteredBySpan', { name: logSpanFilter }) }}
-              <button class="filter-clear" @click="clearLogFilter">✕</button>
-            </div>
-            <div v-if="logsLoading" class="loading-state">{{ t('common.loading') }}</div>
-            <div v-else-if="filteredLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
-            <div v-else class="log-list-inline">
-              <div
-                v-for="(log, idx) in filteredLogs"
-                :key="idx"
-                :class="['log-item', { expanded: logExpandedIdx === idx }]"
-                @click="logExpandedIdx = logExpandedIdx === idx ? null : idx"
-              >
-                <div class="log-item-header">
-                  <span class="log-item-time">{{ formatLogTime(log.timestamp) }}</span>
-                  <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
-                  <span class="log-item-event">{{ log.event_name || '-' }}</span>
-                  <span class="log-item-expand">{{ logExpandedIdx === idx ? '▼' : '▶' }}</span>
-                </div>
-                <pre v-if="logExpandedIdx === idx" class="log-item-body">{{ formatLogBody(log.body) }}</pre>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="activeTab === 'spans'" class="hint-click">Click any span to view details</div>
-        </div>
         </div>
 
         <div v-if="drawerOpen" class="drawer-backdrop" @click="closeDrawer"></div>
@@ -192,7 +194,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getLogsByTrace, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
+import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
 import DiagnosisTab from '../components/DiagnosisTab.vue'
 import AgentBehaviorTab from '../components/AgentBehaviorTab.vue'
 import WaterfallChart from '../components/WaterfallChart.vue'
@@ -210,12 +212,15 @@ const loading = ref(true)
 const error = ref('')
 const selectedSpan = ref<SpanDetailType | null>(null)
 const drawerOpen = ref(false)
-const traceLogs = ref<LogRecord[]>([])
+const pageLogs = ref<LogRecord[]>([])
 const logsLoading = ref(false)
-const activeTab = ref<'spans' | 'logs'>('spans')
-const activeInsight = ref<'diagnosis' | 'agent' | null>(null)
+const logPage = ref(1)
+const logPageSize = 50
+const logTotal = ref(0)
+const logCounts = ref<Record<string, number>>({})
+const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | null>(null)
 
-function toggleInsight(insight: 'diagnosis' | 'agent') {
+function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent') {
   if (activeInsight.value === insight) {
     activeInsight.value = null
   } else {
@@ -223,7 +228,6 @@ function toggleInsight(insight: 'diagnosis' | 'agent') {
   }
 }
 const logSpanFilter = ref('')
-const logExpandedIdx = ref<number | null>(null)
 const viewMode = ref<'structured' | 'json'>('structured')
 const jsonSearch = ref('')
 const contentSearch = ref('')
@@ -276,21 +280,16 @@ const selectedSpanOutputTokens = computed(() => {
   return span.output_tokens ?? 0
 })
 
-const logCounts = computed(() => {
-  const counts: Record<string, number> = {}
-  for (const l of traceLogs.value) {
-    if (l.span_id_hex) {
-      counts[l.span_id_hex] = (counts[l.span_id_hex] || 0) + 1
-    }
-  }
-  return counts
+const totalLogCount = computed(() => {
+  let n = 0
+  for (const k in logCounts.value) n += logCounts.value[k]
+  return n
 })
 
-const totalLogCount = computed(() => traceLogs.value.length)
-
-const filteredLogs = computed(() => {
-  if (!logSpanFilter.value) return traceLogs.value
-  return traceLogs.value.filter(l => l.span_id_hex === logSpanFilter.value)
+const filteredSpanName = computed(() => {
+  if (!logSpanFilter.value || !trace.value) return logSpanFilter.value
+  const span = trace.value.spans.find(s => s.span_id === logSpanFilter.value)
+  return span?.name || logSpanFilter.value
 })
 
 const rootSpanName = computed(() => {
@@ -339,7 +338,8 @@ async function fetchTrace() {
   try {
     const result = await getTrace(traceIdHex)
     trace.value = result.trace
-    fetchTraceLogs()
+    fetchLogCounts()
+    fetchLogPage()
   } catch (e: any) {
     error.value = e.message || 'Failed to load trace'
   } finally {
@@ -402,7 +402,6 @@ async function pollDiagnosisResult() {
 }
 
 function onDiagnosisNavigateSpan(spanIndex: number) {
-  activeTab.value = 'spans'
   drawerOpen.value = false
   nextTick(() => {
     if (trace.value?.spans && trace.value.spans[spanIndex]) {
@@ -421,29 +420,59 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
-async function fetchTraceLogs() {
+async function fetchLogCounts() {
+  try {
+    const result = await getLogCounts(traceIdHex)
+    logCounts.value = result.counts || {}
+  } catch {
+    logCounts.value = {}
+  }
+}
+
+async function fetchLogPage() {
   logsLoading.value = true
   try {
-    const result = await getLogsByTrace(traceIdHex)
-    traceLogs.value = result.logs || []
+    const result = await listLogs({
+      trace_id: traceIdHex,
+      span_id: logSpanFilter.value || undefined,
+      page: logPage.value,
+      page_size: logPageSize,
+    })
+    pageLogs.value = result.logs || []
+    logTotal.value = result.pagination?.total ?? 0
   } catch {
-    traceLogs.value = []
+    pageLogs.value = []
+    logTotal.value = 0
   } finally {
     logsLoading.value = false
   }
 }
 
+function prevLogPage() {
+  if (logPage.value > 1) {
+    logPage.value--
+    fetchLogPage()
+  }
+}
+
+function nextLogPage() {
+  if (logPage.value * logPageSize < logTotal.value) {
+    logPage.value++
+    fetchLogPage()
+  }
+}
+
 function filterLogsBySpan(spanId: string) {
   logSpanFilter.value = spanId
-  activeTab.value = 'logs'
+  logPage.value = 1
+  activeInsight.value = 'logs'
+  fetchLogPage()
 }
 
 function clearLogFilter() {
   logSpanFilter.value = ''
-}
-
-function switchTab(tab: 'spans' | 'logs') {
-  activeTab.value = tab
+  logPage.value = 1
+  fetchLogPage()
 }
 
 function formatLogTime(ts: number): string {
@@ -469,6 +498,43 @@ async function downloadTraceOTLP() {
   } catch (e: any) {
     alert(`OTLP download failed: ${e.message}`)
   }
+}
+
+async function downloadTraceLogs() {
+  try {
+    const result = await getLogsByTrace(traceIdHex)
+    const logs = result.logs || []
+    const text = formatLogsAsText(logs)
+    downloadBlob(text, `trace-${traceIdHex}-logs.txt`)
+  } catch (e: any) {
+    alert(`Log download failed: ${e.message}`)
+  }
+}
+
+function formatLogsAsText(logs: LogRecord[]): string {
+  const lines: string[] = []
+  lines.push(`# trace ${traceIdHex} — ${logs.length} logs`)
+  lines.push('')
+  for (const log of logs) {
+    const ts = formatLogTimestamp(log.timestamp)
+    const event = log.event_name || '-'
+    lines.push(`[${ts}] ${log.severity}  span=${log.span_id_hex || '-'}  event=${event}`)
+    if (log.body) {
+      lines.push(log.body)
+    }
+    if (log.attributes && Object.keys(log.attributes).length > 0) {
+      const attrs = Object.entries(log.attributes).map(([k, v]) => `${k}=${v}`).join(', ')
+      lines.push(`attrs: ${attrs}`)
+    }
+    lines.push('---')
+  }
+  return lines.join('\n')
+}
+
+function formatLogTimestamp(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number, l = 2) => String(n).padStart(l, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
 }
 
 function downloadBlob(content: string, filename: string) {
@@ -648,6 +714,25 @@ onUnmounted(() => {
   color: var(--text-primary);
   background: var(--bg-surface-hover-subtle);
 }
+.insight-overlay-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.insight-overlay-action {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.insight-overlay-action:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover-subtle);
+}
 .insight-overlay-body {
   padding: 16px;
   overflow-y: auto;
@@ -680,13 +765,6 @@ onUnmounted(() => {
   width: 100%;
   position: relative;
   overflow-x: auto;
-}
-
-.hint-click {
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 24px 0;
 }
 
 /* === Drawer (overlay) === */
@@ -779,37 +857,7 @@ onUnmounted(() => {
   }
 }
 
-/* === Tab bar and Log panel === */
-.detail-panel {
-  margin-top: 16px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.panel-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border-default);
-  background: var(--bg-surface);
-}
-.tab-btn {
-  padding: 10px 20px;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-}
-.tab-btn.active {
-  color: var(--accent-blue);
-  border-bottom-color: var(--accent-blue);
-}
-.tab-btn:hover { color: var(--text-primary); }
-
-.log-panel {
-  max-height: 320px;
-  overflow-y: auto;
-}
+/* === Log items (rendered inside the insight overlay) === */
 .log-filter-tag {
   display: flex;
   align-items: center;
@@ -833,20 +881,23 @@ onUnmounted(() => {
 .log-list-inline { }
 .log-item {
   border-bottom: 1px solid var(--bg-surface-deep);
-  cursor: pointer;
-}
-.log-item:hover { background: var(--bg-surface); }
-.log-item.expanded { background: var(--bg-surface-hover-subtle); }
-.log-item-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   padding: 8px 12px;
   font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
-.log-item-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.log-item-event { color: var(--text-secondary); font-family: 'Courier New', monospace; font-size: 11px; }
-.log-item-expand { color: var(--text-secondary); font-size: 10px; margin-left: auto; }
+.log-item .severity-badge { margin-right: 10px; }
+.log-item-time {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-right: 10px;
+}
+.log-item-event {
+  color: var(--text-secondary);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  margin-right: 10px;
+}
 
 .severity-badge {
   display: inline-block;
@@ -862,17 +913,39 @@ onUnmounted(() => {
 .severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-secondary); }
 
 .log-item-body {
-  margin: 0;
-  padding: 8px 16px 12px;
-  font-size: 12px;
-  font-family: 'Courier New', monospace;
   color: var(--text-primary);
+  font-family: 'Courier New', monospace;
   white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 240px;
-  overflow-y: auto;
-  background: var(--bg-surface-deep);
 }
+
+.log-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-default);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.page-btn {
+  background: none;
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.page-btn:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.page-info { color: var(--text-primary); }
+.page-total { margin-left: auto; }
 
 .loading-state, .empty-state { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 13px; }
 

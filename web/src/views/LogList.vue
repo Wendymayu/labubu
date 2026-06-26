@@ -9,19 +9,21 @@
         type="text"
         class="search-input"
         :placeholder="t('logList.searchPlaceholder')"
-        @input="onSearchDebounced"
+        @keyup.enter="search"
       />
-      <select v-model="severityFilter" class="filter-select" @change="fetchLogs">
+      <select v-model="severityFilter" class="filter-select">
         <option value="">{{ t('logList.allSeverity') }}</option>
         <option value="ERROR">ERROR</option>
         <option value="WARN">WARN</option>
         <option value="INFO">INFO</option>
         <option value="DEBUG">DEBUG</option>
       </select>
-      <select v-model="eventFilter" class="filter-select" @change="fetchLogs">
+      <select v-model="eventFilter" class="filter-select">
         <option value="">{{ t('logList.allEvents') }}</option>
         <option v-for="ev in eventNames" :key="ev" :value="ev">{{ ev }}</option>
       </select>
+      <button @click="search" class="btn">{{ t('common.search') }}</button>
+      <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 
     <!-- Table -->
@@ -98,16 +100,19 @@ const severityFilter = ref('')
 const eventFilter = ref('')
 const eventNames = ref<string[]>([])
 
-let debounceTimer: ReturnType<typeof setTimeout> | null = null
-
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
-function onSearchDebounced() {
-  if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    page.value = 1
-    fetchLogs()
-  }, 500)
+function search() {
+  page.value = 1
+  fetchLogs()
+}
+
+function reset() {
+  searchQuery.value = ''
+  severityFilter.value = ''
+  eventFilter.value = ''
+  page.value = 1
+  fetchLogs()
 }
 
 async function fetchLogs() {
@@ -200,6 +205,16 @@ onMounted(() => {
   font-size: 13px;
   cursor: pointer;
 }
+.btn {
+  padding: 8px 16px;
+  background: var(--bg-surface-hover);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover { background: var(--border-strong); }
 
 .log-table-wrap {
   border: 1px solid var(--border-default);

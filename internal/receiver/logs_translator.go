@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/labubu/labubu/internal/storage"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
@@ -44,9 +45,18 @@ func translateLogRecord(lr *logspb.LogRecord, resourceAttrs, scopeAttrs map[stri
 	var spanID [8]byte
 	copy(spanID[:], lr.SpanId)
 
-	timestamp := lr.TimeUnixNano / 1_000_000
+	// OTLP spec: TimeUnixNano is optional; when absent, fall back to ObservedTimeUnixNano.
+	ts := lr.TimeUnixNano
+	if ts == 0 {
+		ts = lr.ObservedTimeUnixNano
+	}
+	timestamp := ts / 1_000_000
 
+	// OTLP spec: when SeverityNumber is UNSPECIFIED, derive severity from SeverityText.
 	severity := severityNumberToString(lr.SeverityNumber)
+	if lr.SeverityNumber == logspb.SeverityNumber_SEVERITY_NUMBER_UNSPECIFIED && lr.SeverityText != "" {
+		severity = severityTextToLabel(lr.SeverityText)
+	}
 
 	// Merge resource + scope + log record attributes.
 	attrs := make(map[string]string)
@@ -99,4 +109,30 @@ func severityNumberToString(sn logspb.SeverityNumber) string {
 	default:
 		return fmt.Sprintf("SEVERITY_NUMBER_%d", int(sn))
 	}
+}
+
+// severityTextToLabel derives a canonical severity label
+// (TRACE/DEBUG/INFO/WARN/ERROR/FATAL) from SeverityText when SeverityNumber
+// is UNSPECIFIED. This implements the OTLP spec's requirement to derive
+// severity from text when the number is absent. Unrecognized text is returned
+// uppercased so the record gets a meaningful severity instead of the
+// "SEVERITY_NUMBER_0" placeholder. The match is case-insensitive and
+// prefix-based so common variants like "WARNING"→WARN, "ERROR"→ERROR work.
+func severityTextToLabel(text string) string {
+	upper := strings.ToUpper(text)
+	switch {
+	case strings.HasPrefix(upper, "TRACE"):
+		return "TRACE"
+	case strings.HasPrefix(upper, "DEBUG"):
+		return "DEBUG"
+	case strings.HasPrefix(upper, "INFO"):
+		return "INFO"
+	case strings.HasPrefix(upper, "WARN"):
+		return "WARN"
+	case strings.HasPrefix(upper, "ERR"):
+		return "ERROR"
+	case strings.HasPrefix(upper, "FATAL"), strings.HasPrefix(upper, "CRIT"):
+		return "FATAL"
+	}
+	return upper
 }
