@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "chart.js": "^4.5.1",
+    "swagger-ui": "^5.32.8",
     "vue": "^3.4.0",
     "vue-i18n": "^9.14.4",
     "vue-router": "^4.3.0"

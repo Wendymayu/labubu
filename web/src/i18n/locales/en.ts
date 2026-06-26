@@ -49,6 +49,7 @@ export default {
     settings: 'Settings',
     modelPricing: 'Model Cost',
     llmConfigs: 'Model Config',
+    apiDocs: 'API Docs',
   },
   traceList: {
     searchPlaceholder: 'Search traces...',

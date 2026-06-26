@@ -49,6 +49,7 @@ export default {
     settings: '设置',
     modelPricing: '模型成本',
     llmConfigs: '模型配置',
+    apiDocs: 'API 文档',
   },
   traceList: {
     searchPlaceholder: '搜索链路...',
