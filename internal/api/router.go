@@ -121,6 +121,9 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	// OpenAPI spec for the API docs page.
+	mux.HandleFunc("/api/v1/openapi.json", OpenAPIHandler)
+
 	// Serve Vue SPA from embedded or disk-based FS.
 	spaFS, err := fs.Sub(web.StaticFS, "dist")
 	if err == nil {
