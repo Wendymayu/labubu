@@ -1334,6 +1334,57 @@ func (s *sqliteStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSum
 	overview.TotalTokens = overview.TotalInputTokens + overview.TotalCacheCreationTokens +
 		overview.TotalCacheReadTokens + overview.TotalOutputTokens
 
+	// by_service: join spans→traces for service.name (service lives on the
+	// trace resource, not on spans). Only compute when requested.
+	if q.GroupBy == "service" {
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT
+			    COALESCE(json_extract(t.resource_attributes, '$."service.name"'), '(unknown)') AS service,
+			    COALESCE(sum(s.cost), 0) AS cost,
+			    COALESCE(sum(s.input_tokens), 0) AS input_tokens,
+			    COALESCE(sum(s.cache_creation_tokens), 0) AS cache_creation_tokens,
+			    COALESCE(sum(s.cache_read_tokens), 0) AS cache_read_tokens,
+			    COALESCE(sum(s.output_tokens), 0) AS output_tokens,
+			    count(DISTINCT s.trace_id_hex) AS trace_count
+			 FROM spans s
+			 JOIN traces t ON t.trace_id_hex = s.trace_id_hex
+			 WHERE s.total_tokens IS NOT NULL
+			   AND t.start_time_ms >= ? AND t.start_time_ms <= ?
+			   AND t.cost IS NOT NULL AND t.cost > 0
+			 GROUP BY json_extract(t.resource_attributes, '$."service.name"')
+			 ORDER BY cost DESC`,
+			q.StartTimeMS, q.EndTimeMS,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query cost by service: %w", err)
+		}
+		defer rows.Close()
+
+		var byService []ServiceCostItem
+		for rows.Next() {
+			var sc ServiceCostItem
+			if err := rows.Scan(&sc.Service, &sc.Cost, &sc.InputTokens, &sc.CacheCreationTokens,
+				&sc.CacheReadTokens, &sc.OutputTokens, &sc.TraceCount); err != nil {
+				return nil, fmt.Errorf("scan service cost: %w", err)
+			}
+			sc.Tokens = sc.InputTokens + sc.CacheCreationTokens + sc.CacheReadTokens + sc.OutputTokens
+			if sc.TraceCount > 0 {
+				sc.AvgCost = math.Round(sc.Cost/float64(sc.TraceCount)*1e6) / 1e6
+			}
+			byService = append(byService, sc)
+		}
+		if byService == nil {
+			byService = []ServiceCostItem{}
+		}
+
+		return &CostSummaryResult{
+			Currency:  currency,
+			Overview:  overview,
+			GroupBy:   "service",
+			ByService: byService,
+		}, nil
+	}
+
 	// by_model: group spans directly (no fan-out join).
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT
@@ -1380,6 +1431,7 @@ func (s *sqliteStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSum
 	return &CostSummaryResult{
 		Currency: currency,
 		Overview: overview,
+		GroupBy:  "model",
 		ByModel:  byModel,
 	}, nil
 }

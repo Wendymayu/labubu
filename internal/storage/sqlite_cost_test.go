@@ -203,3 +203,82 @@ func TestGetCostSummaryReconcilesAndBreaksOutCache(t *testing.T) {
 		t.Errorf("by_model cost = %v, overview = %v (must match)", m.Cost, o.TotalCost)
 	}
 }
+
+func TestGetCostSummaryByService(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	store.UpsertModelPricing(ctx, ModelPricing{
+		ModelName: "glm-5.2", InputPrice: 10.0, OutputPrice: 30.0, Currency: "CNY",
+	})
+	u := func(v uint32) *uint32 { return &v }
+	mdl := "glm-5.2"
+
+	// Three traces: services alpha, beta, and one with no service.name.
+	type fixture struct {
+		tid [16]byte
+		res ResourceInfo
+		in  uint32
+		out uint32
+	}
+	fixtures := []fixture{
+		{tid: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, res: ResourceInfo{Attributes: map[string]string{"service.name": "alpha"}}, in: 100, out: 10},
+		{tid: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}, res: ResourceInfo{Attributes: map[string]string{"service.name": "beta"}}, in: 50, out: 5},
+		{tid: [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3}, res: ResourceInfo{Attributes: map[string]string{}}, in: 20, out: 2},
+	}
+	for i, f := range fixtures {
+		span := Span{
+			TraceID: f.tid, SpanID: [8]byte{byte(i + 1)}, Name: "llm", Kind: 2,
+			StartTimeMS: 1000, EndTimeMS: 2000, DurationMS: 1000,
+			InputTokens: u(f.in), OutputTokens: u(f.out),
+			TotalTokens: u(f.in + f.out), GenAIRequestModel: &mdl,
+		}
+		if err := store.InsertSpans(ctx, f.res, ScopeInfo{}, []Span{span}); err != nil {
+			t.Fatalf("InsertSpans #%d: %v", i, err)
+		}
+		store.UpdateTraceCost(ctx, f.tid)
+	}
+
+	s, err := store.GetCostSummary(ctx, CostQuery{StartTimeMS: 0, EndTimeMS: 100000, GroupBy: "service"})
+	if err != nil {
+		t.Fatalf("GetCostSummary: %v", err)
+	}
+	if s.GroupBy != "service" {
+		t.Errorf("GroupBy = %s, want service", s.GroupBy)
+	}
+	if len(s.ByService) != 3 {
+		t.Fatalf("by_service rows = %d, want 3", len(s.ByService))
+	}
+	if len(s.ByModel) != 0 {
+		t.Errorf("by_model rows = %d, want 0 when group_by=service", len(s.ByModel))
+	}
+	// Ordered by cost DESC: alpha > beta > (unknown).
+	if s.ByService[0].Service != "alpha" {
+		t.Errorf("first service = %s, want alpha", s.ByService[0].Service)
+	}
+	wantTokens := map[string]uint64{"alpha": 110, "beta": 55, "(unknown)": 22}
+	for _, row := range s.ByService {
+		want, ok := wantTokens[row.Service]
+		if !ok {
+			t.Errorf("unexpected service %q", row.Service)
+			continue
+		}
+		if row.Tokens != want {
+			t.Errorf("service %s tokens = %d, want %d", row.Service, row.Tokens, want)
+		}
+		if row.TraceCount != 1 {
+			t.Errorf("service %s trace_count = %d, want 1", row.Service, row.TraceCount)
+		}
+	}
+	for i := 1; i < len(s.ByService); i++ {
+		if s.ByService[i].Cost > s.ByService[i-1].Cost {
+			t.Errorf("by_service not sorted by cost desc at index %d", i)
+		}
+	}
+	var sum float64
+	for _, row := range s.ByService {
+		sum += row.Cost
+	}
+	if sum < s.Overview.TotalCost-0.000001 || sum > s.Overview.TotalCost+0.000001 {
+		t.Errorf("by_service cost sum = %v, overview = %v (must match)", sum, s.Overview.TotalCost)
+	}
+}
