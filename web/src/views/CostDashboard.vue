@@ -43,12 +43,22 @@
         </div>
       </div>
 
-      <!-- Cost by model table -->
-      <h3>{{ t('costDashboard.costByModel') }}</h3>
-      <table v-if="summary.by_model.length > 0" class="cost-table">
+      <!-- Cost breakdown table (by model / by service) -->
+      <h3>{{ breakdownTitle }}</h3>
+      <div class="breakdown-toggle">
+        <button
+          :class="['btn', 'btn-preset', { active: groupBy === 'model' }]"
+          @click="setGroupBy('model')"
+        >{{ t('costDashboard.byModel') }}</button>
+        <button
+          :class="['btn', 'btn-preset', { active: groupBy === 'service' }]"
+          @click="setGroupBy('service')"
+        >{{ t('costDashboard.byService') }}</button>
+      </div>
+      <table v-if="breakdownRows.length > 0" class="cost-table">
         <thead>
           <tr>
-            <th>{{ t('costDashboard.model') }}</th>
+            <th>{{ breakdownDimensionLabel }}</th>
             <th>{{ t('costDashboard.cost') }}</th>
             <th>{{ t('costDashboard.tokens') }}</th>
             <th>{{ t('costDashboard.cache') }}</th>
@@ -57,13 +67,13 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="m in summary.by_model" :key="m.model">
-            <td>{{ m.model }}</td>
-            <td>{{ formatCost(m.cost, summary.currency) }}</td>
-            <td>{{ formatNumber(m.tokens) }}</td>
-            <td>{{ formatNumber(m.cache_read_tokens + m.cache_creation_tokens) }}</td>
-            <td>{{ m.trace_count }}</td>
-            <td>{{ formatCost(m.avg_cost, summary.currency) }}</td>
+          <tr v-for="r in breakdownRows" :key="r.name">
+            <td>{{ r.name }}</td>
+            <td>{{ formatCost(r.cost, summary.currency) }}</td>
+            <td>{{ formatNumber(r.tokens) }}</td>
+            <td>{{ formatNumber(r.cache_read_tokens + r.cache_creation_tokens) }}</td>
+            <td>{{ r.trace_count }}</td>
+            <td>{{ formatCost(r.avg_cost, summary.currency) }}</td>
           </tr>
         </tbody>
       </table>
@@ -73,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getCostSummary, getModelPricing, type CostSummary } from '../api/client'
 import { formatCost, formatNumber } from '../utils/format'
@@ -87,9 +97,18 @@ const periods = [
 ]
 
 const activePeriod = ref('today')
+const groupBy = ref<'model' | 'service'>('model')
+
+function setGroupBy(dim: 'model' | 'service') {
+  if (groupBy.value === dim) return
+  groupBy.value = dim
+  fetchData()
+}
+
 const summary = ref<CostSummary>({
   period: 'today',
   currency: 'USD',
+  group_by: 'model',
   overview: {
     total_cost: 0,
     total_tokens: 0,
@@ -101,16 +120,41 @@ const summary = ref<CostSummary>({
     trace_count: 0,
   },
   by_model: [],
+  by_service: [],
 })
 const loading = ref(true)
 const loadError = ref('')
 const noPricing = ref(false)
 
+const breakdownRows = computed(() => {
+  const normalize = (r: { name: string; cost: number; tokens: number; cache_read_tokens: number; cache_creation_tokens: number; trace_count: number; avg_cost: number }) => r
+  if (summary.value.group_by === 'service') {
+    return (summary.value.by_service ?? []).map(s => normalize({
+      name: s.service, cost: s.cost, tokens: s.tokens,
+      cache_read_tokens: s.cache_read_tokens, cache_creation_tokens: s.cache_creation_tokens,
+      trace_count: s.trace_count, avg_cost: s.avg_cost,
+    }))
+  }
+  return (summary.value.by_model ?? []).map(m => normalize({
+    name: m.model, cost: m.cost, tokens: m.tokens,
+    cache_read_tokens: m.cache_read_tokens, cache_creation_tokens: m.cache_creation_tokens,
+    trace_count: m.trace_count, avg_cost: m.avg_cost,
+  }))
+})
+
+const breakdownTitle = computed(() =>
+  summary.value.group_by === 'service' ? t('costDashboard.costByService') : t('costDashboard.costByModel')
+)
+
+const breakdownDimensionLabel = computed(() =>
+  summary.value.group_by === 'service' ? t('costDashboard.service') : t('costDashboard.model')
+)
+
 async function fetchData() {
   loading.value = true
   loadError.value = ''
   try {
-    const result = await getCostSummary(activePeriod.value)
+    const result = await getCostSummary(activePeriod.value, groupBy.value)
     summary.value = result
   } catch (e: any) {
     loadError.value = e.message || 'Failed to load cost data'
@@ -151,6 +195,12 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 20px;
+}
+
+.breakdown-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .btn-preset {

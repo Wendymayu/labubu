@@ -343,15 +343,29 @@ export interface ModelCost {
   avg_cost: number
 }
 
+export interface ServiceCost {
+  service: string
+  cost: number
+  tokens: number
+  input_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  output_tokens: number
+  trace_count: number
+  avg_cost: number
+}
+
 export interface CostSummary {
   period: string
   currency: string
   overview: CostOverview
-  by_model: ModelCost[]
+  group_by: string
+  by_model?: ModelCost[]
+  by_service?: ServiceCost[]
 }
 
-export async function getCostSummary(period: string): Promise<CostSummary> {
-  return get<CostSummary>(`${BASE_URL}/cost-summary?period=${period}`)
+export async function getCostSummary(period: string, groupBy: 'model' | 'service' = 'model'): Promise<CostSummary> {
+  return get<CostSummary>(`${BASE_URL}/cost-summary?period=${period}&group_by=${groupBy}`)
 }
 
 // --- LLM Config types and API ---
