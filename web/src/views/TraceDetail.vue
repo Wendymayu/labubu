@@ -95,16 +95,28 @@
             <div v-if="logsLoading" class="loading-state">{{ t('common.loading') }}</div>
             <div v-else-if="pageLogs.length === 0" class="empty-state">{{ t('logList.noLogs') }}</div>
             <div v-else class="log-list-inline">
-              <div
-                v-for="(log, idx) in pageLogs"
-                :key="idx"
-                class="log-item"
-              >
-                <span class="log-item-time">{{ formatLogTime(log.timestamp) }}</span>
-                <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
-                <span class="log-item-event">{{ log.event_name || '-' }}</span>
-                <span v-if="log.body" class="log-item-body">{{ formatLogBody(log.body) }}</span>
-              </div>
+              <table class="log-table">
+                <thead>
+                  <tr>
+                    <th>{{ t('logList.timestamp') }}</th>
+                    <th>{{ t('logList.severity') }}</th>
+                    <th>{{ t('logList.event') }}</th>
+                    <th>{{ t('logList.body') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="(log, idx) in pageLogs"
+                    :key="idx"
+                    class="log-row"
+                  >
+                    <td class="cell-time">{{ formatLogTime(log.timestamp) }}</td>
+                    <td class="cell-severity"><span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span></td>
+                    <td class="cell-event">{{ log.event_name || '-' }}</td>
+                    <td class="cell-body">{{ log.body ? formatLogBody(log.body) : '' }}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
             <div v-if="!logsLoading && pageLogs.length > 0" class="log-pagination">
               <button class="page-btn" :disabled="logPage <= 1" @click="prevLogPage">◀ {{ t('logList.prev') }}</button>
@@ -879,24 +891,38 @@ onUnmounted(() => {
 .filter-clear:hover { color: var(--status-error-accent); }
 
 .log-list-inline { }
-.log-item {
-  border-bottom: 1px solid var(--bg-surface-deep);
+.log-table { width: 100%; border-collapse: collapse; }
+.log-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.log-table td {
   padding: 8px 12px;
   font-size: 12px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
 }
-.log-item .severity-badge { margin-right: 10px; }
-.log-item-time {
+.log-table .log-row:hover { background: var(--bg-surface); }
+.log-table .cell-time {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-  margin-right: 10px;
+  white-space: nowrap;
 }
-.log-item-event {
+.log-table .cell-event {
   color: var(--text-secondary);
   font-family: 'Courier New', monospace;
   font-size: 11px;
-  margin-right: 10px;
+}
+.log-table .cell-body {
+  color: var(--text-primary);
+  font-family: 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .severity-badge {
@@ -911,12 +937,6 @@ onUnmounted(() => {
 .severity-badge.warn { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
 .severity-badge.info { background: rgba(56, 189, 248, 0.12); color: var(--accent-blue); }
 .severity-badge.debug { background: var(--bg-surface-hover); color: var(--text-secondary); }
-
-.log-item-body {
-  color: var(--text-primary);
-  font-family: 'Courier New', monospace;
-  white-space: pre-wrap;
-}
 
 .log-pagination {
   display: flex;

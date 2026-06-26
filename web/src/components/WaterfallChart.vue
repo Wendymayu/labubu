@@ -112,6 +112,9 @@ defineEmits<{
 const collapsedParents = ref<Set<string>>(new Set())
 const previousSpans = ref<SpanDetail[] | null>(null)
 const DEFAULT_EXPAND_DEPTH = 1
+// When the trace has fewer spans than this, expand everything by default —
+// small traces are easy to take in at a glance, so collapsing adds friction.
+const AUTO_EXPAND_ALL_THRESHOLD = 20
 
 // --- Search & Filter ---
 const searchQuery = ref('')
@@ -213,17 +216,20 @@ const displaySpans = computed(() => {
   // --- First load: init collapsed state ---
   if (previousSpans.value !== props.spans) {
     collapsedParents.value = new Set()
-    function markCollapsed(parentId: string, depth: number) {
-      const children = childrenMap.get(parentId) || []
-      for (const span of children) {
-        const hasKids = (childrenMap.get(span.span_id)?.length ?? 0) > 0
-        if (hasKids && depth >= DEFAULT_EXPAND_DEPTH) {
-          collapsedParents.value.add(span.span_id)
+    // Skip collapse-marking for small traces — leave all parents expanded.
+    if (props.spans.length >= AUTO_EXPAND_ALL_THRESHOLD) {
+      function markCollapsed(parentId: string, depth: number) {
+        const children = childrenMap.get(parentId) || []
+        for (const span of children) {
+          const hasKids = (childrenMap.get(span.span_id)?.length ?? 0) > 0
+          if (hasKids && depth >= DEFAULT_EXPAND_DEPTH) {
+            collapsedParents.value.add(span.span_id)
+          }
+          markCollapsed(span.span_id, depth + 1)
         }
-        markCollapsed(span.span_id, depth + 1)
       }
+      markCollapsed('__root__', 0)
     }
-    markCollapsed('__root__', 0)
     previousSpans.value = props.spans
   }
 

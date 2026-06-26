@@ -8,6 +8,7 @@ export default {
     pageOf: '第 {page} / {total} 页（共 {count} 条）',
     allServices: '所有服务',
     cancel: '取消',
+    perPage: '每页',
   },
   dashboard: {
     newDashboard: '新建仪表盘',
@@ -39,7 +40,7 @@ export default {
     groupByNone: '-- 无 --',
   },
   nav: {
-    traces: '链路追踪',
+    traces: '链路',
     sessions: '会话',
     metrics: '指标',
     dashboard: '仪表盘',
@@ -105,6 +106,8 @@ export default {
     event: '事件',
     body: '正文',
     trace: '链路',
+    filter: '过滤',
+    filterTraceId: 'trace_id...',
     noLogs: '未找到日志。',
     filteredBySpan: '已过滤: {name}',
     logCount: '日志 ({count})',
