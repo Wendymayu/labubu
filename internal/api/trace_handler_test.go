@@ -23,6 +23,7 @@ type handlerMockStore struct {
 	detailErr         error
 	costSummary       *storage.CostSummaryResult
 	costSummaryErr    error
+	lastCostQuery     storage.CostQuery
 	llmConfigs        []storage.LLMConfig
 	llmConfigsErr     error
 	diagnosisResult   *storage.DiagnosisResult
@@ -100,6 +101,7 @@ func (m *handlerMockStore) UpdateTraceCost(ctx context.Context, traceID [16]byte
 	return fmt.Errorf("not implemented")
 }
 func (m *handlerMockStore) GetCostSummary(ctx context.Context, q storage.CostQuery) (*storage.CostSummaryResult, error) {
+	m.lastCostQuery = q
 	return m.costSummary, m.costSummaryErr
 }
 

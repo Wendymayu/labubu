@@ -173,3 +173,78 @@ func TestCostSummaryMethodNotAllowed(t *testing.T) {
 		t.Errorf("expected 405 for POST, got %d", rec.Code)
 	}
 }
+
+func TestCostSummaryGroupByService(t *testing.T) {
+	store := &handlerMockStore{
+		costSummary: &storage.CostSummaryResult{
+			Currency: "USD",
+			Overview: storage.CostOverview{TotalCost: 3.0, TraceCount: 2},
+			ByService: []storage.ServiceCostItem{
+				{Service: "api", Cost: 2.0, TraceCount: 1, AvgCost: 2.0},
+				{Service: "web", Cost: 1.0, TraceCount: 1, AvgCost: 1.0},
+			},
+		},
+	}
+	handler := NewCostHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cost-summary?group_by=service", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var result storage.CostSummaryResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.GroupBy != "service" {
+		t.Errorf("response group_by = %s, want service", result.GroupBy)
+	}
+	if store.lastCostQuery.GroupBy != "service" {
+		t.Errorf("store received group_by = %q, want service", store.lastCostQuery.GroupBy)
+	}
+	if len(result.ByService) != 2 {
+		t.Errorf("by_service rows = %d, want 2", len(result.ByService))
+	}
+}
+
+func TestCostSummaryGroupByDefaultIsModel(t *testing.T) {
+	store := &handlerMockStore{
+		costSummary: &storage.CostSummaryResult{
+			ByModel: []storage.ModelCostItem{{Model: "m", Cost: 1, TraceCount: 1, AvgCost: 1}},
+		},
+	}
+	handler := NewCostHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cost-summary", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var result storage.CostSummaryResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.GroupBy != "model" {
+		t.Errorf("default response group_by = %s, want model", result.GroupBy)
+	}
+	if store.lastCostQuery.GroupBy != "model" {
+		t.Errorf("store received default group_by = %q, want model", store.lastCostQuery.GroupBy)
+	}
+}
+
+func TestCostSummaryInvalidGroupBy(t *testing.T) {
+	store := &handlerMockStore{}
+	handler := NewCostHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cost-summary?group_by=bogus", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid group_by, got %d", rec.Code)
+	}
+}
