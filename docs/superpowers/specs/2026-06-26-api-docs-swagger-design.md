@@ -12,7 +12,7 @@ Arize Phoenix exposes an interactive Swagger UI page for its API. We mirror that
 
 ## Non-Goals
 
-- OTLP ingestion endpoints (gRPC/HTTP receiver in `internal/receiver/`) are **not** covered — they are not REST and not suitable for MCP wrapping.
+- OTLP gRPC/HTTP receiver endpoints in `internal/receiver/` are **not** covered — they are not REST and not suitable for MCP wrapping. (Note: the REST endpoint `POST /api/v1/otlp/v1/metrics` registered in `internal/api/router.go` and served by `metricsHandler.IngestOTLP` **is** covered — it is a normal REST route, distinct from the receiver.)
 - No try-it-out / live request execution (read-only rendering).
 - No automatic spec generation from Go annotations (e.g. swaggo). Spec is hand-written; drift is caught by tests.
 
