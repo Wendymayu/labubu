@@ -133,4 +133,11 @@ func TestMemstoreGetCostSummaryByService(t *testing.T) {
 			t.Errorf("by_service not sorted by cost desc at index %d", i)
 		}
 	}
+	var sum float64
+	for _, row := range summary.ByService {
+		sum += row.Cost
+	}
+	if sum < summary.Overview.TotalCost-0.000001 || sum > summary.Overview.TotalCost+0.000001 {
+		t.Errorf("by_service cost sum = %v, overview = %v (must match)", sum, summary.Overview.TotalCost)
+	}
 }
