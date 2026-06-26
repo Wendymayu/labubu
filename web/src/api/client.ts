@@ -359,7 +359,7 @@ export interface CostSummary {
   period: string
   currency: string
   overview: CostOverview
-  group_by: string
+  group_by: 'model' | 'service'
   by_model?: ModelCost[]
   by_service?: ServiceCost[]
 }

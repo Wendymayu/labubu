@@ -127,15 +127,14 @@ const loadError = ref('')
 const noPricing = ref(false)
 
 const breakdownRows = computed(() => {
-  const normalize = (r: { name: string; cost: number; tokens: number; cache_read_tokens: number; cache_creation_tokens: number; trace_count: number; avg_cost: number }) => r
   if (summary.value.group_by === 'service') {
-    return (summary.value.by_service ?? []).map(s => normalize({
+    return (summary.value.by_service ?? []).map(s => ({
       name: s.service, cost: s.cost, tokens: s.tokens,
       cache_read_tokens: s.cache_read_tokens, cache_creation_tokens: s.cache_creation_tokens,
       trace_count: s.trace_count, avg_cost: s.avg_cost,
     }))
   }
-  return (summary.value.by_model ?? []).map(m => normalize({
+  return (summary.value.by_model ?? []).map(m => ({
     name: m.model, cost: m.cost, tokens: m.tokens,
     cache_read_tokens: m.cache_read_tokens, cache_creation_tokens: m.cache_creation_tokens,
     trace_count: m.trace_count, avg_cost: m.avg_cost,
