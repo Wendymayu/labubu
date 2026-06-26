@@ -7,8 +7,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 // swagger-ui ships without bundled types; declare a minimal shim below.
-// @ts-ignore - no types available for swagger-ui
 import SwaggerUI from 'swagger-ui'
+import 'swagger-ui/dist/swagger-ui.css'
 
 const swaggerContainer = ref<HTMLElement | null>(null)
 
