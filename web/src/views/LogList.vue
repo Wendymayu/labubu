@@ -11,17 +11,6 @@
         :placeholder="t('logList.searchPlaceholder')"
         @keyup.enter="search"
       />
-      <select v-model="severityFilter" class="filter-select">
-        <option value="">{{ t('logList.allSeverity') }}</option>
-        <option value="ERROR">ERROR</option>
-        <option value="WARN">WARN</option>
-        <option value="INFO">INFO</option>
-        <option value="DEBUG">DEBUG</option>
-      </select>
-      <select v-model="eventFilter" class="filter-select">
-        <option value="">{{ t('logList.allEvents') }}</option>
-        <option v-for="ev in eventNames" :key="ev" :value="ev">{{ ev }}</option>
-      </select>
       <button @click="search" class="btn">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
@@ -32,10 +21,41 @@
         <thead>
           <tr>
             <th class="col-time">{{ t('logList.timestamp') }}</th>
-            <th class="col-sev">{{ t('logList.severity') }}</th>
-            <th class="col-event">{{ t('logList.event') }}</th>
+            <th class="col-sev has-filter">
+              <div class="th-head">
+                <span>{{ t('logList.severity') }}</span>
+                <button class="filter-btn" :class="{ active: !!severityFilter }" :title="t('logList.filter')" @click.stop="toggleFilter('severity')">▼</button>
+              </div>
+              <div v-if="openFilter === 'severity'" class="filter-popover" @click.stop>
+                <ul class="filter-list">
+                  <li :class="{ active: severityFilter === '' }" @click="selectSeverity('')">{{ t('logList.allSeverity') }}</li>
+                  <li v-for="s in SEVERITY_OPTIONS" :key="s" :class="{ active: severityFilter === s }" @click="selectSeverity(s)">{{ s }}</li>
+                </ul>
+              </div>
+            </th>
+            <th class="col-event has-filter">
+              <div class="th-head">
+                <span>{{ t('logList.event') }}</span>
+                <button class="filter-btn" :class="{ active: !!eventFilter }" :title="t('logList.filter')" @click.stop="toggleFilter('event')">▼</button>
+              </div>
+              <div v-if="openFilter === 'event'" class="filter-popover" @click.stop>
+                <input class="header-filter" v-model="eventSearch" :placeholder="t('common.search')" />
+                <ul class="filter-list">
+                  <li :class="{ active: eventFilter === '' }" @click="selectEvent('')">{{ t('logList.allEvents') }}</li>
+                  <li v-for="ev in filteredEventNames" :key="ev" :class="{ active: eventFilter === ev }" @click="selectEvent(ev)">{{ ev }}</li>
+                </ul>
+              </div>
+            </th>
             <th class="col-body">{{ t('logList.body') }}</th>
-            <th class="col-trace">{{ t('logList.trace') }}</th>
+            <th class="col-trace has-filter">
+              <div class="th-head">
+                <span>{{ t('logList.trace') }}</span>
+                <button class="filter-btn" :class="{ active: !!traceIdFilter }" :title="t('logList.filter')" @click.stop="toggleFilter('trace')">▼</button>
+              </div>
+              <div v-if="openFilter === 'trace'" class="filter-popover right" @click.stop>
+                <input class="header-filter" v-model="traceIdFilter" :placeholder="t('logList.filterTraceId')" @keyup.enter="applyTraceFilter" />
+              </div>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -73,34 +93,55 @@
     </div>
 
     <!-- Pagination -->
-    <div class="pagination" v-if="total > pageSize">
+    <div class="pagination" v-if="total > 0">
       <button :disabled="page <= 1" @click="goPage(page - 1)">{{ t('common.prev') }}</button>
       <span class="page-info">{{ t('common.pageOf', { page, total: totalPages, count: total }) }}</span>
       <button :disabled="page >= totalPages" @click="goPage(page + 1)">{{ t('common.next') }}</button>
+      <span class="page-size">
+        <label>{{ t('common.perPage') }}</label>
+        <select
+          :value="pageSize"
+          @change="changePageSize(Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option v-for="n in pageSizeOptions" :key="n" :value="n">{{ n }}</option>
+        </select>
+      </span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listLogs, getLogEventNames, type LogRecord } from '../api/client'
+import { usePageSize } from '../composables/usePageSize'
 
 const { t } = useI18n()
 
 const logs = ref<LogRecord[]>([])
 const loading = ref(false)
 const page = ref(1)
-const pageSize = 20
+const { options: pageSizeOptions, loadPageSize, savePageSize } = usePageSize('logs')
+const pageSize = ref(loadPageSize())
 const total = ref(0)
 const expandedIdx = ref<number | null>(null)
 
 const searchQuery = ref('')
 const severityFilter = ref('')
 const eventFilter = ref('')
+const traceIdFilter = ref('')
 const eventNames = ref<string[]>([])
+const SEVERITY_OPTIONS = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const
+const eventSearch = ref('')
+const openFilter = ref<'severity' | 'event' | 'trace' | ''>('')
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+
+const filteredEventNames = computed(() => {
+  const q = eventSearch.value.trim().toLowerCase()
+  if (!q) return eventNames.value
+  return eventNames.value.filter(e => e.toLowerCase().includes(q))
+})
 
 function search() {
   page.value = 1
@@ -111,8 +152,39 @@ function reset() {
   searchQuery.value = ''
   severityFilter.value = ''
   eventFilter.value = ''
+  traceIdFilter.value = ''
   page.value = 1
   fetchLogs()
+}
+
+function toggleFilter(col: 'severity' | 'event' | 'trace') {
+  if (openFilter.value === col) {
+    openFilter.value = ''
+  } else {
+    openFilter.value = col
+    eventSearch.value = ''
+  }
+}
+
+function closeFilter() {
+  openFilter.value = ''
+}
+
+function selectSeverity(s: string) {
+  severityFilter.value = s
+  openFilter.value = ''
+  search()
+}
+
+function selectEvent(e: string) {
+  eventFilter.value = e
+  openFilter.value = ''
+  search()
+}
+
+function applyTraceFilter() {
+  search()
+  openFilter.value = ''
 }
 
 async function fetchLogs() {
@@ -120,10 +192,11 @@ async function fetchLogs() {
   try {
     const result = await listLogs({
       page: page.value,
-      page_size: pageSize,
+      page_size: pageSize.value,
       severity: severityFilter.value || undefined,
       event_name: eventFilter.value || undefined,
       q: searchQuery.value || undefined,
+      trace_id: traceIdFilter.value || undefined,
     })
     logs.value = result.logs
     total.value = result.pagination.total
@@ -144,6 +217,13 @@ async function fetchEventNames() {
 
 function goPage(p: number) {
   page.value = p
+  fetchLogs()
+}
+
+function changePageSize(n: number) {
+  pageSize.value = n
+  savePageSize(n)
+  page.value = 1
   fetchLogs()
 }
 
@@ -171,8 +251,13 @@ function formatBody(body: string): string {
 }
 
 onMounted(() => {
+  document.addEventListener('click', closeFilter)
   fetchEventNames()
   fetchLogs()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeFilter)
 })
 </script>
 
@@ -231,6 +316,58 @@ onMounted(() => {
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-default);
 }
+.has-filter { position: relative; }
+.th-head { display: flex; align-items: center; gap: 4px; }
+.filter-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0;
+  line-height: 1;
+}
+.filter-btn:hover { color: var(--text-primary); }
+.filter-btn.active { color: var(--accent-blue); }
+.filter-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  min-width: 220px;
+  margin-top: 4px;
+  padding: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  text-transform: none;
+}
+.filter-popover.right { left: auto; right: 0; }
+.filter-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
+.filter-list li {
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.filter-list li:hover { background: var(--bg-surface-hover); }
+.filter-list li.active { color: var(--accent-blue); font-weight: 600; }
+.header-filter {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.header-filter:focus { border-color: var(--accent-blue); outline: none; }
 .log-row { cursor: pointer; }
 .log-row:hover { background: var(--bg-surface); }
 .log-row.expanded { background: var(--bg-surface-hover-subtle); }
@@ -296,4 +433,6 @@ onMounted(() => {
 .pagination button:hover:not(:disabled) { border-color: var(--accent-blue); color: var(--accent-blue); }
 .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
 .page-info { font-size: 13px; color: var(--text-secondary); }
+.page-size { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.page-size select { padding: 2px 6px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px; }
 </style>

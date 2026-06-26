@@ -75,6 +75,15 @@
         >
           {{ t('common.next') }}
         </button>
+        <span class="page-size">
+          <label>{{ t('common.perPage') }}</label>
+          <select
+            :value="pagination.page_size"
+            @change="changePageSize(Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option v-for="n in pageSizeOptions" :key="n" :value="n">{{ n }}</option>
+          </select>
+        </span>
       </div>
     </template>
   </div>
@@ -85,13 +94,15 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listSessions, getServices, type SessionListItem, type Pagination } from '../api/client'
+import { usePageSize } from '../composables/usePageSize'
 import { formatCost } from '../utils/format'
 
 const router = useRouter()
 const { t } = useI18n()
 
 const sessions = ref<SessionListItem[]>([])
-const pagination = ref<Pagination>({ page: 1, page_size: 20, total: 0 })
+const { options: pageSizeOptions, loadPageSize, savePageSize } = usePageSize('sessions')
+const pagination = ref<Pagination>({ page: 1, page_size: loadPageSize(), total: 0 })
 const services = ref<string[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -109,7 +120,7 @@ async function fetchSessions(page = 1) {
   loading.value = true
   error.value = ''
   try {
-    const result = await listSessions({ ...filters.value, page, page_size: 20 })
+    const result = await listSessions({ ...filters.value, page, page_size: pagination.value.page_size })
     sessions.value = result.sessions
     pagination.value = result.pagination
   } catch (e: any) {
@@ -138,6 +149,12 @@ function reset() {
 
 function goToPage(page: number) {
   fetchSessions(page)
+}
+
+function changePageSize(n: number) {
+  pagination.value.page_size = n
+  savePageSize(n)
+  fetchSessions(1)
 }
 
 function goToSession(sessionId: string) {
@@ -202,4 +219,6 @@ onMounted(() => {
 .error-none { color: var(--status-ok-text); }
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
 .page-info { font-size: 14px; color: var(--text-secondary); }
+.page-size { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-secondary); }
+.page-size select { padding: 2px 6px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px; }
 </style>

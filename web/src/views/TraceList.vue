@@ -93,6 +93,15 @@
         >
           {{ t('common.next') }}
         </button>
+        <span class="page-size">
+          <label>{{ t('common.perPage') }}</label>
+          <select
+            :value="pagination.page_size"
+            @change="changePageSize(Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option v-for="n in pageSizeOptions" :key="n" :value="n">{{ n }}</option>
+          </select>
+        </span>
       </div>
     </template>
   </div>
@@ -104,12 +113,14 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listTraces, getServices, exportTraces, importTraces, type TraceListItem, type Pagination, type ImportResult } from '../api/client'
 import { formatCost } from '../utils/format'
+import { usePageSize } from '../composables/usePageSize'
 
 const router = useRouter()
 const { t } = useI18n()
 
 const traces = ref<TraceListItem[]>([])
-const pagination = ref<Pagination>({ page: 1, page_size: 20, total: 0 })
+const { options: pageSizeOptions, loadPageSize, savePageSize } = usePageSize('traces')
+const pagination = ref<Pagination>({ page: 1, page_size: loadPageSize(), total: 0 })
 const services = ref<string[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -215,7 +226,7 @@ async function fetchTraces(page = 1) {
   loading.value = true
   error.value = ''
   try {
-    const result = await listTraces({ ...filters.value, page, page_size: 20 })
+    const result = await listTraces({ ...filters.value, page, page_size: pagination.value.page_size })
     traces.value = result.traces
     pagination.value = result.pagination
   } catch (e: any) {
@@ -244,6 +255,12 @@ function reset() {
 
 function goToPage(page: number) {
   fetchTraces(page)
+}
+
+function changePageSize(n: number) {
+  pagination.value.page_size = n
+  savePageSize(n)
+  fetchTraces(1)
 }
 
 function goToTrace(id: string) {
@@ -312,6 +329,8 @@ onMounted(() => {
 .status-error { background: var(--status-error-bg); color: var(--status-error-text); }
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
 .page-info { font-size: 14px; color: var(--text-secondary); }
+.page-size { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-secondary); }
+.page-size select { padding: 2px 6px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px; }
 
 /* Batch selection */
 .col-checkbox {

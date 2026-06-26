@@ -8,6 +8,7 @@ export default {
     pageOf: 'Page {page} of {total} ({count} items)',
     allServices: 'All services',
     cancel: 'Cancel',
+    perPage: 'Per page',
   },
   dashboard: {
     newDashboard: 'New Dashboard',
@@ -104,6 +105,8 @@ export default {
     event: 'Event',
     body: 'Body',
     trace: 'Trace',
+    filter: 'Filter',
+    filterTraceId: 'trace_id...',
     noLogs: 'No logs found.',
     filteredBySpan: 'Filtered: {name}',
     logCount: 'Logs ({count})',
