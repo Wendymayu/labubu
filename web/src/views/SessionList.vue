@@ -1,5 +1,6 @@
 <template>
   <div class="session-list">
+    <TimeRangePicker showAll :key="resetKey" @change="onTimeChange" />
     <div class="filters">
       <input
         v-model="filters.q"
@@ -55,7 +56,10 @@
         </tbody>
       </table>
 
-      <div v-else class="empty">{{ t('sessionList.noSessions') }}</div>
+      <div v-else class="empty">
+        {{ t('sessionList.noSessions') }}
+        <div v-if="timeRange.period !== 'all'" class="empty-hint">{{ t('timeRange.emptyHint') }}</div>
+      </div>
 
       <div class="pagination" v-if="pagination.total > 0">
         <button
@@ -93,8 +97,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listSessions, getServices, type SessionListItem, type Pagination } from '../api/client'
+import { listSessions, getServices, type SessionListItem, type Pagination, type TimeRangeSelection } from '../api/client'
 import { usePageSize } from '../composables/usePageSize'
+import TimeRangePicker from '../components/TimeRangePicker.vue'
 import { formatCost } from '../utils/format'
 
 const router = useRouter()
@@ -112,6 +117,14 @@ const filters = ref({
   service: '',
 })
 
+const timeRange = ref<TimeRangeSelection>({ period: 'today' })
+const resetKey = ref(0)
+
+function onTimeChange(sel: TimeRangeSelection) {
+  timeRange.value = sel
+  fetchSessions(1)
+}
+
 const totalPages = computed(() => {
   return Math.max(1, Math.ceil(pagination.value.total / pagination.value.page_size))
 })
@@ -120,7 +133,13 @@ async function fetchSessions(page = 1) {
   loading.value = true
   error.value = ''
   try {
-    const result = await listSessions({ ...filters.value, page, page_size: pagination.value.page_size })
+    const result = await listSessions({
+      ...filters.value,
+      page,
+      page_size: pagination.value.page_size,
+      start: timeRange.value.start,
+      end: timeRange.value.end,
+    })
     sessions.value = result.sessions
     pagination.value = result.pagination
   } catch (e: any) {
@@ -144,7 +163,7 @@ function search() {
 
 function reset() {
   filters.value = { q: '', service: '' }
-  fetchSessions(1)
+  resetKey.value++ // remount picker → re-emits default 'today' → fetchSessions(1)
 }
 
 function goToPage(page: number) {
@@ -188,7 +207,7 @@ function errorRateClass(rate: number): string {
 }
 
 onMounted(() => {
-  fetchSessions()
+  // fetchSessions is triggered by the picker's mount emit (default 'today').
   fetchServices()
 })
 </script>
@@ -204,6 +223,7 @@ onMounted(() => {
 .btn-primary { background: var(--accent-primary); border-color: var(--accent-primary); }
 .btn-primary:hover { background: var(--accent-primary-hover); }
 .loading, .error, .empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+.empty-hint { margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
 .error { color: var(--status-error-accent); }
 .trace-table { width: 100%; border-collapse: collapse; }
 .trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; border-bottom: 1px solid var(--border-default); }

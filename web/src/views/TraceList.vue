@@ -1,5 +1,6 @@
 <template>
   <div class="trace-list">
+    <TimeRangePicker showAll :key="resetKey" @change="onTimeChange" />
     <div class="filters">
       <input
         v-model="filters.q"
@@ -73,7 +74,10 @@
         </tbody>
       </table>
 
-      <div v-else class="empty">{{ t('traceList.noTraces') }}</div>
+      <div v-else class="empty">
+        {{ t('traceList.noTraces') }}
+        <div v-if="timeRange.period !== 'all'" class="empty-hint">{{ t('timeRange.emptyHint') }}</div>
+      </div>
 
       <div class="pagination" v-if="pagination.total > 0">
         <button
@@ -111,9 +115,10 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listTraces, getServices, exportTraces, importTraces, type TraceListItem, type Pagination, type ImportResult } from '../api/client'
+import { listTraces, getServices, exportTraces, importTraces, type TraceListItem, type Pagination, type ImportResult, type TimeRangeSelection } from '../api/client'
 import { formatCost } from '../utils/format'
 import { usePageSize } from '../composables/usePageSize'
+import TimeRangePicker from '../components/TimeRangePicker.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -132,6 +137,14 @@ const importLoading = ref(false)
 const importResult = ref<ImportResult | null>(null)
 const importError = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
+
+const timeRange = ref<TimeRangeSelection>({ period: 'today' })
+const resetKey = ref(0)
+
+function onTimeChange(sel: TimeRangeSelection) {
+  timeRange.value = sel
+  fetchTraces(1)
+}
 
 function toggleSelect(traceId: string) {
   const next = new Set(selectedIds.value)
@@ -226,7 +239,13 @@ async function fetchTraces(page = 1) {
   loading.value = true
   error.value = ''
   try {
-    const result = await listTraces({ ...filters.value, page, page_size: pagination.value.page_size })
+    const result = await listTraces({
+      ...filters.value,
+      page,
+      page_size: pagination.value.page_size,
+      start: timeRange.value.start,
+      end: timeRange.value.end,
+    })
     traces.value = result.traces
     pagination.value = result.pagination
   } catch (e: any) {
@@ -250,7 +269,9 @@ function search() {
 
 function reset() {
   filters.value = { q: '', service: '', status: '' }
-  fetchTraces(1)
+  // Bumping :key remounts the picker → it re-emits the default 'today' range
+  // → onTimeChange → fetchTraces(1). Clears any custom datetime too.
+  resetKey.value++
 }
 
 function goToPage(page: number) {
@@ -300,7 +321,7 @@ watch(() => pagination.value.page, () => {
 })
 
 onMounted(() => {
-  fetchTraces()
+  // fetchTraces is triggered by the picker's mount emit (default 'today').
   fetchServices()
 })
 </script>
@@ -316,6 +337,7 @@ onMounted(() => {
 .btn-primary { background: var(--accent-primary); border-color: var(--accent-primary); }
 .btn-primary:hover { background: var(--accent-primary-hover); }
 .loading, .error, .empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+.empty-hint { margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
 .error { color: var(--status-error-accent); }
 .trace-table { width: 100%; border-collapse: collapse; }
 .trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; border-bottom: 1px solid var(--border-default); }

@@ -152,10 +152,17 @@ export default {
     resolvedAt: '恢复时间',
     noAlerts: '暂无告警记录。',
   },
-costDashboard: {
+timeRange: {
+    all: '全部',
     today: '今天',
     '7d': '近 7 天',
     '30d': '近 30 天',
+    custom: '自定义',
+    to: '至',
+    invalidRange: '开始时间需早于结束时间',
+    emptyHint: '当前仅显示所选时间范围内的数据，切换为「全部」可查看全部数据。',
+},
+costDashboard: {
     totalCost: '总花费',
     totalTokens: '总 Token 数',
     cacheRead: '缓存读',

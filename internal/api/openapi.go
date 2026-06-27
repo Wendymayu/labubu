@@ -286,7 +286,12 @@ const openAPISpecJSON = `{
     "/api/v1/cost-summary": {
       "get": {
         "summary": "Cost summary",
-        "parameters": [{ "name": "period", "in": "query", "schema": { "type": "string", "enum": ["today", "7d", "30d"] } }],
+        "parameters": [
+          { "name": "period", "in": "query", "schema": { "type": "string", "enum": ["today", "7d", "30d"] }, "description": "Preset time range (ignored when start/end are given)" },
+          { "name": "start", "in": "query", "schema": { "type": "integer" }, "description": "Custom range start, epoch ms; overrides period when paired with end" },
+          { "name": "end", "in": "query", "schema": { "type": "integer" }, "description": "Custom range end, epoch ms" },
+          { "name": "group_by", "in": "query", "schema": { "type": "string", "enum": ["model", "service"] }, "description": "Breakdown dimension" }
+        ],
         "responses": { "200": { "description": "Cost summary" } }
       }
     },

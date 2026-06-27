@@ -15,6 +15,8 @@
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 
+    <TimeRangePicker showAll :key="resetKey" @change="onTimeChange" />
+
     <!-- Table -->
     <div class="log-table-wrap">
       <table class="log-table" v-if="logs.length > 0">
@@ -88,7 +90,10 @@
           </template>
         </tbody>
       </table>
-      <div v-else-if="!loading" class="empty-state">{{ t('logList.noLogs') }}</div>
+      <div v-else-if="!loading" class="empty-state">
+        {{ t('logList.noLogs') }}
+        <div v-if="timeRange.period !== 'all'" class="empty-hint">{{ t('timeRange.emptyHint') }}</div>
+      </div>
       <div v-else class="loading-state">{{ t('common.loading') }}</div>
     </div>
 
@@ -113,8 +118,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { listLogs, getLogEventNames, type LogRecord } from '../api/client'
+import { listLogs, getLogEventNames, type LogRecord, type TimeRangeSelection } from '../api/client'
 import { usePageSize } from '../composables/usePageSize'
+import TimeRangePicker from '../components/TimeRangePicker.vue'
 
 const { t } = useI18n()
 
@@ -135,6 +141,15 @@ const SEVERITY_OPTIONS = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const
 const eventSearch = ref('')
 const openFilter = ref<'severity' | 'event' | 'trace' | ''>('')
 
+const timeRange = ref<TimeRangeSelection>({ period: 'today' })
+const resetKey = ref(0)
+
+function onTimeChange(sel: TimeRangeSelection) {
+  timeRange.value = sel
+  page.value = 1
+  fetchLogs()
+}
+
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
 const filteredEventNames = computed(() => {
@@ -154,7 +169,7 @@ function reset() {
   eventFilter.value = ''
   traceIdFilter.value = ''
   page.value = 1
-  fetchLogs()
+  resetKey.value++ // remount picker → re-emits default 'today' → fetchLogs
 }
 
 function toggleFilter(col: 'severity' | 'event' | 'trace') {
@@ -197,6 +212,8 @@ async function fetchLogs() {
       event_name: eventFilter.value || undefined,
       q: searchQuery.value || undefined,
       trace_id: traceIdFilter.value || undefined,
+      start: timeRange.value.start,
+      end: timeRange.value.end,
     })
     logs.value = result.logs
     total.value = result.pagination.total
@@ -253,7 +270,7 @@ function formatBody(body: string): string {
 onMounted(() => {
   document.addEventListener('click', closeFilter)
   fetchEventNames()
-  fetchLogs()
+  // fetchLogs is triggered by the picker's mount emit (default 'today').
 })
 
 onUnmounted(() => {
@@ -413,6 +430,7 @@ onUnmounted(() => {
 }
 
 .empty-state, .loading-state { text-align: center; padding: 40px; color: var(--text-secondary); }
+.empty-hint { margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
 
 .pagination {
   display: flex;

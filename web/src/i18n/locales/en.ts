@@ -152,10 +152,17 @@ export default {
     resolvedAt: 'Resolved At',
     noAlerts: 'No alerts triggered yet.',
   },
-costDashboard: {
+timeRange: {
+    all: 'All',
     today: 'Today',
     '7d': '7 Days',
     '30d': '30 Days',
+    custom: 'Custom',
+    to: 'to',
+    invalidRange: 'Start must be before end',
+    emptyHint: 'Only showing data for the selected time range. Switch to "All" to see everything.',
+},
+costDashboard: {
     totalCost: 'Total Cost',
     totalTokens: 'Total Tokens',
     cacheRead: 'Cache Read',

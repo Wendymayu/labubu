@@ -20,6 +20,15 @@ export interface Pagination {
   total: number
 }
 
+// TimeRangeSelection is the payload emitted by the shared TimeRangePicker
+// component. `start`/`end` are epoch ms; both are undefined for the "all"
+// preset (no time filter). For presets (today/7d/30d) and custom, both are set.
+export interface TimeRangeSelection {
+  period: string
+  start?: number
+  end?: number
+}
+
 export interface TraceListResponse {
   traces: TraceListItem[]
   pagination: Pagination
@@ -364,8 +373,19 @@ export interface CostSummary {
   by_service?: ServiceCost[]
 }
 
-export async function getCostSummary(period: string, groupBy: 'model' | 'service' = 'model'): Promise<CostSummary> {
-  return get<CostSummary>(`${BASE_URL}/cost-summary?period=${period}&group_by=${groupBy}`)
+export async function getCostSummary(
+  period: string,
+  groupBy: 'model' | 'service' = 'model',
+  range?: { start: number; end: number }
+): Promise<CostSummary> {
+  // When `range` is set (custom time), start/end (epoch ms) override the preset
+  // period on the backend. The get() helper skips undefined params.
+  return get<CostSummary>(`${BASE_URL}/cost-summary`, {
+    period,
+    group_by: groupBy,
+    start: range?.start,
+    end: range?.end,
+  })
 }
 
 // --- LLM Config types and API ---

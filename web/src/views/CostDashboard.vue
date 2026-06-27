@@ -1,5 +1,10 @@
 <template>
   <div class="cost-dashboard">
+    <!-- Period selector — always rendered so its mount-emit triggers the first
+         fetch. (It must NOT live inside the v-else below, which is gated on
+         !loading — that would deadlock: loading can't clear until the picker
+         emits, but the picker can't mount until loading clears.) -->
+    <TimeRangePicker @change="onTimeChange" />
     <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
     <div v-else-if="loadError" class="error">{{ loadError }}</div>
     <div v-else-if="noPricing" class="no-pricing">
@@ -7,16 +12,6 @@
       <router-link to="/settings/pricing" class="btn btn-primary">{{ t('nav.modelPricing') }}</router-link>
     </div>
     <div v-else>
-      <!-- Period selector -->
-      <div class="period-bar">
-        <button
-          v-for="p in periods"
-          :key="p.key"
-          :class="['btn', 'btn-preset', { active: activePeriod === p.key }]"
-          @click="setPeriod(p.key)"
-        >{{ t(`costDashboard.${p.key}`) }}</button>
-      </div>
-
       <!-- Overview cards -->
       <div class="overview-cards">
         <div class="card">
@@ -85,24 +80,24 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getCostSummary, getModelPricing, type CostSummary } from '../api/client'
+import { getCostSummary, getModelPricing, type CostSummary, type TimeRangeSelection } from '../api/client'
+import TimeRangePicker from '../components/TimeRangePicker.vue'
 import { formatCost, formatNumber } from '../utils/format'
 
 const { t } = useI18n()
 
-const periods = [
-  { key: 'today' },
-  { key: '7d' },
-  { key: '30d' },
-]
-
-const activePeriod = ref('today')
 const groupBy = ref<'model' | 'service'>('model')
+const currentRange = ref<TimeRangeSelection>({ period: 'today' })
+
+function onTimeChange(sel: TimeRangeSelection) {
+  currentRange.value = sel
+  fetchData(sel)
+}
 
 function setGroupBy(dim: 'model' | 'service') {
   if (groupBy.value === dim) return
   groupBy.value = dim
-  fetchData()
+  fetchData(currentRange.value)
 }
 
 const summary = ref<CostSummary>({
@@ -149,11 +144,16 @@ const breakdownDimensionLabel = computed(() =>
   summary.value.group_by === 'service' ? t('costDashboard.service') : t('costDashboard.model')
 )
 
-async function fetchData() {
+async function fetchData(sel: TimeRangeSelection) {
   loading.value = true
   loadError.value = ''
   try {
-    const result = await getCostSummary(activePeriod.value, groupBy.value)
+    // Narrow start/end to number (they are number|undefined on the type) so the
+    // range matches getCostSummary's { start: number; end: number } param.
+    const range = sel.period === 'custom' && sel.start != null && sel.end != null
+      ? { start: sel.start, end: sel.end }
+      : undefined
+    const result = await getCostSummary(sel.period, groupBy.value, range)
     summary.value = result
   } catch (e: any) {
     loadError.value = e.message || 'Failed to load cost data'
@@ -172,14 +172,8 @@ async function checkPricing() {
   }
 }
 
-function setPeriod(key: string) {
-  activePeriod.value = key
-  fetchData()
-}
-
 onMounted(() => {
   checkPricing()
-  fetchData()
 })
 </script>
 
@@ -188,12 +182,6 @@ onMounted(() => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px;
-}
-
-.period-bar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
 }
 
 .breakdown-toggle {

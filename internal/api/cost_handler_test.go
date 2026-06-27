@@ -248,3 +248,50 @@ func TestCostSummaryInvalidGroupBy(t *testing.T) {
 		t.Errorf("expected 400 for invalid group_by, got %d", rec.Code)
 	}
 }
+
+func TestCostSummaryCustomRange(t *testing.T) {
+	store := &handlerMockStore{
+		costSummary: &storage.CostSummaryResult{
+			Currency: "USD",
+			Overview: storage.CostOverview{TotalCost: 9.0, TraceCount: 3},
+		},
+	}
+	handler := NewCostHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cost-summary?start=1700000000000&end=1700086400000&group_by=service", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var result storage.CostSummaryResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if result.Period != "custom" {
+		t.Errorf("period = %s, want custom", result.Period)
+	}
+	if store.lastCostQuery.StartTimeMS != 1700000000000 {
+		t.Errorf("start = %d, want 1700000000000", store.lastCostQuery.StartTimeMS)
+	}
+	if store.lastCostQuery.EndTimeMS != 1700086400000 {
+		t.Errorf("end = %d, want 1700086400000", store.lastCostQuery.EndTimeMS)
+	}
+	if store.lastCostQuery.GroupBy != "service" {
+		t.Errorf("group_by = %q, want service", store.lastCostQuery.GroupBy)
+	}
+}
+
+func TestCostSummaryCustomRangeReversed(t *testing.T) {
+	store := &handlerMockStore{}
+	handler := NewCostHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cost-summary?start=1700086400000&end=1700000000000", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for reversed range, got %d", rec.Code)
+	}
+}
