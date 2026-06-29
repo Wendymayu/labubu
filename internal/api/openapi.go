@@ -5,7 +5,9 @@ import "net/http"
 // openAPISpecJSON is the hand-written OpenAPI 3.0 document describing every
 // REST route registered in router.go. The drift test in openapi_test.go keeps
 // this list in sync with the canonical route table. Update both together when
-// adding an API.
+// adding an API. Operations are grouped into modules via the top-level tags
+// array (which also fixes the section order); Swagger UI renders one
+// collapsible section per tag.
 const openAPISpecJSON = `{
   "openapi": "3.0.3",
   "info": {
@@ -13,6 +15,18 @@ const openAPISpecJSON = `{
     "version": "1.0.0",
     "description": "Local-first LLM observability platform REST API. Base URL: /api/v1."
   },
+  "tags": [
+    { "name": "Traces", "description": "Trace listing, detail, LLM diagnosis, and export/import" },
+    { "name": "Sessions", "description": "Session grouping and agent behavior stats" },
+    { "name": "Logs", "description": "Log exploration and event names" },
+    { "name": "Metrics", "description": "Prometheus-compatible metrics query and OTLP ingestion" },
+    { "name": "Dashboards", "description": "Custom dashboard and panel management" },
+    { "name": "Model Pricing", "description": "Per-model pricing entries and cost recalculation" },
+    { "name": "LLM Configs", "description": "LLM provider configurations for diagnosis" },
+    { "name": "Alerts", "description": "Alert rules, states, and notification history" },
+    { "name": "Cost", "description": "Cost aggregation and summary" },
+    { "name": "System", "description": "Health and system endpoints" }
+  ],
   "components": {
     "responses": {
       "Error": {
@@ -28,6 +42,7 @@ const openAPISpecJSON = `{
   "paths": {
     "/api/v1/traces": {
       "get": {
+        "tags": ["Traces"],
         "summary": "List traces",
         "description": "Paginated list of traces with filtering.",
         "parameters": [
@@ -46,6 +61,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/traces/{id}": {
       "get": {
+        "tags": ["Traces"],
         "summary": "Get trace detail",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Trace ID (hex)" }],
         "responses": { "200": { "description": "Full trace detail with spans" }, "404": { "$ref": "#/components/responses/Error" } }
@@ -53,6 +69,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/traces/{id}/diagnosis": {
       "get": {
+        "tags": ["Traces"],
         "summary": "Get stored diagnosis for a trace",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Diagnosis result" }, "404": { "$ref": "#/components/responses/Error" } }
@@ -60,6 +77,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/traces/{id}/diagnose": {
       "post": {
+        "tags": ["Traces"],
         "summary": "Run LLM diagnosis on a trace",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Diagnosis result" }, "500": { "$ref": "#/components/responses/Error" } }
@@ -67,6 +85,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/traces/export": {
       "post": {
+        "tags": ["Traces"],
         "summary": "Export traces to OTLP JSON",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "trace_ids": { "type": "array", "items": { "type": "string" } }, "format": { "type": "string" } } } } } },
         "responses": { "200": { "description": "Exported OTLP JSON" }, "400": { "$ref": "#/components/responses/Error" } }
@@ -74,6 +93,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/traces/import": {
       "post": {
+        "tags": ["Traces"],
         "summary": "Import traces from OTLP JSON",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "OTLP JSON trace export" } } } },
         "responses": { "200": { "description": "Import result" }, "400": { "$ref": "#/components/responses/Error" } }
@@ -81,12 +101,14 @@ const openAPISpecJSON = `{
     },
     "/api/v1/services": {
       "get": {
+        "tags": ["Traces"],
         "summary": "List known service names",
         "responses": { "200": { "description": "List of service names" } }
       }
     },
     "/api/v1/sessions": {
       "get": {
+        "tags": ["Sessions"],
         "summary": "List sessions",
         "parameters": [
           { "name": "page", "in": "query", "schema": { "type": "integer" } },
@@ -101,6 +123,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/sessions/{id}": {
       "get": {
+        "tags": ["Sessions"],
         "summary": "Get session detail",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Session detail with traces" }, "404": { "$ref": "#/components/responses/Error" } }
@@ -108,6 +131,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/sessions/{id}/agent-stats": {
       "get": {
+        "tags": ["Sessions"],
         "summary": "Get agent behavior stats for a session",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Agent behavior stats" } }
@@ -115,6 +139,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/logs": {
       "get": {
+        "tags": ["Logs"],
         "summary": "List logs",
         "parameters": [
           { "name": "page", "in": "query", "schema": { "type": "integer" } },
@@ -131,6 +156,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/logs/{traceId}": {
       "get": {
+        "tags": ["Logs"],
         "summary": "Get all logs for a trace",
         "parameters": [{ "name": "traceId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Logs for the trace" } }
@@ -138,12 +164,14 @@ const openAPISpecJSON = `{
     },
     "/api/v1/log-event-names": {
       "get": {
+        "tags": ["Logs"],
         "summary": "List distinct log event names",
         "responses": { "200": { "description": "Event name list" } }
       }
     },
     "/api/v1/query": {
       "get": {
+        "tags": ["Metrics"],
         "summary": "Prometheus instant query",
         "parameters": [{ "name": "query", "in": "query", "required": true, "schema": { "type": "string" }, "description": "PromQL expression" }, { "name": "time", "in": "query", "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Prometheus query result" } }
@@ -151,6 +179,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/query_range": {
       "get": {
+        "tags": ["Metrics"],
         "summary": "Prometheus range query",
         "parameters": [
           { "name": "query", "in": "query", "required": true, "schema": { "type": "string" } },
@@ -162,31 +191,34 @@ const openAPISpecJSON = `{
       }
     },
     "/api/v1/labels": {
-      "get": { "summary": "List all metric label names", "responses": { "200": { "description": "Label name list" } } }
+      "get": { "tags": ["Metrics"], "summary": "List all metric label names", "responses": { "200": { "description": "Label name list" } } }
     },
     "/api/v1/label/{name}/values": {
       "get": {
+        "tags": ["Metrics"],
         "summary": "List values for a label name",
         "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Label values" } }
       }
     },
     "/api/v1/metadata": {
-      "get": { "summary": "Metric metadata", "responses": { "200": { "description": "Metric metadata" } } }
+      "get": { "tags": ["Metrics"], "summary": "Metric metadata", "responses": { "200": { "description": "Metric metadata" } } }
     },
     "/api/v1/metric-names": {
-      "get": { "summary": "List all metric names", "responses": { "200": { "description": "Metric name list" } } }
+      "get": { "tags": ["Metrics"], "summary": "List all metric names", "responses": { "200": { "description": "Metric name list" } } }
     },
     "/api/v1/otlp/v1/metrics": {
       "post": {
+        "tags": ["Metrics"],
         "summary": "OTLP metrics ingestion (HTTP)",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "OTLP metrics JSON" } } } },
         "responses": { "200": { "description": "Accepted" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/v1/dashboards": {
-      "get": { "summary": "List all dashboards", "responses": { "200": { "description": "Dashboard list" } } },
+      "get": { "tags": ["Dashboards"], "summary": "List all dashboards", "responses": { "200": { "description": "Dashboard list" } } },
       "post": {
+        "tags": ["Dashboards"],
         "summary": "Create dashboard",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" } } } } } },
         "responses": { "200": { "description": "Created dashboard" } }
@@ -194,12 +226,14 @@ const openAPISpecJSON = `{
     },
     "/api/v1/dashboards/{id}": {
       "put": {
+        "tags": ["Dashboards"],
         "summary": "Rename dashboard",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" } } } } } },
         "responses": { "200": { "description": "Updated dashboard" } }
       },
       "delete": {
+        "tags": ["Dashboards"],
         "summary": "Delete dashboard",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" } }
@@ -207,6 +241,7 @@ const openAPISpecJSON = `{
     },
     "/api/v1/dashboards/{id}/panels": {
       "post": {
+        "tags": ["Dashboards"],
         "summary": "Add panel to dashboard",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "Panel config" } } } },
@@ -215,20 +250,23 @@ const openAPISpecJSON = `{
     },
     "/api/v1/dashboards/{id}/panels/{panelId}": {
       "put": {
+        "tags": ["Dashboards"],
         "summary": "Update panel",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "panelId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "Panel config" } } } },
         "responses": { "200": { "description": "Updated panel" } }
       },
       "delete": {
+        "tags": ["Dashboards"],
         "summary": "Delete panel",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "panelId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" } }
       }
     },
     "/api/v1/model-pricing": {
-      "get": { "summary": "List model pricing", "responses": { "200": { "description": "Pricing list" } } },
+      "get": { "tags": ["Model Pricing"], "summary": "List model pricing", "responses": { "200": { "description": "Pricing list" } } },
       "post": {
+        "tags": ["Model Pricing"],
         "summary": "Create or update model pricing (upsert)",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "model_name": { "type": "string" }, "input_price": { "type": "number" }, "output_price": { "type": "number" }, "currency": { "type": "string" } } } } } },
         "responses": { "200": { "description": "Saved pricing" }, "400": { "$ref": "#/components/responses/Error" } }
@@ -236,20 +274,23 @@ const openAPISpecJSON = `{
     },
     "/api/v1/model-pricing/recalc": {
       "post": {
+        "tags": ["Model Pricing"],
         "summary": "Recalculate costs for all traces",
         "responses": { "200": { "description": "Recalculation result" }, "500": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/v1/model-pricing/{name}": {
       "delete": {
+        "tags": ["Model Pricing"],
         "summary": "Delete model pricing by name",
         "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/v1/llm-configs": {
-      "get": { "summary": "List LLM configs (API keys masked)", "responses": { "200": { "description": "Config list" } } },
+      "get": { "tags": ["LLM Configs"], "summary": "List LLM configs (API keys masked)", "responses": { "200": { "description": "Config list" } } },
       "post": {
+        "tags": ["LLM Configs"],
         "summary": "Create LLM config",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "provider_type": { "type": "string" }, "model_name": { "type": "string" }, "provider_url": { "type": "string" }, "api_key": { "type": "string" }, "temperature": { "type": "number" }, "max_tokens": { "type": "integer" } } } } } },
         "responses": { "200": { "description": "Created config" }, "400": { "$ref": "#/components/responses/Error" } }
@@ -257,34 +298,37 @@ const openAPISpecJSON = `{
     },
     "/api/v1/llm-configs/{id}": {
       "put": {
+        "tags": ["LLM Configs"],
         "summary": "Update LLM config (api_key '***' means keep existing)",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "model_name": { "type": "string" }, "provider_url": { "type": "string" }, "api_key": { "type": "string" }, "default": { "type": "boolean" } } } } } },
         "responses": { "200": { "description": "Updated config" }, "400": { "$ref": "#/components/responses/Error" } }
       },
       "delete": {
+        "tags": ["LLM Configs"],
         "summary": "Delete LLM config",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/v1/alerts/rules": {
-      "get": { "summary": "List alert rules", "responses": { "200": { "description": "Rule list" } } },
-      "post": { "summary": "Create alert rule", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "Alert rule definition" } } } }, "responses": { "200": { "description": "Created rule" } } }
+      "get": { "tags": ["Alerts"], "summary": "List alert rules", "responses": { "200": { "description": "Rule list" } } },
+      "post": { "tags": ["Alerts"], "summary": "Create alert rule", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "Alert rule definition" } } } }, "responses": { "200": { "description": "Created rule" } } }
     },
     "/api/v1/alerts/rules/{id}": {
-      "get": { "summary": "Get alert rule", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Rule" }, "404": { "$ref": "#/components/responses/Error" } } },
-      "put": { "summary": "Update alert rule", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "Alert rule definition" } } } }, "responses": { "200": { "description": "Updated rule" } } },
-      "delete": { "summary": "Delete alert rule", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deleted" } } }
+      "get": { "tags": ["Alerts"], "summary": "Get alert rule", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Rule" }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": { "tags": ["Alerts"], "summary": "Update alert rule", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "description": "Alert rule definition" } } } }, "responses": { "200": { "description": "Updated rule" } } },
+      "delete": { "tags": ["Alerts"], "summary": "Delete alert rule", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "Deleted" } } }
     },
     "/api/v1/alerts/states": {
-      "get": { "summary": "List alert states (firing/resolved)", "responses": { "200": { "description": "State list" } } }
+      "get": { "tags": ["Alerts"], "summary": "List alert states (firing/resolved)", "responses": { "200": { "description": "State list" } } }
     },
     "/api/v1/alerts/notifications": {
-      "get": { "summary": "List alert notification history", "responses": { "200": { "description": "Notification history" } } }
+      "get": { "tags": ["Alerts"], "summary": "List alert notification history", "responses": { "200": { "description": "Notification history" } } }
     },
     "/api/v1/cost-summary": {
       "get": {
+        "tags": ["Cost"],
         "summary": "Cost summary",
         "parameters": [
           { "name": "period", "in": "query", "schema": { "type": "string", "enum": ["today", "7d", "30d"] }, "description": "Preset time range (ignored when start/end are given)" },
@@ -296,7 +340,7 @@ const openAPISpecJSON = `{
       }
     },
     "/api/health": {
-      "get": { "summary": "Health check", "responses": { "200": { "description": "Service status" } } }
+      "get": { "tags": ["System"], "summary": "Health check", "responses": { "200": { "description": "Service status" } } }
     }
   }
 }`

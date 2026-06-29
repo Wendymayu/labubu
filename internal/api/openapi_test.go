@@ -141,3 +141,83 @@ func TestOpenAPIHandler_RejectsNonGet(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenAPIHandler_EveryOperationTagged keeps Swagger UI's module grouping
+// complete and typo-free: every operation must carry exactly one tag, every
+// tag must be declared in the top-level tags array, and no declared tag may be
+// unused. Add this check when introducing or renaming module tags.
+func TestOpenAPIHandler_EveryOperationTagged(t *testing.T) {
+	rec := httptest.NewRecorder()
+	OpenAPIHandler(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
+
+	var spec map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	declared := map[string]bool{}
+	if raw, ok := spec["tags"]; ok {
+		arr, ok := raw.([]interface{})
+		if !ok {
+			t.Fatalf("top-level tags is not an array")
+		}
+		for _, e := range arr {
+			obj, ok := e.(map[string]interface{})
+			if !ok {
+				t.Fatalf("tags entry is not an object: %v", e)
+			}
+			name, _ := obj["name"].(string)
+			if name == "" {
+				t.Fatalf("tags entry has no name: %v", obj)
+			}
+			declared[name] = true
+		}
+	}
+	if len(declared) == 0 {
+		t.Fatalf("no top-level tags declared")
+	}
+
+	used := map[string]bool{}
+	paths, _ := spec["paths"].(map[string]interface{})
+	for p, v := range paths {
+		item, _ := v.(map[string]interface{})
+		for m, op := range item {
+			switch m {
+			case "get", "post", "put", "delete", "patch":
+			default:
+				continue
+			}
+			operation, _ := op.(map[string]interface{})
+			raw, ok := operation["tags"]
+			if !ok {
+				t.Errorf("%s %s: missing tags", m, p)
+				continue
+			}
+			arr, ok := raw.([]interface{})
+			if !ok || len(arr) == 0 {
+				t.Errorf("%s %s: tags is missing or empty", m, p)
+				continue
+			}
+			if len(arr) > 1 {
+				t.Errorf("%s %s: expected exactly one tag, got %v", m, p, arr)
+			}
+			for _, tname := range arr {
+				s, _ := tname.(string)
+				if s == "" {
+					t.Errorf("%s %s: empty tag name", m, p)
+					continue
+				}
+				if !declared[s] {
+					t.Errorf("%s %s: tag %q is not declared in top-level tags", m, p, s)
+				}
+				used[s] = true
+			}
+		}
+	}
+
+	for name := range declared {
+		if !used[name] {
+			t.Errorf("top-level tag %q is declared but no operation uses it", name)
+		}
+	}
+}

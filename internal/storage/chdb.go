@@ -614,7 +614,66 @@ func (s *chDBStore) UpsertDiagnosisResult(ctx context.Context, result *Diagnosis
 }
 
 func (s *chDBStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error) {
-	return nil, fmt.Errorf("not implemented")
+	sid := escapeSQL(sessionID)
+
+	// Traces for the session — only StatusCode is needed for trace success rate.
+	traceResult, err := s.querySQL(fmt.Sprintf(
+		`SELECT toString(status_code) AS status_code
+		 FROM traces WHERE session_id = '%s' FORMAT JSONEachRow`, sid))
+	if err != nil {
+		return nil, fmt.Errorf("query session traces: %w", err)
+	}
+	var traces []Trace
+	for _, line := range splitLines(traceResult) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			StatusCode string `json:"status_code"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("parse session trace: %w (line: %s)", err, line)
+		}
+		traces = append(traces, Trace{StatusCode: StatusCodeFromString(row.StatusCode)})
+	}
+	if len(traces) == 0 {
+		// No data -> handler returns 404 no_agent_data so the UI hides the
+		// section gracefully (matches memstore/SQLite), rather than a 500.
+		return nil, nil
+	}
+
+	// Spans belonging to those traces. trace_id is binary (FixedString(16)) in
+	// both tables, so the subquery compares directly without unhex.
+	// computeAgentStats only reads StartTimeMS, StatusCode and Attributes.
+	spanResult, err := s.querySQL(fmt.Sprintf(
+		`SELECT start_time_ms, toString(status_code) AS status_code, attributes
+		 FROM spans
+		 WHERE trace_id IN (SELECT trace_id FROM traces WHERE session_id = '%s')
+		 ORDER BY start_time_ms FORMAT JSONEachRow`, sid))
+	if err != nil {
+		return nil, fmt.Errorf("query session spans: %w", err)
+	}
+	var spans []Span
+	for _, line := range splitLines(spanResult) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			StartTimeMS uint64            `json:"start_time_ms"`
+			StatusCode  string            `json:"status_code"`
+			Attributes  map[string]string `json:"attributes"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("parse session span: %w (line: %s)", err, line)
+		}
+		spans = append(spans, Span{
+			StartTimeMS: row.StartTimeMS,
+			StatusCode:  StatusCodeFromString(row.StatusCode),
+			Attributes:  row.Attributes,
+		})
+	}
+
+	return computeAgentStats(traces, spans), nil
 }
 
 func (s *chDBStore) Close() error {

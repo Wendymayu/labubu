@@ -470,6 +470,21 @@ func StatusCodeToString(code int32) string {
 	}
 }
 
+// StatusCodeFromString converts a stored status string back to the OTel
+// StatusCode int32. chDB and SQLite persist status_code as a string; this
+// restores the int32 form that computeAgentStats consumes. Unknown values
+// map to UNSET (0).
+func StatusCodeFromString(s string) int32 {
+	switch s {
+	case "OK":
+		return 1
+	case "ERROR":
+		return 2
+	default:
+		return 0
+	}
+}
+
 // --- Log types ---
 
 // LogRecord represents a single OTLP log record stored in the logs table.

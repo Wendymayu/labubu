@@ -15,7 +15,7 @@
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 
-    <TimeRangePicker showAll :key="resetKey" @change="onTimeChange" />
+    <TimeRangePicker :key="resetKey" @change="onTimeChange" />
 
     <!-- Table -->
     <div class="log-table-wrap">
@@ -35,20 +35,6 @@
                 </ul>
               </div>
             </th>
-            <th class="col-event has-filter">
-              <div class="th-head">
-                <span>{{ t('logList.event') }}</span>
-                <button class="filter-btn" :class="{ active: !!eventFilter }" :title="t('logList.filter')" @click.stop="toggleFilter('event')">▼</button>
-              </div>
-              <div v-if="openFilter === 'event'" class="filter-popover" @click.stop>
-                <input class="header-filter" v-model="eventSearch" :placeholder="t('common.search')" />
-                <ul class="filter-list">
-                  <li :class="{ active: eventFilter === '' }" @click="selectEvent('')">{{ t('logList.allEvents') }}</li>
-                  <li v-for="ev in filteredEventNames" :key="ev" :class="{ active: eventFilter === ev }" @click="selectEvent(ev)">{{ ev }}</li>
-                </ul>
-              </div>
-            </th>
-            <th class="col-body">{{ t('logList.body') }}</th>
             <th class="col-trace has-filter">
               <div class="th-head">
                 <span>{{ t('logList.trace') }}</span>
@@ -58,36 +44,32 @@
                 <input class="header-filter" v-model="traceIdFilter" :placeholder="t('logList.filterTraceId')" @keyup.enter="applyTraceFilter" />
               </div>
             </th>
+            <th class="col-body">{{ t('logList.body') }}</th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="(log, idx) in logs" :key="idx">
-            <tr
-              :class="['log-row', { expanded: expandedIdx === idx }]"
-              @click="toggleExpand(idx)"
-            >
-              <td class="col-time">{{ formatTime(log.timestamp) }}</td>
-              <td class="col-sev">
-                <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
-              </td>
-              <td class="col-event">{{ log.event_name || '-' }}</td>
-              <td class="col-body">{{ truncateBody(log.body) }}</td>
-              <td class="col-trace">
-                <router-link
-                  v-if="log.trace_id_hex"
-                  :to="`/traces/${log.trace_id_hex}`"
-                  class="trace-link"
-                  @click.stop
-                >{{ log.trace_id_hex.substring(0, 8) }}...</router-link>
-                <span v-else>-</span>
-              </td>
-            </tr>
-            <tr v-if="expandedIdx === idx" class="log-expand-row">
-              <td colspan="5">
-                <pre class="log-body-full">{{ formatBody(log.body) }}</pre>
-              </td>
-            </tr>
-          </template>
+          <tr
+            v-for="(log, idx) in logs"
+            :key="idx"
+            class="log-row"
+          >
+            <td class="col-time">{{ formatTime(log.timestamp) }}</td>
+            <td class="col-sev">
+              <span :class="['severity-badge', log.severity.toLowerCase()]">{{ log.severity }}</span>
+            </td>
+            <td class="col-trace">
+              <router-link
+                v-if="log.trace_id_hex"
+                :to="`/traces/${log.trace_id_hex}`"
+                class="trace-link"
+                :title="log.trace_id_hex"
+              >{{ log.trace_id_hex.substring(0, 5) }}...</router-link>
+              <span v-else>-</span>
+            </td>
+            <td class="col-body">
+              <pre class="log-body-cell">{{ formatBody(log.body) || '-' }}</pre>
+            </td>
+          </tr>
         </tbody>
       </table>
       <div v-else-if="!loading" class="empty-state">
@@ -118,7 +100,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { listLogs, getLogEventNames, type LogRecord, type TimeRangeSelection } from '../api/client'
+import { listLogs, type LogRecord, type TimeRangeSelection } from '../api/client'
 import { usePageSize } from '../composables/usePageSize'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
 
@@ -130,16 +112,12 @@ const page = ref(1)
 const { options: pageSizeOptions, loadPageSize, savePageSize } = usePageSize('logs')
 const pageSize = ref(loadPageSize())
 const total = ref(0)
-const expandedIdx = ref<number | null>(null)
 
 const searchQuery = ref('')
 const severityFilter = ref('')
-const eventFilter = ref('')
 const traceIdFilter = ref('')
-const eventNames = ref<string[]>([])
 const SEVERITY_OPTIONS = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const
-const eventSearch = ref('')
-const openFilter = ref<'severity' | 'event' | 'trace' | ''>('')
+const openFilter = ref<'severity' | 'trace' | ''>('')
 
 const timeRange = ref<TimeRangeSelection>({ period: 'today' })
 const resetKey = ref(0)
@@ -152,12 +130,6 @@ function onTimeChange(sel: TimeRangeSelection) {
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
-const filteredEventNames = computed(() => {
-  const q = eventSearch.value.trim().toLowerCase()
-  if (!q) return eventNames.value
-  return eventNames.value.filter(e => e.toLowerCase().includes(q))
-})
-
 function search() {
   page.value = 1
   fetchLogs()
@@ -166,18 +138,16 @@ function search() {
 function reset() {
   searchQuery.value = ''
   severityFilter.value = ''
-  eventFilter.value = ''
   traceIdFilter.value = ''
   page.value = 1
   resetKey.value++ // remount picker → re-emits default 'today' → fetchLogs
 }
 
-function toggleFilter(col: 'severity' | 'event' | 'trace') {
+function toggleFilter(col: 'severity' | 'trace') {
   if (openFilter.value === col) {
     openFilter.value = ''
   } else {
     openFilter.value = col
-    eventSearch.value = ''
   }
 }
 
@@ -187,12 +157,6 @@ function closeFilter() {
 
 function selectSeverity(s: string) {
   severityFilter.value = s
-  openFilter.value = ''
-  search()
-}
-
-function selectEvent(e: string) {
-  eventFilter.value = e
   openFilter.value = ''
   search()
 }
@@ -209,7 +173,6 @@ async function fetchLogs() {
       page: page.value,
       page_size: pageSize.value,
       severity: severityFilter.value || undefined,
-      event_name: eventFilter.value || undefined,
       q: searchQuery.value || undefined,
       trace_id: traceIdFilter.value || undefined,
       start: timeRange.value.start,
@@ -221,14 +184,6 @@ async function fetchLogs() {
     logs.value = []
   } finally {
     loading.value = false
-  }
-}
-
-async function fetchEventNames() {
-  try {
-    eventNames.value = await getLogEventNames()
-  } catch {
-    eventNames.value = []
   }
 }
 
@@ -244,17 +199,10 @@ function changePageSize(n: number) {
   fetchLogs()
 }
 
-function toggleExpand(idx: number) {
-  expandedIdx.value = expandedIdx.value === idx ? null : idx
-}
-
 function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString()
-}
-
-function truncateBody(body: string): string {
-  if (!body) return '-'
-  return body.length > 80 ? body.substring(0, 80) + '...' : body
+  const d = new Date(ts)
+  const pad = (n: number, l = 2) => String(n).padStart(l, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
 }
 
 function formatBody(body: string): string {
@@ -269,7 +217,6 @@ function formatBody(body: string): string {
 
 onMounted(() => {
   document.addEventListener('click', closeFilter)
-  fetchEventNames()
   // fetchLogs is triggered by the picker's mount emit (default 'today').
 })
 
@@ -385,19 +332,17 @@ onUnmounted(() => {
   font-size: 12px;
 }
 .header-filter:focus { border-color: var(--accent-blue); outline: none; }
-.log-row { cursor: pointer; }
 .log-row:hover { background: var(--bg-surface); }
-.log-row.expanded { background: var(--bg-surface-hover-subtle); }
 .log-table td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--bg-surface-deep);
   color: var(--text-primary);
+  vertical-align: top;
 }
-.col-time { width: 100px; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.col-time { width: 180px; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 .col-sev { width: 80px; }
-.col-event { width: 140px; font-family: 'Courier New', monospace; font-size: 12px; }
-.col-body { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.col-trace { width: 120px; }
+.col-body { white-space: pre-wrap; word-break: break-all; color: var(--text-primary); }
+.col-trace { width: 90px; }
 
 .severity-badge {
   display: inline-block;
@@ -415,18 +360,21 @@ onUnmounted(() => {
 .trace-link { color: var(--accent-blue); text-decoration: none; font-family: 'Courier New', monospace; font-size: 12px; }
 .trace-link:hover { text-decoration: underline; }
 
-.log-expand-row td { padding: 0; }
-.log-body-full {
+.log-body-cell {
   margin: 0;
-  padding: 12px 16px;
-  background: var(--bg-surface-deep);
+  padding: 0;
+  background: transparent;
   color: var(--text-primary);
   font-size: 12px;
   font-family: 'Courier New', monospace;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 360px;
+  max-height: 240px;
   overflow-y: auto;
+}
+
+[data-theme="light"] .log-body-cell {
+  color: #0f172a;
 }
 
 .empty-state, .loading-state { text-align: center; padding: 40px; color: var(--text-secondary); }

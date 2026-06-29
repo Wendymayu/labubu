@@ -694,7 +694,7 @@ func (s *sqliteStore) ListSessions(ctx context.Context, q SessionQuery) (*Sessio
 		        min(start_time_ms) AS first_active_ms,
 		        max(start_time_ms) AS last_active_ms,
 		        sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END) AS error_count,
-		        round(sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END)*100.0/count(*)) AS error_rate,
+		        round(sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END)*1.0/count(*), 4) AS error_rate,
 		        sum(total_tokens) AS total_tokens,
 		        sum(cost) AS cost,
 		        CASE WHEN count(DISTINCT cost_currency) > 1 THEN 'mixed' ELSE max(cost_currency) END AS cost_currency
@@ -767,7 +767,7 @@ func (s *sqliteStore) GetSession(ctx context.Context, sessionID string) (*Sessio
 		        min(start_time_ms) AS first_active_ms,
 		        max(start_time_ms) AS last_active_ms,
 		        sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END) AS error_count,
-		        round(sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END)*100.0/count(*)) AS error_rate,
+		        round(sum(CASE WHEN status_code='ERROR' THEN 1 ELSE 0 END)*1.0/count(*), 4) AS error_rate,
 		        sum(total_tokens) AS total_tokens,
 		        sum(cost) AS cost,
 		        CASE WHEN count(DISTINCT cost_currency) > 1 THEN 'mixed' ELSE max(cost_currency) END AS cost_currency
@@ -1573,7 +1573,64 @@ func (s *sqliteStore) Purge(ctx context.Context, maxAge time.Duration, maxCount 
 // --- Close ---
 
 func (s *sqliteStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error) {
-	return nil, fmt.Errorf("not implemented")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Traces for the session — only StatusCode is needed for trace success rate.
+	traceRows, err := s.db.QueryContext(ctx,
+		`SELECT status_code FROM traces WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("query session traces: %w", err)
+	}
+	var traces []Trace
+	for traceRows.Next() {
+		var status string
+		if err := traceRows.Scan(&status); err != nil {
+			traceRows.Close()
+			return nil, fmt.Errorf("scan session trace: %w", err)
+		}
+		traces = append(traces, Trace{StatusCode: StatusCodeFromString(status)})
+	}
+	traceRows.Close()
+	if err := traceRows.Err(); err != nil {
+		return nil, fmt.Errorf("iter session traces: %w", err)
+	}
+	if len(traces) == 0 {
+		// No data -> handler returns 404 no_agent_data so the UI hides the
+		// section gracefully (matches memstore), rather than a 500.
+		return nil, nil
+	}
+
+	// Spans belonging to those traces. computeAgentStats only reads StartTimeMS,
+	// StatusCode and Attributes, so only those columns are fetched.
+	spanRows, err := s.db.QueryContext(ctx,
+		`SELECT start_time_ms, status_code, attributes
+		 FROM spans
+		 WHERE trace_id_hex IN (SELECT trace_id_hex FROM traces WHERE session_id = ?)
+		 ORDER BY start_time_ms`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("query session spans: %w", err)
+	}
+	defer spanRows.Close()
+
+	var spans []Span
+	for spanRows.Next() {
+		var startTimeMS uint64
+		var status, attrsJSON string
+		if err := spanRows.Scan(&startTimeMS, &status, &attrsJSON); err != nil {
+			return nil, fmt.Errorf("scan session span: %w", err)
+		}
+		spans = append(spans, Span{
+			StartTimeMS: startTimeMS,
+			StatusCode:  StatusCodeFromString(status),
+			Attributes:  jsonToMap(attrsJSON),
+		})
+	}
+	if err := spanRows.Err(); err != nil {
+		return nil, fmt.Errorf("iter session spans: %w", err)
+	}
+
+	return computeAgentStats(traces, spans), nil
 }
 
 func (s *sqliteStore) Close() error {

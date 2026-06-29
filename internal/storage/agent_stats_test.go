@@ -1,5 +1,3 @@
-//go:build !local_engine && nosqlite
-
 package storage
 
 import (

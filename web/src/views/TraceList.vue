@@ -1,6 +1,6 @@
 <template>
   <div class="trace-list">
-    <TimeRangePicker showAll :key="resetKey" @change="onTimeChange" />
+    <TimeRangePicker :key="resetKey" @change="onTimeChange" />
     <div class="filters">
       <input
         v-model="filters.q"
