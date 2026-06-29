@@ -74,3 +74,32 @@ class TestConnectionError:
         assert "error" in result
         assert "Cannot connect" in result["error"]
         assert "labubu serve" in result["error"]
+
+
+class TestFollowsRedirects:
+    """The Labubu router redirects trailing-slash-subtree list routes: a request
+    to /api/v1/traces (no slash) gets 307-redirected to /api/v1/traces/ (with the
+    query string preserved). The client must follow redirects, otherwise tool
+    calls error out on the 307 instead of returning data.
+    """
+
+    async def test_search_traces_follows_307_to_trailing_slash(self):
+        traces = {
+            "traces": [{"trace_id_hex": "a" * 32, "root_name": "POST /api/chat"}],
+            "pagination": {"page": 1, "page_size": 20, "total": 1},
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/v1/traces":
+                return httpx.Response(
+                    307,
+                    headers={"Location": str(request.url.copy_with(path="/api/v1/traces/"))},
+                )
+            if request.url.path == "/api/v1/traces/":
+                return httpx.Response(200, json=traces)
+            return httpx.Response(404)
+
+        client = LabubuApiClient("http://localhost:8080", transport=httpx.MockTransport(handler))
+        result = await client.search_traces(status="ERROR")
+        assert result["pagination"]["total"] == 1
+        assert result["traces"][0]["trace_id_hex"] == "a" * 32

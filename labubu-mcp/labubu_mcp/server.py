@@ -1,5 +1,6 @@
 """MCP Server creation and tool registration."""
 import argparse
+import asyncio
 
 from mcp.server.fastmcp import FastMCP
 
@@ -173,7 +174,7 @@ def main():
 
     api_client = LabubuApiClient(args.api_url)
     server = create_server(api_client)
-    server.run_stdio_async()
+    asyncio.run(server.run_stdio_async())
 
 
 if __name__ == "__main__":
