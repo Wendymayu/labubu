@@ -55,6 +55,7 @@ export default {
   traceList: {
     searchPlaceholder: 'Search traces...',
     allStatus: 'All status',
+    filter: 'Filter',
     name: 'Name',
     service: 'Service',
     duration: 'Duration',
@@ -74,6 +75,8 @@ export default {
   },
   sessionList: {
     searchPlaceholder: 'Search sessions...',
+    filter: 'Filter',
+    filterSessionId: 'session_id...',
     sessionId: 'Session ID',
     turns: 'Turns',
     totalTokens: 'Total Tokens',

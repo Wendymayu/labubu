@@ -891,9 +891,13 @@ func (s *sqliteStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult,
 
 	// List
 	offset := (q.Page - 1) * q.PageSize
+	order := "DESC"
+	if q.Asc {
+		order = "ASC"
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT trace_id_hex, span_id_hex, timestamp, severity, event_name, body, attributes
-		 FROM logs`+where+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+		 FROM logs`+where+` ORDER BY timestamp `+order+` LIMIT ? OFFSET ?`,
 		append(args, q.PageSize, offset)...,
 	)
 	if err != nil {

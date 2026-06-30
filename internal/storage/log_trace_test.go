@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
 
@@ -86,5 +87,50 @@ func TestGetLogCountsByTrace(t *testing.T) {
 	}
 	if c2 == nil || len(c2) != 0 {
 		t.Errorf("empty trace counts = %#v, want non-nil empty map", c2)
+	}
+}
+
+func TestListLogsAscOrder(t *testing.T) {
+	s, err := NewChDBStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewChDBStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+
+	tid := [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8}
+	spanA := [8]byte{1}
+	if err := s.InsertLogs(ctx, []LogRecord{
+		{TraceID: tid, SpanID: spanA, Timestamp: 300, Severity: "INFO", Body: "{}"},
+		{TraceID: tid, SpanID: spanA, Timestamp: 100, Severity: "INFO", Body: "{}"},
+		{TraceID: tid, SpanID: spanA, Timestamp: 200, Severity: "INFO", Body: "{}"},
+	}); err != nil {
+		t.Fatalf("InsertLogs: %v", err)
+	}
+
+	ts := func(logs []LogListItem) []uint64 {
+		out := make([]uint64, len(logs))
+		for i, l := range logs {
+			out[i] = l.Timestamp
+		}
+		return out
+	}
+
+	// Default: newest-first (DESC).
+	desc, err := s.ListLogs(ctx, LogQuery{Page: 1, PageSize: 100, TraceID: tid})
+	if err != nil {
+		t.Fatalf("ListLogs desc: %v", err)
+	}
+	if got := ts(desc.Logs); !reflect.DeepEqual(got, []uint64{300, 200, 100}) {
+		t.Errorf("desc order = %v, want [300 200 100]", got)
+	}
+
+	// Asc: oldest-first (ASC).
+	asc, err := s.ListLogs(ctx, LogQuery{Page: 1, PageSize: 100, TraceID: tid, Asc: true})
+	if err != nil {
+		t.Fatalf("ListLogs asc: %v", err)
+	}
+	if got := ts(asc.Logs); !reflect.DeepEqual(got, []uint64{100, 200, 300}) {
+		t.Errorf("asc order = %v, want [100 200 300]", got)
 	}
 }

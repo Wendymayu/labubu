@@ -165,5 +165,9 @@ func parseLogQuery(r *http.Request) storage.LogQuery {
 		}
 	}
 
+	if v := r.URL.Query().Get("asc"); v == "true" || v == "1" {
+		q.Asc = true
+	}
+
 	return q
 }

@@ -509,6 +509,7 @@ type LogQuery struct {
 	SpanID    [8]byte  // zero value = no span filter
 	StartTime uint64
 	EndTime   uint64
+	Asc       bool // true = oldest-first (timestamp ASC); false = newest-first (DESC, default)
 }
 
 // LogListItem is the API response item for a log record.

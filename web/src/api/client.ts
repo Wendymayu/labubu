@@ -516,6 +516,7 @@ export interface LogQuery {
   span_id?: string
   start?: number
   end?: number
+  asc?: boolean
 }
 
 export interface LogListResponse {
@@ -534,6 +535,7 @@ export async function listLogs(query: LogQuery): Promise<LogListResponse> {
     span_id: query.span_id,
     start: query.start,
     end: query.end,
+    asc: query.asc ? 'true' : undefined,
   })
 }
 

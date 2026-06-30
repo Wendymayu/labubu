@@ -55,6 +55,7 @@ export default {
   traceList: {
     searchPlaceholder: '搜索链路...',
     allStatus: '所有状态',
+    filter: '过滤',
     name: '名称',
     service: '服务',
     duration: '耗时',
@@ -74,6 +75,8 @@ export default {
   },
   sessionList: {
     searchPlaceholder: '搜索会话...',
+    filter: '过滤',
+    filterSessionId: 'session_id...',
     sessionId: '会话ID',
     turns: '轮次数',
     totalTokens: '总Token数',

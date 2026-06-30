@@ -1,19 +1,11 @@
 <template>
   <div class="session-list">
-    <TimeRangePicker :key="resetKey" @change="onTimeChange" />
     <div class="filters">
-      <input
-        v-model="filters.q"
-        type="text"
-        :placeholder="t('sessionList.searchPlaceholder')"
-        class="search-input"
-        @keyup.enter="search"
-      />
-      <select v-model="filters.service" class="filter-select">
+      <TimeRangePicker :key="resetKey" @change="onTimeChange" />
+      <select v-model="filters.service" class="filter-select" @change="onServiceChange">
         <option value="">{{ t('common.allServices') }}</option>
         <option v-for="svc in services" :key="svc" :value="svc">{{ svc }}</option>
       </select>
-      <button @click="search" class="btn">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
 
@@ -23,7 +15,15 @@
       <table class="trace-table" v-if="sessions.length > 0">
         <thead>
           <tr>
-            <th>{{ t('sessionList.sessionId') }}</th>
+            <th class="has-filter">
+              <div class="th-head">
+                <span>{{ t('sessionList.sessionId') }}</span>
+                <button class="filter-btn" :class="{ active: !!filters.q }" :title="t('sessionList.filter')" @click.stop="toggleFilter()">▼</button>
+              </div>
+              <div v-if="filterOpen" class="filter-popover" @click.stop>
+                <input class="header-filter" v-model="filters.q" :placeholder="t('sessionList.filterSessionId')" @keyup.enter="applySessionFilter" />
+              </div>
+            </th>
             <th>{{ t('sessionList.turns') }}</th>
             <th>{{ t('sessionList.totalTokens') }}</th>
             <th>Cost</th>
@@ -94,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listSessions, getServices, type SessionListItem, type Pagination, type TimeRangeSelection } from '../api/client'
@@ -116,6 +116,25 @@ const filters = ref({
   q: '',
   service: '',
 })
+
+const filterOpen = ref(false)
+
+function toggleFilter() {
+  filterOpen.value = !filterOpen.value
+}
+
+function closeFilter() {
+  filterOpen.value = false
+}
+
+function applySessionFilter() {
+  search()
+  filterOpen.value = false
+}
+
+function onServiceChange() {
+  search()
+}
 
 const timeRange = ref<TimeRangeSelection>({ period: 'today' })
 const resetKey = ref(0)
@@ -163,6 +182,7 @@ function search() {
 
 function reset() {
   filters.value = { q: '', service: '' }
+  filterOpen.value = false
   resetKey.value++ // remount picker → re-emits default 'today' → fetchSessions(1)
 }
 
@@ -207,16 +227,29 @@ function errorRateClass(rate: number): string {
 }
 
 onMounted(() => {
+  document.addEventListener('click', closeFilter)
   // fetchSessions is triggered by the picker's mount emit (default 'today').
   fetchServices()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeFilter)
 })
 </script>
 
 <style scoped>
 .session-list { max-width: 1400px; }
-.filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.search-input { flex: 1; min-width: 200px; padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
+.filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+.filters :deep(.period-bar) { margin-bottom: 0; }
 .filter-select { padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
+.has-filter { position: relative; }
+.th-head { display: flex; align-items: center; gap: 4px; }
+.filter-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 10px; padding: 0; line-height: 1; }
+.filter-btn:hover { color: var(--text-primary); }
+.filter-btn.active { color: var(--accent-blue); }
+.filter-popover { position: absolute; top: 100%; left: 0; z-index: 30; min-width: 220px; margin-top: 4px; padding: 6px; background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); text-transform: none; }
+.header-filter { width: 100%; box-sizing: border-box; padding: 4px 6px; background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 4px; color: var(--text-primary); font-size: 12px; }
+.header-filter:focus { border-color: var(--accent-blue); outline: none; }
 .btn { padding: 8px 16px; background: var(--bg-surface-hover); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-primary); cursor: pointer; font-size: 14px; }
 .btn:hover { background: var(--border-strong); }
 .btn:disabled { opacity: 0.5; cursor: default; }

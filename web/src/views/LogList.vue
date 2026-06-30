@@ -1,9 +1,8 @@
 <template>
   <div class="log-list">
-    <h2 class="page-title">{{ t('nav.logs') }}</h2>
-
     <!-- Toolbar -->
     <div class="log-toolbar">
+      <TimeRangePicker :key="resetKey" @change="onTimeChange" />
       <input
         v-model="searchQuery"
         type="text"
@@ -14,8 +13,6 @@
       <button @click="search" class="btn">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
     </div>
-
-    <TimeRangePicker :key="resetKey" @change="onTimeChange" />
 
     <!-- Table -->
     <div class="log-table-wrap">
@@ -227,13 +224,15 @@ onUnmounted(() => {
 
 <style scoped>
 .log-list { max-width: 1600px; }
-.page-title { font-size: 20px; margin-bottom: 16px; color: var(--text-primary); }
 
 .log-toolbar {
   display: flex;
   gap: 12px;
   margin-bottom: 16px;
+  align-items: center;
 }
+
+.log-toolbar :deep(.period-bar) { margin-bottom: 0; }
 .search-input {
   flex: 1;
   padding: 8px 12px;
@@ -265,11 +264,6 @@ onUnmounted(() => {
 }
 .btn:hover { background: var(--border-strong); }
 
-.log-table-wrap {
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  overflow: hidden;
-}
 .log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .log-table th {
   text-align: left;
@@ -277,7 +271,7 @@ onUnmounted(() => {
   font-size: 11px;
   color: var(--text-secondary);
   text-transform: uppercase;
-  background: var(--bg-surface);
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-default);
 }
 .has-filter { position: relative; }

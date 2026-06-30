@@ -1,7 +1,7 @@
 <template>
   <div class="trace-list">
-    <TimeRangePicker :key="resetKey" @change="onTimeChange" />
     <div class="filters">
+      <TimeRangePicker :key="resetKey" @change="onTimeChange" />
       <input
         v-model="filters.q"
         type="text"
@@ -9,15 +9,6 @@
         class="search-input"
         @keyup.enter="search"
       />
-      <select v-model="filters.service" class="filter-select">
-        <option value="">{{ t('common.allServices') }}</option>
-        <option v-for="svc in services" :key="svc" :value="svc">{{ svc }}</option>
-      </select>
-      <select v-model="filters.status" class="filter-select">
-        <option value="">{{ t('traceList.allStatus') }}</option>
-        <option value="OK">OK</option>
-        <option value="ERROR">ERROR</option>
-      </select>
       <button @click="search" class="btn">{{ t('common.search') }}</button>
       <button @click="reset" class="btn">{{ t('common.reset') }}</button>
       <button v-if="selectedIds.size > 0" @click="downloadSelected" :disabled="exportLoading" class="btn">
@@ -42,10 +33,33 @@
               <input type="checkbox" :checked="selectedIds.size === traces.length && traces.length > 0" @change="toggleSelectAll" />
             </th>
             <th>{{ t('traceList.name') }}</th>
-            <th>{{ t('traceList.service') }}</th>
+            <th class="has-filter">
+              <div class="th-head">
+                <span>{{ t('traceList.service') }}</span>
+                <button class="filter-btn" :class="{ active: !!filters.service }" :title="t('traceList.filter')" @click.stop="toggleFilter('service')">▼</button>
+              </div>
+              <div v-if="openFilter === 'service'" class="filter-popover" @click.stop>
+                <ul class="filter-list">
+                  <li :class="{ active: filters.service === '' }" @click="selectService('')">{{ t('common.allServices') }}</li>
+                  <li v-for="svc in services" :key="svc" :class="{ active: filters.service === svc }" @click="selectService(svc)">{{ svc }}</li>
+                </ul>
+              </div>
+            </th>
             <th>{{ t('traceList.duration') }}</th>
             <th>{{ t('traceList.spans') }}</th>
-            <th>{{ t('traceList.status') }}</th>
+            <th class="has-filter">
+              <div class="th-head">
+                <span>{{ t('traceList.status') }}</span>
+                <button class="filter-btn" :class="{ active: !!filters.status }" :title="t('traceList.filter')" @click.stop="toggleFilter('status')">▼</button>
+              </div>
+              <div v-if="openFilter === 'status'" class="filter-popover" @click.stop>
+                <ul class="filter-list">
+                  <li :class="{ active: filters.status === '' }" @click="selectStatus('')">{{ t('traceList.allStatus') }}</li>
+                  <li :class="{ active: filters.status === 'OK' }" @click="selectStatus('OK')">OK</li>
+                  <li :class="{ active: filters.status === 'ERROR' }" @click="selectStatus('ERROR')">ERROR</li>
+                </ul>
+              </div>
+            </th>
             <th>{{ t('traceList.tokens') }}</th>
             <th>Cost</th>
             <th>{{ t('traceList.time') }}</th>
@@ -112,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { listTraces, getServices, exportTraces, importTraces, type TraceListItem, type Pagination, type ImportResult, type TimeRangeSelection } from '../api/client'
@@ -230,6 +244,28 @@ const filters = ref({
   status: '',
 })
 
+const openFilter = ref<'service' | 'status' | ''>('')
+
+function toggleFilter(col: 'service' | 'status') {
+  openFilter.value = openFilter.value === col ? '' : col
+}
+
+function closeFilter() {
+  openFilter.value = ''
+}
+
+function selectService(s: string) {
+  filters.value.service = s
+  openFilter.value = ''
+  fetchTraces(1)
+}
+
+function selectStatus(s: string) {
+  filters.value.status = s
+  openFilter.value = ''
+  fetchTraces(1)
+}
+
 const totalPages = computed(() => {
   return Math.max(1, Math.ceil(pagination.value.total / pagination.value.page_size))
 })
@@ -269,6 +305,7 @@ function search() {
 
 function reset() {
   filters.value = { q: '', service: '', status: '' }
+  openFilter.value = ''
   // Bumping :key remounts the picker → it re-emits the default 'today' range
   // → onTimeChange → fetchTraces(1). Clears any custom datetime too.
   resetKey.value++
@@ -321,16 +358,31 @@ watch(() => pagination.value.page, () => {
 })
 
 onMounted(() => {
+  document.addEventListener('click', closeFilter)
   // fetchTraces is triggered by the picker's mount emit (default 'today').
   fetchServices()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeFilter)
 })
 </script>
 
 <style scoped>
 .trace-list { max-width: 1400px; }
-.filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+.filters :deep(.period-bar) { margin-bottom: 0; }
 .search-input { flex: 1; min-width: 200px; padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
-.filter-select { padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-size: 14px; }
+.has-filter { position: relative; }
+.th-head { display: flex; align-items: center; gap: 4px; }
+.filter-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 10px; padding: 0; line-height: 1; }
+.filter-btn:hover { color: var(--text-primary); }
+.filter-btn.active { color: var(--accent-blue); }
+.filter-popover { position: absolute; top: 100%; left: 0; z-index: 30; min-width: 220px; margin-top: 4px; padding: 6px; background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); text-transform: none; }
+.filter-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
+.filter-list li { padding: 4px 8px; cursor: pointer; border-radius: 4px; font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filter-list li:hover { background: var(--bg-surface-hover); }
+.filter-list li.active { color: var(--accent-blue); font-weight: 600; }
 .btn { padding: 8px 16px; background: var(--bg-surface-hover); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-primary); cursor: pointer; font-size: 14px; }
 .btn:hover { background: var(--border-strong); }
 .btn:disabled { opacity: 0.5; cursor: default; }

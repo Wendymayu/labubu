@@ -344,6 +344,11 @@ watch(selectedSpan, () => {
   contentSearch.value = ''
 })
 
+// Lock background scroll while any modal (insight overlay or span drawer) is
+// open so the waterfall behind it doesn't move when the user scrolls the modal.
+const isModalOpen = computed(() => drawerOpen.value || !!activeInsight.value)
+watch(isModalOpen, (val) => setBodyScrollLock(val))
+
 async function fetchTrace() {
   loading.value = true
   error.value = ''
@@ -432,6 +437,17 @@ function closeDrawer() {
   drawerOpen.value = false
 }
 
+function setBodyScrollLock(locked: boolean) {
+  if (locked) {
+    const sw = window.innerWidth - document.documentElement.clientWidth
+    document.body.style.overflow = 'hidden'
+    if (sw > 0) document.body.style.paddingRight = `${sw}px`
+  } else {
+    document.body.style.overflow = ''
+    document.body.style.paddingRight = ''
+  }
+}
+
 async function fetchLogCounts() {
   try {
     const result = await getLogCounts(traceIdHex)
@@ -449,6 +465,7 @@ async function fetchLogPage() {
       span_id: logSpanFilter.value || undefined,
       page: logPage.value,
       page_size: logPageSize,
+      asc: true,
     })
     pageLogs.value = result.logs || []
     logTotal.value = result.pagination?.total ?? 0
@@ -488,7 +505,9 @@ function clearLogFilter() {
 }
 
 function formatLogTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString()
+  const d = new Date(ts)
+  const pad = (n: number, l = 2) => String(n).padStart(l, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
 }
 
 function formatLogBody(body: string): string {
@@ -606,6 +625,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  setBodyScrollLock(false)
   window.removeEventListener('keydown', onKeydown)
 })
 </script>

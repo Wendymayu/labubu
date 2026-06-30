@@ -342,15 +342,19 @@ func buildLogCountSQL(q LogQuery) string {
 // buildLogListSQL builds a list query for logs with filters, ordering, and pagination.
 func buildLogListSQL(q LogQuery) string {
 	offset := (q.Page - 1) * q.PageSize
+	order := "DESC"
+	if q.Asc {
+		order = "ASC"
+	}
 	return fmt.Sprintf(
 		`SELECT
 			hex(trace_id) AS trace_id_hex,
 			hex(span_id) AS span_id_hex,
 			timestamp, severity, event_name, body, attributes
 		FROM logs%s
-		ORDER BY timestamp DESC
+		ORDER BY timestamp %s
 		LIMIT %d OFFSET %d`,
-		buildLogWhereClause(q), q.PageSize, offset,
+		buildLogWhereClause(q), order, q.PageSize, offset,
 	)
 }
 

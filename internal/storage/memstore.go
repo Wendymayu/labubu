@@ -211,8 +211,11 @@ func (m *memStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, er
 		filtered = append(filtered, l)
 	}
 
-	// Sort by timestamp descending.
+	// Sort by timestamp (descending by default; ascending when Asc is set).
 	sort.Slice(filtered, func(i, j int) bool {
+		if q.Asc {
+			return filtered[i].Timestamp < filtered[j].Timestamp
+		}
 		return filtered[i].Timestamp > filtered[j].Timestamp
 	})
 

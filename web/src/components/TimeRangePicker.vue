@@ -1,16 +1,13 @@
 <template>
   <div class="period-bar">
-    <button
-      v-if="showAll"
-      :class="['btn', 'btn-preset', { active: activePeriod === 'all' }]"
-      @click="setPeriod('all')"
-    >{{ t('timeRange.all') }}</button>
-    <button
-      v-for="p in periods"
-      :key="p"
-      :class="['btn', 'btn-preset', { active: activePeriod === p }]"
-      @click="setPeriod(p)"
-    >{{ t(`timeRange.${p}`) }}</button>
+    <select
+      class="period-select"
+      :value="activePeriod"
+      @change="onSelectChange"
+    >
+      <option v-if="showAll" value="all">{{ t('timeRange.all') }}</option>
+      <option v-for="p in periods" :key="p" :value="p">{{ t(`timeRange.${p}`) }}</option>
+    </select>
     <div v-if="activePeriod === 'custom'" class="custom-range">
       <input type="datetime-local" v-model="customStart" @change="onCustomChange" />
       <span>{{ t('timeRange.to') }}</span>
@@ -113,6 +110,10 @@ function onCustomChange() {
   emitSelection('custom')
 }
 
+function onSelectChange(e: Event) {
+  setPeriod((e.target as HTMLSelectElement).value)
+}
+
 onMounted(() => {
   // Emit the default 'today' selection so parents run their first fetch with
   // the correct time range. Vue mounts children before parents, so this fires
@@ -130,24 +131,18 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
-.btn-preset {
-  padding: 6px 16px;
+.period-select {
+  padding: 6px 10px;
   border: 1px solid var(--border-default);
   background: var(--bg-primary);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   border-radius: 4px;
   font-size: 13px;
 }
 
-.btn-preset:hover {
-  color: var(--text-primary);
-}
-
-.btn-preset.active {
-  background: var(--accent-blue);
-  color: #fff;
-  border-color: var(--accent-blue);
+html[data-theme="dark"] .period-select {
+  color-scheme: dark;
 }
 
 .custom-range {
