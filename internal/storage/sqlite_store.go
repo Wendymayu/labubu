@@ -1554,7 +1554,7 @@ func (s *sqliteStore) Purge(ctx context.Context, maxAge time.Duration, maxCount 
 		}
 	}
 
-	// Clean orphaned spans and logs
+	// Clean orphaned spans (logs are age-purged separately via PurgeLogs).
 	result, e := s.db.ExecContext(ctx,
 		`DELETE FROM spans WHERE trace_id_hex NOT IN (SELECT trace_id_hex FROM traces)`,
 	)
@@ -1564,14 +1564,25 @@ func (s *sqliteStore) Purge(ctx context.Context, maxAge time.Duration, maxCount 
 	affected, _ := result.RowsAffected()
 	deletedSpans += int(affected)
 
-	result, e = s.db.ExecContext(ctx,
-		`DELETE FROM logs WHERE trace_id_hex NOT IN (SELECT trace_id_hex FROM traces)`,
-	)
-	if e != nil {
-		return deletedTraces, deletedSpans, fmt.Errorf("purge orphan logs: %w", e)
-	}
-
 	return deletedTraces, deletedSpans, nil
+}
+
+// --- PurgeLogs ---
+
+func (s *sqliteStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoffMS := uint64(time.Now().UnixMilli()) - uint64(maxAge.Milliseconds())
+	result, err := s.db.ExecContext(ctx, `DELETE FROM logs WHERE timestamp < ?`, cutoffMS)
+	if err != nil {
+		return 0, fmt.Errorf("purge logs by age: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	return int(affected), nil
 }
 
 // --- Close ---

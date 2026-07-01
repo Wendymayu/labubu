@@ -375,6 +375,10 @@ type Store interface {
 	// Returns the number of deleted traces and spans.
 	Purge(ctx context.Context, maxAge time.Duration, maxCount int) (deletedTraces int, deletedSpans int, err error)
 
+	// PurgeLogs removes log records older than (now - maxAge) by their own
+	// timestamp. 0 = no age limit. Returns the number of deleted logs.
+	PurgeLogs(ctx context.Context, maxAge time.Duration) (deletedLogs int, err error)
+
 	// InsertLogs writes a batch of log records.
 	InsertLogs(ctx context.Context, logs []LogRecord) error
 

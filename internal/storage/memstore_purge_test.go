@@ -240,3 +240,48 @@ func TestPurgeWithZeroAge(t *testing.T) {
 		t.Errorf("traces remaining: want 2, got %d", len(ms.traces))
 	}
 }
+
+func TestPurgeLogsByAge(t *testing.T) {
+	store, err := NewChDBStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := store.(*memStore)
+
+	now := uint64(time.Now().UnixMilli())
+	oldLog := LogRecord{Timestamp: now - 2*3600*1000, Severity: "INFO", Body: "{}"} // 2h ago
+	newLog := LogRecord{Timestamp: now - 60*1000, Severity: "INFO", Body: "{}"}    // 1m ago
+	ms.logs = append(ms.logs, oldLog, newLog)
+
+	deleted, err := ms.PurgeLogs(context.Background(), 1*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted: want 1, got %d", deleted)
+	}
+	if len(ms.logs) != 1 {
+		t.Errorf("logs remaining: want 1, got %d", len(ms.logs))
+	}
+}
+
+func TestPurgeLogsZeroAgeNoOp(t *testing.T) {
+	store, err := NewChDBStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := store.(*memStore)
+
+	ms.logs = append(ms.logs, LogRecord{Timestamp: 1, Severity: "INFO", Body: "{}"})
+
+	deleted, err := ms.PurgeLogs(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted: want 0, got %d", deleted)
+	}
+	if len(ms.logs) != 1 {
+		t.Errorf("logs remaining: want 1, got %d", len(ms.logs))
+	}
+}

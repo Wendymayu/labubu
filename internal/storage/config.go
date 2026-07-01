@@ -11,6 +11,7 @@ import (
 // Config is the top-level Labubu configuration loaded from YAML.
 type Config struct {
 	Trace   TraceConfig   `yaml:"trace"`
+	Log     LogConfig     `yaml:"log"`
 	Metric  MetricConfig  `yaml:"metric"`
 	Pricing PricingConfig `yaml:"pricing"`
 }
@@ -25,6 +26,16 @@ type RetentionConfig struct {
 	MaxAge          time.Duration // traces older than this are deleted
 	MaxCount        int           // keep only the newest MaxCount traces; 0 = unlimited
 	CleanupInterval time.Duration // how often the cleanup goroutine runs
+}
+
+// LogConfig holds log-specific configuration.
+type LogConfig struct {
+	Retention LogRetentionConfig `yaml:"retention"`
+}
+
+// LogRetentionConfig controls how old log records are cleaned up.
+type LogRetentionConfig struct {
+	MaxAge time.Duration // logs older than this are deleted
 }
 
 // MetricConfig holds metric-specific configuration.
@@ -47,6 +58,11 @@ type yamlConfig struct {
 			CleanupInterval string `yaml:"cleanup_interval"`
 		} `yaml:"retention"`
 	} `yaml:"trace"`
+	Log struct {
+		Retention struct {
+			MaxAge string `yaml:"max_age"`
+		} `yaml:"retention"`
+	} `yaml:"log"`
 	Metric struct {
 		Retention struct {
 			MaxAge string `yaml:"max_age"`
@@ -67,14 +83,19 @@ func DefaultConfig() Config {
 	return Config{
 		Trace: TraceConfig{
 			Retention: RetentionConfig{
-				MaxAge:          24 * time.Hour,
+				MaxAge:          7 * 24 * time.Hour,
 				MaxCount:        10000,
 				CleanupInterval: 5 * time.Minute,
 			},
 		},
+		Log: LogConfig{
+			Retention: LogRetentionConfig{
+				MaxAge: 7 * 24 * time.Hour,
+			},
+		},
 		Metric: MetricConfig{
 			Retention: MetricRetentionConfig{
-				MaxAge: 24 * time.Hour,
+				MaxAge: 7 * 24 * time.Hour,
 			},
 		},
 		Pricing: PricingConfig{
@@ -115,6 +136,12 @@ func LoadConfig(path string) Config {
 	if raw.Trace.Retention.CleanupInterval != "" {
 		if d, err := time.ParseDuration(raw.Trace.Retention.CleanupInterval); err == nil {
 			cfg.Trace.Retention.CleanupInterval = d
+		}
+	}
+
+	if raw.Log.Retention.MaxAge != "" {
+		if d, err := time.ParseDuration(raw.Log.Retention.MaxAge); err == nil {
+			cfg.Log.Retention.MaxAge = d
 		}
 	}
 

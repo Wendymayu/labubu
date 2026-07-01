@@ -121,6 +121,7 @@ func runServe(args []string) {
 	}
 	fmt.Printf("  Trace retention:  max_age=%s, max_count=%d, cleanup=%s\n",
 		cfg.Trace.Retention.MaxAge, cfg.Trace.Retention.MaxCount, cfg.Trace.Retention.CleanupInterval)
+	fmt.Printf("  Log retention:    max_age=%s\n", cfg.Log.Retention.MaxAge)
 	fmt.Printf("  Metric retention: max_age=%s\n", cfg.Metric.Retention.MaxAge)
 	fmt.Println()
 
@@ -134,7 +135,7 @@ func runServe(args []string) {
 	// Start retention cleanup goroutine.
 	retentionCtx, retentionCancel := context.WithCancel(context.Background())
 	defer retentionCancel()
-	go runRetentionCleanup(retentionCtx, store, cfg.Trace.Retention)
+	go runRetentionCleanup(retentionCtx, store, cfg.Trace.Retention, cfg.Log.Retention.MaxAge)
 
 	// Initialize metrics store (if enabled).
 	var metricStore metrics.Store
@@ -241,7 +242,7 @@ func runServe(args []string) {
 	log.Println("Labubu stopped.")
 }
 
-func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.RetentionConfig) {
+func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.RetentionConfig, logMaxAge time.Duration) {
 	ticker := time.NewTicker(ret.CleanupInterval)
 	defer ticker.Stop()
 
@@ -253,6 +254,12 @@ func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.R
 				log.Printf("Trace cleanup error: %v", err)
 			} else if deleted > 0 {
 				log.Printf("Trace cleanup: removed %d traces, %d spans", deleted, spans)
+			}
+			logsDeleted, err := store.PurgeLogs(ctx, logMaxAge)
+			if err != nil {
+				log.Printf("Log cleanup error: %v", err)
+			} else if logsDeleted > 0 {
+				log.Printf("Log cleanup: removed %d logs", logsDeleted)
 			}
 		case <-ctx.Done():
 			return

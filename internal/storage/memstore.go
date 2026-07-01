@@ -761,6 +761,7 @@ func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int
 	}
 
 	// Delete spans belonging to deleted traces.
+	// (Logs are age-purged separately via PurgeLogs.)
 	newSpans := make([]Span, 0, len(m.spans))
 	for _, s := range m.spans {
 		if keepTraces[s.TraceID] {
@@ -771,16 +772,29 @@ func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int
 	}
 	m.spans = newSpans
 
-	// Delete logs belonging to deleted traces.
+	return deletedTraces, deletedSpans, nil
+}
+
+func (m *memStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	_ = ctx
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cutoff := uint64(time.Now().UnixMilli()) - uint64(maxAge.Milliseconds())
+	deleted := 0
 	newLogs := make([]LogRecord, 0, len(m.logs))
 	for _, l := range m.logs {
-		if keepTraces[l.TraceID] {
+		if l.Timestamp < cutoff {
+			deleted++
+		} else {
 			newLogs = append(newLogs, l)
 		}
 	}
 	m.logs = newLogs
-
-	return deletedTraces, deletedSpans, nil
+	return deleted, nil
 }
 
 func (m *memStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {

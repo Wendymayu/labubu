@@ -110,7 +110,6 @@ Open http://localhost:8080 to explore traces, sessions, and metrics.
 | `--flush-interval` | `200ms` | Pipeline flush interval |
 | `--metrics-enabled` | `true` | Enable/disable metrics ingestion |
 | `--metrics-data-dir` | `""` | tstorage data directory (empty = memory only) |
-| `--metrics-retention` | `2h` | tstorage retention duration |
 | `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 
 ### YAML config (`labubu.yaml`)
@@ -120,9 +119,15 @@ Place a `labubu.yaml` in the working directory (or use `--config`):
 ```yaml
 trace:
   retention:
-    max_age: 24h          # delete traces older than this (0 = unlimited)
+    max_age: 7d           # delete traces older than this (0 = unlimited)
     max_count: 10000      # keep only the newest N traces (0 = unlimited)
     cleanup_interval: 5m  # how often the cleanup goroutine runs
+log:
+  retention:
+    max_age: 7d           # delete logs older than this by their own timestamp (0 = unlimited)
+metric:
+  retention:
+    max_age: 7d           # drop metrics older than this (tstorage TTL)
 ```
 
 No file? Built-in defaults are used silently — everything still works.

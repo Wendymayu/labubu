@@ -734,11 +734,7 @@ func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount in
 		}
 	}
 
-	// Phase 3: delete orphaned log records.
-	if err := s.execSQL("ALTER TABLE logs DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces)"); err != nil {
-		// Non-fatal: log cleanup failure shouldn't block trace purge.
-		// The logs table may not exist on first run before any logs are ingested.
-	}
+	// Phase 3: orphaned log records are age-purged separately via PurgeLogs.
 
 	// Estimate deletions (MergeTree mutations are async, exact counts unavailable).
 	traceCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
@@ -756,6 +752,20 @@ func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount in
 	}
 
 	return deletedTraces, deletedSpans, nil
+}
+
+// PurgeLogs removes log records older than (now - maxAge) by their own
+// timestamp. Non-fatal: the logs table may not exist on first run.
+func (s *chDBStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	_ = ctx
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	cutoffMS := uint64(time.Now().UnixMilli()) - uint64(maxAge.Milliseconds())
+	if err := s.execSQL(fmt.Sprintf("ALTER TABLE logs DELETE WHERE timestamp < %d", cutoffMS)); err != nil {
+		return 0, nil // non-fatal: logs table may not exist yet
+	}
+	return 0, nil // MergeTree mutations are async; exact count unavailable
 }
 
 // JSON parsing helpers

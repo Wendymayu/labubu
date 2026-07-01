@@ -59,6 +59,10 @@ func (m *handlerMockStore) Purge(ctx context.Context, maxAge time.Duration, maxC
 	return 0, 0, nil
 }
 
+func (m *handlerMockStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	return 0, nil
+}
+
 func (m *handlerMockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
 
 func (m *handlerMockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.LogListResult, error) {
