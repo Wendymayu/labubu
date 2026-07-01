@@ -9,7 +9,6 @@
 
     <template v-else-if="trace">
       <div class="trace-summary">
-        <h2>{{ rootSpanName }}</h2>
         <div class="summary-grid">
           <div class="summary-item">
             <span class="summary-label">Trace ID</span>
@@ -41,17 +40,17 @@
           <div class="download-group">
             <button class="btn-download" @click="downloadTraceOTLP">{{ t('traceList.download') }}</button>
           </div>
-        </div>
-        <div class="summary-actions">
-          <button :class="['btn-insight', { active: activeInsight === 'logs' }]" @click="toggleInsight('logs')">
-            📋 {{ t('logList.logCount', { count: totalLogCount }) }}
-          </button>
-          <button :class="['btn-insight', { active: activeInsight === 'diagnosis' }]" @click="toggleInsight('diagnosis')">
-            🔍 {{ t('diagnosis.tab') }}
-          </button>
-          <button :class="['btn-insight', { active: activeInsight === 'agent' }]" @click="toggleInsight('agent')">
-            🤖 {{ t('agentStats.agentBehavior') }}
-          </button>
+          <div class="summary-actions">
+            <button :class="['btn-insight', { active: activeInsight === 'logs' }]" @click="toggleInsight('logs')">
+              {{ t('logList.logCount', { count: totalLogCount }) }}
+            </button>
+            <button :class="['btn-insight', { active: activeInsight === 'diagnosis' }]" @click="toggleInsight('diagnosis')">
+              {{ t('diagnosis.tab') }}
+            </button>
+            <button :class="['btn-insight', { active: activeInsight === 'agent' }]" @click="toggleInsight('agent')">
+              {{ t('agentStats.agentBehavior') }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -302,14 +301,6 @@ const filteredSpanName = computed(() => {
   if (!logSpanFilter.value || !trace.value) return logSpanFilter.value
   const span = trace.value.spans.find(s => s.span_id === logSpanFilter.value)
   return span?.name || logSpanFilter.value
-})
-
-const rootSpanName = computed(() => {
-  if (!trace.value) return 'Trace Detail'
-  const root = trace.value.spans.find(s => s.parent_span_id === '')
-  // Incomplete traces may have no root span yet; fall back to the earliest
-  // span so the header still shows something meaningful.
-  return root?.name || trace.value.spans[0]?.name || 'Trace Detail'
 })
 
 const spanJSON = computed(() => {
@@ -670,11 +661,11 @@ onUnmounted(() => {
   color: var(--accent-blue);
 }
 
-/* === Insight actions bar below summary === */
+/* === Insight actions bar inline with download button === */
 .summary-actions {
   display: flex;
   gap: 6px;
-  margin-top: 10px;
+  align-self: center;
 }
 .btn-insight {
   padding: 6px 14px;
