@@ -96,4 +96,5 @@ Full directory tree: `docs/project-structure.md`
 | `docs/api.md` | Complete API endpoint reference |
 | `docs/roadmap.md` | Feature plan and completion status |
 | `docs/deployment.md` | Server deployment + systemd setup |
+| `docs/release.md` | PyPI/TestPyPI package publishing via tag-triggered CI |
 | `docs/integrations/` | Integration guides (e.g., Claude Code metrics) |
