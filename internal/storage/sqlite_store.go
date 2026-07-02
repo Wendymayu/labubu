@@ -1686,6 +1686,22 @@ func buildSqliteTraceWhereClause(q TraceQuery) (string, []interface{}) {
 		clauses = append(clauses, `duration_ms <= ?`)
 		args = append(args, q.MaxDuration)
 	}
+	if q.MinSpanCount > 0 {
+		clauses = append(clauses, `span_count >= ?`)
+		args = append(args, q.MinSpanCount)
+	}
+	if q.MaxSpanCount > 0 {
+		clauses = append(clauses, `span_count <= ?`)
+		args = append(args, q.MaxSpanCount)
+	}
+	if q.MinCost > 0 {
+		clauses = append(clauses, `cost >= ?`)
+		args = append(args, q.MinCost)
+	}
+	if q.MaxCost > 0 {
+		clauses = append(clauses, `cost <= ?`)
+		args = append(args, q.MaxCost)
+	}
 
 	where := ""
 	if len(clauses) > 0 {
