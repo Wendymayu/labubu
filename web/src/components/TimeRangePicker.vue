@@ -64,22 +64,43 @@ function presetRange(period: string): { start?: number; end?: number } {
   }
 }
 
-function emitSelection(period: string) {
-  rangeError.value = false
+// Build the selection for a period without emitting. Returns null for an
+// incomplete/invalid custom range.
+function buildSelection(period: string): TimeRangeSelection | null {
   if (period === 'custom') {
-    if (!customStart.value || !customEnd.value) return // not fully entered yet
+    if (!customStart.value || !customEnd.value) return null
     const start = new Date(customStart.value).getTime()
     const end = new Date(customEnd.value).getTime()
-    if (start > end) {
-      rangeError.value = true
-      return // do not emit an invalid range
-    }
-    emit('change', { period, start, end })
-    return
+    if (start > end) return null
+    return { period, start, end }
   }
+  if (period === 'all') return { period }
   const { start, end } = presetRange(period)
-  emit('change', { period, start, end })
+  return { period, start, end }
 }
+
+function emitSelection(period: string) {
+  rangeError.value = false
+  const sel = buildSelection(period)
+  if (sel === null) {
+    if (period === 'custom') rangeError.value = true
+    return // incomplete/invalid custom range — do not emit
+  }
+  emit('change', sel)
+}
+
+// Refresh the time range against "now" for the currently-active preset.
+// Returns a fresh selection for relative presets (today/7d/30d), or null
+// for 'all'/'custom' (their bounds don't drift with time, so the caller
+// should keep its last-known selection). Used by list views' search button
+// so a relative window moves forward instead of being frozen at selection.
+function refresh(): TimeRangeSelection | null {
+  const p = activePeriod.value
+  if (p === 'all' || p === 'custom') return null
+  return buildSelection(p)
+}
+
+defineExpose({ refresh })
 
 function setPeriod(key: string) {
   if (key === 'custom') {

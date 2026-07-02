@@ -2,7 +2,7 @@
   <div class="log-list">
     <!-- Toolbar -->
     <div class="log-toolbar">
-      <TimeRangePicker :key="resetKey" @change="onTimeChange" />
+      <TimeRangePicker ref="picker" :key="resetKey" @change="onTimeChange" />
       <input
         v-model="searchQuery"
         type="text"
@@ -117,6 +117,7 @@ const SEVERITY_OPTIONS = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const
 const openFilter = ref<'severity' | 'trace' | ''>('')
 
 const timeRange = ref<TimeRangeSelection>({ period: 'today' })
+const picker = ref<InstanceType<typeof TimeRangePicker> | null>(null)
 const resetKey = ref(0)
 
 function onTimeChange(sel: TimeRangeSelection) {
@@ -128,6 +129,10 @@ function onTimeChange(sel: TimeRangeSelection) {
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
 function search() {
+  // Recompute relative presets (today/7d/30d) against now so the window
+  // moves forward instead of being frozen at selection time.
+  const fresh = picker.value?.refresh()
+  if (fresh) timeRange.value = fresh
   page.value = 1
   fetchLogs()
 }

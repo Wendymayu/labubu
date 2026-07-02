@@ -1,7 +1,7 @@
 <template>
   <div class="session-list">
     <div class="filters">
-      <TimeRangePicker :key="resetKey" @change="onTimeChange" />
+      <TimeRangePicker ref="picker" :key="resetKey" @change="onTimeChange" />
       <select v-model="filters.service" class="filter-select" @change="onServiceChange">
         <option value="">{{ t('common.allServices') }}</option>
         <option v-for="svc in services" :key="svc" :value="svc">{{ svc }}</option>
@@ -137,6 +137,7 @@ function onServiceChange() {
 }
 
 const timeRange = ref<TimeRangeSelection>({ period: 'today' })
+const picker = ref<InstanceType<typeof TimeRangePicker> | null>(null)
 const resetKey = ref(0)
 
 function onTimeChange(sel: TimeRangeSelection) {
@@ -177,6 +178,10 @@ async function fetchServices() {
 }
 
 function search() {
+  // Recompute relative presets (today/7d/30d) against now so the window
+  // moves forward instead of being frozen at selection time.
+  const fresh = picker.value?.refresh()
+  if (fresh) timeRange.value = fresh
   fetchSessions(1)
 }
 
