@@ -21,12 +21,12 @@ jobs:
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
-            platform_tag: linux_x86_64
+            platform_tag: manylinux_2_17_x86_64
             binary_name: labubu
           - os: ubuntu-latest
             goos: linux
             goarch: arm64
-            platform_tag: linux_aarch64
+            platform_tag: manylinux_2_17_aarch64
             binary_name: labubu
           - os: windows-latest
             goos: windows
