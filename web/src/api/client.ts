@@ -87,12 +87,12 @@ export interface TraceQuery {
   q?: string
   start?: number
   end?: number
-  min_duration?: number
-  max_duration?: number
-  min_spans?: number
-  max_spans?: number
-  min_cost?: number
-  max_cost?: number
+  min_duration?: number | ''
+  max_duration?: number | ''
+  min_spans?: number | ''
+  max_spans?: number | ''
+  min_cost?: number | ''
+  max_cost?: number | ''
 }
 
 async function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {

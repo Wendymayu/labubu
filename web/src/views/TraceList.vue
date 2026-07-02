@@ -45,8 +45,38 @@
                 </ul>
               </div>
             </th>
-            <th>{{ t('traceList.duration') }}</th>
-            <th>{{ t('traceList.spans') }}</th>
+            <th class="has-filter">
+              <div class="th-head">
+                <span>{{ t('traceList.duration') }}</span>
+                <button class="filter-btn" :class="{ active: hasMinMax('duration') }" :title="t('traceList.filter')" @click.stop="openMinMax('duration')">▼</button>
+              </div>
+              <div v-if="openFilter === 'duration'" class="filter-popover" @click.stop>
+                <label>{{ t('traceList.minDuration') }}</label>
+                <input type="number" v-model="filterTemp.min_duration" @keyup.enter="applyMinMax('duration')" />
+                <label>{{ t('traceList.maxDuration') }}</label>
+                <input type="number" v-model="filterTemp.max_duration" @keyup.enter="applyMinMax('duration')" />
+                <div class="filter-actions">
+                  <button class="btn" @click="applyMinMax('duration')">{{ t('traceList.apply') }}</button>
+                  <button class="btn" @click="clearMinMax('duration')">{{ t('traceList.clear') }}</button>
+                </div>
+              </div>
+            </th>
+            <th class="has-filter">
+              <div class="th-head">
+                <span>{{ t('traceList.spans') }}</span>
+                <button class="filter-btn" :class="{ active: hasMinMax('spans') }" :title="t('traceList.filter')" @click.stop="openMinMax('spans')">▼</button>
+              </div>
+              <div v-if="openFilter === 'spans'" class="filter-popover" @click.stop>
+                <label>{{ t('traceList.minSpans') }}</label>
+                <input type="number" v-model="filterTemp.min_spans" @keyup.enter="applyMinMax('spans')" />
+                <label>{{ t('traceList.maxSpans') }}</label>
+                <input type="number" v-model="filterTemp.max_spans" @keyup.enter="applyMinMax('spans')" />
+                <div class="filter-actions">
+                  <button class="btn" @click="applyMinMax('spans')">{{ t('traceList.apply') }}</button>
+                  <button class="btn" @click="clearMinMax('spans')">{{ t('traceList.clear') }}</button>
+                </div>
+              </div>
+            </th>
             <th class="has-filter">
               <div class="th-head">
                 <span>{{ t('traceList.status') }}</span>
@@ -61,7 +91,22 @@
               </div>
             </th>
             <th>{{ t('traceList.tokens') }}</th>
-            <th>Cost</th>
+            <th class="has-filter">
+              <div class="th-head">
+                <span>{{ t('traceList.cost') }}</span>
+                <button class="filter-btn" :class="{ active: hasMinMax('cost') }" :title="t('traceList.filter')" @click.stop="openMinMax('cost')">▼</button>
+              </div>
+              <div v-if="openFilter === 'cost'" class="filter-popover" @click.stop>
+                <label>{{ t('traceList.minCost') }}</label>
+                <input type="number" step="0.01" v-model="filterTemp.min_cost" @keyup.enter="applyMinMax('cost')" />
+                <label>{{ t('traceList.maxCost') }}</label>
+                <input type="number" step="0.01" v-model="filterTemp.max_cost" @keyup.enter="applyMinMax('cost')" />
+                <div class="filter-actions">
+                  <button class="btn" @click="applyMinMax('cost')">{{ t('traceList.apply') }}</button>
+                  <button class="btn" @click="clearMinMax('cost')">{{ t('traceList.clear') }}</button>
+                </div>
+              </div>
+            </th>
             <th>{{ t('traceList.time') }}</th>
           </tr>
         </thead>
@@ -243,11 +288,17 @@ const filters = ref({
   q: '',
   service: '',
   status: '',
+  min_duration: '' as number | '',
+  max_duration: '' as number | '',
+  min_spans: '' as number | '',
+  max_spans: '' as number | '',
+  min_cost: '' as number | '',
+  max_cost: '' as number | '',
 })
 
-const openFilter = ref<'service' | 'status' | ''>('')
+const openFilter = ref<'service' | 'status' | 'duration' | 'spans' | 'cost' | ''>('')
 
-function toggleFilter(col: 'service' | 'status') {
+function toggleFilter(col: 'service' | 'status' | 'duration' | 'spans' | 'cost') {
   openFilter.value = openFilter.value === col ? '' : col
 }
 
@@ -265,6 +316,51 @@ function selectStatus(s: string) {
   filters.value.status = s
   openFilter.value = ''
   fetchTraces(1)
+}
+
+type MinMaxCol = 'duration' | 'spans' | 'cost'
+type MinMaxKey = 'min_duration' | 'max_duration' | 'min_spans' | 'max_spans' | 'min_cost' | 'max_cost'
+
+// Map each popover column to its (minKey, maxKey) on the filters object.
+const minMaxKeys: Record<MinMaxCol, { min: MinMaxKey; max: MinMaxKey }> = {
+  duration: { min: 'min_duration', max: 'max_duration' },
+  spans: { min: 'min_spans', max: 'max_spans' },
+  cost: { min: 'min_cost', max: 'max_cost' },
+}
+
+// temp holds the in-progress input values; on Apply we copy them into `filters`.
+const filterTemp = ref<Record<MinMaxKey, number | ''>>({
+  min_duration: '', max_duration: '', min_spans: '', max_spans: '', min_cost: '', max_cost: '',
+})
+
+function openMinMax(col: MinMaxCol) {
+  const { min, max } = minMaxKeys[col]
+  filterTemp.value[min] = filters.value[min]
+  filterTemp.value[max] = filters.value[max]
+  openFilter.value = col
+}
+
+function applyMinMax(col: MinMaxCol) {
+  const { min, max } = minMaxKeys[col]
+  filters.value[min] = filterTemp.value[min]
+  filters.value[max] = filterTemp.value[max]
+  openFilter.value = ''
+  fetchTraces(1)
+}
+
+function clearMinMax(col: MinMaxCol) {
+  const { min, max } = minMaxKeys[col]
+  filters.value[min] = ''
+  filters.value[max] = ''
+  filterTemp.value[min] = ''
+  filterTemp.value[max] = ''
+  openFilter.value = ''
+  fetchTraces(1)
+}
+
+function hasMinMax(col: MinMaxCol): boolean {
+  const { min, max } = minMaxKeys[col]
+  return filters.value[min] !== '' || filters.value[max] !== ''
 }
 
 const totalPages = computed(() => {
@@ -309,8 +405,18 @@ function search() {
 }
 
 function reset() {
-  filters.value = { q: '', service: '', status: '' }
+  filters.value = {
+    q: '', service: '', status: '',
+    min_duration: '', max_duration: '',
+    min_spans: '', max_spans: '',
+    min_cost: '', max_cost: '',
+  }
   openFilter.value = ''
+  filterTemp.value = {
+    min_duration: '', max_duration: '',
+    min_spans: '', max_spans: '',
+    min_cost: '', max_cost: '',
+  }
   // Bumping :key remounts the picker → it re-emits the default 'today' range
   // → onTimeChange → fetchTraces(1). Clears any custom datetime too.
   resetKey.value++
@@ -384,6 +490,28 @@ onUnmounted(() => {
 .filter-btn:hover { color: var(--text-primary); }
 .filter-btn.active { color: var(--accent-blue); }
 .filter-popover { position: absolute; top: 100%; left: 0; z-index: 30; min-width: 220px; margin-top: 4px; padding: 6px; background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); text-transform: none; }
+.filter-popover label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 6px 0 2px;
+}
+.filter-popover input[type="number"] {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: 4px;
+}
+.filter-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.filter-actions .btn {
+  flex: 1;
+}
 .filter-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
 .filter-list li { padding: 4px 8px; cursor: pointer; border-radius: 4px; font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .filter-list li:hover { background: var(--bg-surface-hover); }
