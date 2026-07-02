@@ -356,6 +356,18 @@ func (m *memStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResu
 		if q.MaxDuration > 0 && t.DurationMS > q.MaxDuration {
 			continue
 		}
+		if q.MinSpanCount > 0 && t.SpanCount < q.MinSpanCount {
+			continue
+		}
+		if q.MaxSpanCount > 0 && t.SpanCount > q.MaxSpanCount {
+			continue
+		}
+		if q.MinCost > 0 && (t.Cost == nil || *t.Cost < q.MinCost) {
+			continue
+		}
+		if q.MaxCost > 0 && (t.Cost == nil || *t.Cost > q.MaxCost) {
+			continue
+		}
 		filtered = append(filtered, t)
 	}
 
@@ -384,15 +396,17 @@ func (m *memStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResu
 	items := make([]TraceListItem, len(page))
 	for i, t := range page {
 		items[i] = TraceListItem{
-			TraceIDHex:  TraceIDToHex(t.TraceID),
-			RootSpanID:  SpanIDToHex(t.RootSpanID),
-			RootName:    t.RootName,
-			RootService: t.ResourceAttrs["service.name"],
-			StartTimeMS: t.StartTimeMS,
-			DurationMS:  t.DurationMS,
-			SpanCount:   t.SpanCount,
-			Status:      StatusCodeToString(t.StatusCode),
-			TotalTokens: t.TotalTokens,
+			TraceIDHex:   TraceIDToHex(t.TraceID),
+			RootSpanID:   SpanIDToHex(t.RootSpanID),
+			RootName:     t.RootName,
+			RootService:  t.ResourceAttrs["service.name"],
+			StartTimeMS:  t.StartTimeMS,
+			DurationMS:   t.DurationMS,
+			SpanCount:    t.SpanCount,
+			Status:       StatusCodeToString(t.StatusCode),
+			TotalTokens:  t.TotalTokens,
+			Cost:         t.Cost,
+			CostCurrency: t.CostCurrency,
 		}
 	}
 
