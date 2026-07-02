@@ -210,23 +210,21 @@ import (
 	"testing"
 )
 
-// insertTestTrace inserts a single-span trace with the given fields for filter tests.
-func insertTestTrace(t *testing.T, s Store, tid [16]byte, service string, dur uint64, spans uint16, cost *float64) {
+// insertFilterSpan inserts one span with a distinct SpanID into trace tid.
+// cost is driven by tokens (1 in + 1 out at price 1 = cost 2 per span).
+func insertFilterSpan(t *testing.T, s Store, tid [16]byte, spanIdx byte, dur uint64) {
 	t.Helper()
 	u := func(v uint32) *uint32 { return &v }
+	mdl := "m"
 	span := Span{
-		TraceID: tid, SpanID: [8]byte{tid[15]}, Name: "op", Kind: 2,
+		TraceID: tid, SpanID: [8]byte{spanIdx}, Name: "op", Kind: 2,
 		StartTimeMS: 1000, EndTimeMS: 1000 + dur, DurationMS: dur,
-		InputTokens: u(1), OutputTokens: u(1), TotalTokens: u(2),
+		InputTokens: u(1), OutputTokens: u(1), TotalTokens: u(2), GenAIRequestModel: &mdl,
 	}
-	res := ResourceInfo{Attributes: map[string]string{"service.name": service}}
+	res := ResourceInfo{Attributes: map[string]string{"service.name": "svc"}}
 	if err := s.InsertSpans(context.Background(), res, ScopeInfo{}, []Span{span}); err != nil {
 		t.Fatalf("InsertSpans: %v", err)
 	}
-	s.UpdateTraceCost(context.Background(), tid)
-	// Overwrite span_count directly via the trace row is not exposed; rely on
-	// re-inserting additional spans to raise the count when needed.
-	_ = spans
 }
 
 func TestSqliteListTracesFiltersBySpansAndCost(t *testing.T) {
@@ -239,18 +237,19 @@ func TestSqliteListTracesFiltersBySpansAndCost(t *testing.T) {
 	ctx := context.Background()
 	s.UpsertModelPricing(ctx, ModelPricing{ModelName: "m", InputPrice: 1, OutputPrice: 1, Currency: "USD"})
 
-	cost := func(v float64) *float64 { return &v }
+	tidA := [16]byte{15: 1}
+	tidB := [16]byte{15: 2}
 
-	// Trace A: 2 spans, cost 1.0
-	insertTestTrace(t, s, [16]byte{15: 1}, "svc", 100, 2, cost(1.0))
-	insertTestTrace(t, s, [16]byte{15: 1}, "svc", 100, 2, cost(1.0)) // second span → 2 spans
-	// Trace B: 5 spans, cost 5.0
-	insertTestTrace(t, s, [16]byte{15: 2}, "svc", 200, 5, cost(5.0))
-	for i := 0; i < 4; i++ {
-		insertTestTrace(t, s, [16]byte{15: 2}, "svc", 200, 5, cost(5.0))
+	// Trace A: 2 spans (cost ~4)
+	insertFilterSpan(t, s, tidA, 1, 100)
+	insertFilterSpan(t, s, tidA, 2, 100)
+	s.UpdateTraceCost(ctx, tidA)
+
+	// Trace B: 5 spans (cost ~10)
+	for i := byte(1); i <= 5; i++ {
+		insertFilterSpan(t, s, tidB, i, 200)
 	}
-	s.UpdateTraceCost(ctx, [16]byte{15: 1})
-	s.UpdateTraceCost(ctx, [16]byte{15: 2})
+	s.UpdateTraceCost(ctx, tidB)
 
 	mustLen := func(q TraceQuery, want int) {
 		t.Helper()
@@ -263,10 +262,10 @@ func TestSqliteListTracesFiltersBySpansAndCost(t *testing.T) {
 		}
 	}
 
-	mustLen(TraceQuery{Page: 1, PageSize: 100, MinSpanCount: 3}, 1)      // only B (5 spans)
-	mustLen(TraceQuery{Page: 1, PageSize: 100, MaxSpanCount: 3}, 1)      // only A (2 spans)
-	mustLen(TraceQuery{Page: 1, PageSize: 100, MinCost: 2.0}, 1)         // only B (cost 5)
-	mustLen(TraceQuery{Page: 1, PageSize: 100, MaxCost: 2.0}, 1)         // only A (cost 1)
+	mustLen(TraceQuery{Page: 1, PageSize: 100, MinSpanCount: 3}, 1) // only B (5 spans)
+	mustLen(TraceQuery{Page: 1, PageSize: 100, MaxSpanCount: 3}, 1) // only A (2 spans)
+	mustLen(TraceQuery{Page: 1, PageSize: 100, MinCost: 5.0}, 1)    // only B (cost ~10)
+	mustLen(TraceQuery{Page: 1, PageSize: 100, MaxCost: 5.0}, 1)    // only A (cost ~4)
 }
 
 func traceIDs(items []TraceListItem) []string {
@@ -642,58 +641,57 @@ function toggleFilter(col: 'service' | 'status' | 'duration' | 'spans' | 'cost')
 }
 ```
 
-- [ ] **Step 4: Add Apply/Clear handlers + a shared min/max popover component block**
+- [ ] **Step 4: Add Apply/Clear handlers**
 
-Add these helpers after `selectStatus` (around line 268):
+Add these helpers after `selectStatus` (around line 268). They use a typed `MinMaxCol` literal map so no `any` is needed:
 
 ```ts
-// Apply min/max filter values from the popover inputs, then refetch.
-// `temp` holds the in-progress input values; on Apply we copy them into `filters`.
-const filterTemp = ref<Record<string, number | ''>>({})
+type MinMaxCol = 'duration' | 'spans' | 'cost'
 
-function openMinMax(col: 'duration' | 'spans' | 'cost') {
-  // Seed temp from current filter values so editing is non-destructive.
-  const minKey = `min_${col === 'duration' ? 'duration' : col === 'spans' ? 'spans' : 'cost'}`
-  const maxKey = `max_${col === 'duration' ? 'duration' : col === 'spans' ? 'spans' : 'cost'}`
-  filterTemp.value = {
-    [minKey]: (filters.value as any)[minKey] ?? '',
-    [maxKey]: (filters.value as any)[maxKey] ?? '',
-  }
+// Map each popover column to its (minKey, maxKey) on the filters object.
+const minMaxKeys: Record<MinMaxCol, { min: keyof typeof filters.value; max: keyof typeof filters.value }> = {
+  duration: { min: 'min_duration', max: 'max_duration' },
+  spans: { min: 'min_spans', max: 'max_spans' },
+  cost: { min: 'min_cost', max: 'max_cost' },
+}
+
+// temp holds the in-progress input values; on Apply we copy them into `filters`.
+const filterTemp = ref<{ min_duration: number | ''; max_duration: number | ''; min_spans: number | ''; max_spans: number | ''; min_cost: number | ''; max_cost: number | '' }>({
+  min_duration: '', max_duration: '', min_spans: '', max_spans: '', min_cost: '', max_cost: '',
+})
+
+function openMinMax(col: MinMaxCol) {
+  const { min, max } = minMaxKeys[col]
+  filterTemp.value[min] = filters.value[min]
+  filterTemp.value[max] = filters.value[max]
   openFilter.value = col
 }
 
-function applyMinMax(col: 'duration' | 'spans' | 'cost') {
-  const minKey = col === 'duration' ? 'min_duration' : col === 'spans' ? 'min_spans' : 'min_cost'
-  const maxKey = col === 'duration' ? 'max_duration' : col === 'spans' ? 'max_spans' : 'max_cost'
-  ;(filters.value as any)[minKey] = filterTemp.value[minKey] ?? ''
-  ;(filters.value as any)[maxKey] = filterTemp.value[maxKey] ?? ''
+function applyMinMax(col: MinMaxCol) {
+  const { min, max } = minMaxKeys[col]
+  filters.value[min] = filterTemp.value[min]
+  filters.value[max] = filterTemp.value[max]
   openFilter.value = ''
   fetchTraces(1)
 }
 
-function clearMinMax(col: 'duration' | 'spans' | 'cost') {
-  const minKey = col === 'duration' ? 'min_duration' : col === 'spans' ? 'min_spans' : 'min_cost'
-  const maxKey = col === 'duration' ? 'max_duration' : col === 'spans' ? 'max_spans' : 'max_cost'
-  ;(filters.value as any)[minKey] = ''
-  ;(filters.value as any)[maxKey] = ''
-  filterTemp.value = {}
+function clearMinMax(col: MinMaxCol) {
+  const { min, max } = minMaxKeys[col]
+  filters.value[min] = ''
+  filters.value[max] = ''
+  filterTemp.value[min] = ''
+  filterTemp.value[max] = ''
   openFilter.value = ''
   fetchTraces(1)
 }
 
-function hasMinMax(col: 'duration' | 'spans' | 'cost'): boolean {
-  const minKey = col === 'duration' ? 'min_duration' : col === 'spans' ? 'min_spans' : 'min_cost'
-  const maxKey = col === 'duration' ? 'max_duration' : col === 'spans' ? 'max_spans' : 'max_cost'
-  return !!(filters.value as any)[minKey] || !!(filters.value as any)[maxKey]
+function hasMinMax(col: MinMaxCol): boolean {
+  const { min, max } = minMaxKeys[col]
+  return filters.value[min] !== '' || filters.value[max] !== ''
 }
 ```
 
-> Note on `any`: the CLAUDE.md rule says avoid `any`, but the `filters` object has mixed string/number|'' fields. Prefer a typed alternative: define `filters` as `ref<{
-  q: string; service: string; status: string;
-  min_duration: number | ''; max_duration: number | '';
-  min_spans: number | ''; max_spans: number | '';
-  min_cost: number | ''; max_cost: number | '';
-}>(...)`. Then replace every `(filters.value as any)[key]` with a typed switch on `col`. Implementer: use the typed form, not `any`.
+This relies on the `filters` ref being typed as shown in Step 3 (so `filters.value[min]` type-checks without `any`).
 
 - [ ] **Step 5: Replace the Duration, Spans, and Cost column headers with popovers**
 
@@ -832,4 +830,4 @@ git commit -m "feat(web): min/max filter popovers for duration, spans, cost"
 
 - **Spec coverage:** Span count (Tasks 1-6), duration (Task 1 parses; backend already filters in all 3 stores; Task 6 adds the UI), cost (Tasks 1-6). i18n (Task 6). Memstore Cost display fix (Task 3 Step 4). OpenAPI (Task 1 Step 5). All spec sections covered.
 - **Type consistency:** Field names are consistent across layers: Go `MinSpanCount`/`MaxSpanCount`/`MinCost`/`MaxCost`, query params `min_spans`/`max_spans`/`min_cost`/`max_cost`, TS `min_spans`/`max_spans`/`min_cost`/`max_cost`. Duration follows the existing `min_duration`/`max_duration` naming.
-- **Caveat:** Task 2's span-count test fixtures rely on re-inserting spans to raise `span_count`. If `InsertSpans` dedupes by span ID, use distinct `SpanID` values (the test already does `[8]byte{tid[15]}` for extras — ensure they are unique; the plan uses `[8]byte{byte(i+1)}`). The cost-filter assertions are independent of span count and must pass regardless.
+- **Caveat:** Task 2's test inserts spans with distinct `SpanID` values (`[8]byte{spanIdx}`) so each insert raises `span_count` rather than deduping. Cost per span is ~2 (1 in + 1 out at price 1), so trace A (2 spans) ≈ cost 4 and trace B (5 spans) ≈ cost 10; the `MinCost: 5.0` / `MaxCost: 5.0` thresholds split them cleanly.
