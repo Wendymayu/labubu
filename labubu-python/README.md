@@ -4,7 +4,16 @@ Local-first LLM observability platform.
 
 ## Installation
 
-### From GitHub Release (recommended)
+### From PyPI (recommended)
+
+```bash
+pip install labubu
+```
+
+PyPI hosts one wheel per platform (the wheel bundles the Go binary), so `pip`
+auto-selects the correct one.
+
+### From GitHub Release
 
 Install the wheel matching your platform directly from GitHub Releases:
 
@@ -26,12 +35,6 @@ pip install https://github.com/Wendymayu/labubu/releases/download/v0.1.0/labubu-
 ```
 
 Replace `v0.1.0` with the desired version. Available releases: [github.com/Wendymayu/labubu/releases](https://github.com/Wendymayu/labubu/releases)
-
-### From PyPI (when available)
-
-```bash
-pip install labubu
-```
 
 ### Standalone Binary
 

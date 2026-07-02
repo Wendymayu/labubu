@@ -6,14 +6,36 @@ build-backend = "setuptools.build_meta"
 name = "labubu"
 version = "0.1.0"
 description = "Local-first LLM observability platform"
-requires-python = ">=3.8"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [{name = "Wendymayu"}]
+keywords = ["llm", "observability", "tracing", "otlp", "mcp", "ai"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: System :: Monitoring",
+  "Topic :: Software Development :: Testing",
+  "Intended Audience :: Developers",
+]
+
+[project.urls]
+Homepage = "https://github.com/Wendymayu/labubu"
+Repository = "https://github.com/Wendymayu/labubu"
+Issues = "https://github.com/Wendymayu/labubu/issues"
 
 [project.scripts]
 labubu = "labubu.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["tests*"]
+exclude = ["tests*", "build*"]
 
 [tool.setuptools.package-data]
 labubu = ["bin/*"]

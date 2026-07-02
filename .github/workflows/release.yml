@@ -76,6 +76,13 @@ jobs:
             echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
           fi
 
+      - name: Set Python package version
+        shell: bash
+        run: |
+          sed -i 's/^version = .*/version = "${{ env.VERSION }}"/' labubu-python/pyproject.toml
+          sed -i 's/^__version__ = .*/__version__ = "${{ env.VERSION }}"/' labubu-python/labubu/__init__.py
+          echo "pyproject version:" && grep '^version' labubu-python/pyproject.toml
+
       - name: Build Go binary
         shell: bash
         env:
@@ -182,10 +189,29 @@ jobs:
             dist/*.whl
             dist/labubu-*
 
+  publish-test:
+    needs: build
+    runs-on: ubuntu-latest
+    # Publish pre-release (rc) tags to TestPyPI for install verification.
+    if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, 'rc') && vars.TEST_PYPI_ENABLED == 'true'
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+
   publish:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_ENABLED == 'true'
+    # Publish final (non-rc) tags to PyPI. rc tags go to TestPyPI only.
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'rc') && vars.PYPI_ENABLED == 'true'
 
     steps:
       - uses: actions/download-artifact@v4
