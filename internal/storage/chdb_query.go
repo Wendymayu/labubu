@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -170,6 +171,26 @@ func buildTraceWhereClause(q TraceQuery) string {
 	if q.MaxDuration > 0 {
 		clauses = append(clauses, fmt.Sprintf(
 			"duration_ms <= %d", q.MaxDuration,
+		))
+	}
+	if q.MinSpanCount > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"span_count >= %d", q.MinSpanCount,
+		))
+	}
+	if q.MaxSpanCount > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"span_count <= %d", q.MaxSpanCount,
+		))
+	}
+	if q.MinCost > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"cost >= %s", strconv.FormatFloat(q.MinCost, 'f', -1, 64),
+		))
+	}
+	if q.MaxCost > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"cost <= %s", strconv.FormatFloat(q.MaxCost, 'f', -1, 64),
 		))
 	}
 
