@@ -499,7 +499,7 @@ onUnmounted(() => {
 .filter-popover input[type="number"] {
   width: 100%;
   padding: 4px 6px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-default);
   background: var(--bg-primary);
   color: var(--text-primary);
   border-radius: 4px;
