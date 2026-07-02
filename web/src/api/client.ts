@@ -89,6 +89,10 @@ export interface TraceQuery {
   end?: number
   min_duration?: number
   max_duration?: number
+  min_spans?: number
+  max_spans?: number
+  min_cost?: number
+  max_cost?: number
 }
 
 async function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
@@ -118,6 +122,10 @@ export async function listTraces(query: TraceQuery): Promise<TraceListResponse> 
     end: query.end,
     min_duration: query.min_duration,
     max_duration: query.max_duration,
+    min_spans: query.min_spans,
+    max_spans: query.max_spans,
+    min_cost: query.min_cost,
+    max_cost: query.max_cost,
   })
 }
 
