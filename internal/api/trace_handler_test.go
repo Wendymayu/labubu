@@ -17,6 +17,7 @@ import (
 // mockStore is a minimal Store implementation for handler testing.
 type handlerMockStore struct {
 	traces            *storage.TraceListResult
+	lastTraceQuery    storage.TraceQuery
 	detail            *storage.TraceDetail
 	services          []string
 	listErr           error
@@ -36,6 +37,7 @@ func (m *handlerMockStore) InsertSpans(ctx context.Context, r storage.ResourceIn
 }
 
 func (m *handlerMockStore) ListTraces(ctx context.Context, q storage.TraceQuery) (*storage.TraceListResult, error) {
+	m.lastTraceQuery = q
 	return m.traces, m.listErr
 }
 
@@ -490,5 +492,34 @@ func TestImportTracesMethodNotAllowed(t *testing.T) {
 	handler.ImportTraces(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405 for GET, got %d", rec.Code)
+	}
+}
+
+func TestListTracesParsesMinMaxFilters(t *testing.T) {
+	store := &handlerMockStore{
+		traces: &storage.TraceListResult{
+			Traces:     []storage.TraceListItem{},
+			Pagination: storage.Pagination{Page: 1, PageSize: 20, Total: 0},
+		},
+	}
+	handler := NewTraceHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/traces?min_duration=100&max_duration=5000&min_spans=3&max_spans=50&min_cost=0.5&max_cost=10", nil)
+	rec := httptest.NewRecorder()
+	handler.ListTraces(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	q := store.lastTraceQuery
+	if q.MinDuration != 100 || q.MaxDuration != 5000 {
+		t.Errorf("duration: got min=%d max=%d, want 100/5000", q.MinDuration, q.MaxDuration)
+	}
+	if q.MinSpanCount != 3 || q.MaxSpanCount != 50 {
+		t.Errorf("spans: got min=%d max=%d, want 3/50", q.MinSpanCount, q.MaxSpanCount)
+	}
+	if q.MinCost != 0.5 || q.MaxCost != 10 {
+		t.Errorf("cost: got min=%v max=%v, want 0.5/10", q.MinCost, q.MaxCost)
 	}
 }

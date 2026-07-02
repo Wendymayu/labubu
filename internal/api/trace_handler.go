@@ -52,17 +52,25 @@ func (h *TraceHandler) ListTraces(w http.ResponseWriter, r *http.Request) {
 	endMS, _ := strconv.ParseUint(q.Get("end"), 10, 64)
 	minDuration, _ := strconv.ParseUint(q.Get("min_duration"), 10, 64)
 	maxDuration, _ := strconv.ParseUint(q.Get("max_duration"), 10, 64)
+	minSpans, _ := strconv.ParseUint(q.Get("min_spans"), 10, 16)
+	maxSpans, _ := strconv.ParseUint(q.Get("max_spans"), 10, 16)
+	minCost, _ := strconv.ParseFloat(q.Get("min_cost"), 64)
+	maxCost, _ := strconv.ParseFloat(q.Get("max_cost"), 64)
 
 	query := storage.TraceQuery{
-		Page:        page,
-		PageSize:    pageSize,
-		Service:     q.Get("service"),
-		Status:      q.Get("status"),
-		Query:       q.Get("q"),
-		StartTimeMS: startMS,
-		EndTimeMS:   endMS,
-		MinDuration: minDuration,
-		MaxDuration: maxDuration,
+		Page:         page,
+		PageSize:     pageSize,
+		Service:      q.Get("service"),
+		Status:       q.Get("status"),
+		Query:        q.Get("q"),
+		StartTimeMS:  startMS,
+		EndTimeMS:    endMS,
+		MinDuration:  minDuration,
+		MaxDuration:  maxDuration,
+		MinSpanCount: uint16(minSpans),
+		MaxSpanCount: uint16(maxSpans),
+		MinCost:      minCost,
+		MaxCost:      maxCost,
 	}
 
 	result, err := h.store.ListTraces(r.Context(), query)

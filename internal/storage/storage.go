@@ -85,6 +85,10 @@ type TraceQuery struct {
 	EndTimeMS   uint64
 	MinDuration uint64
 	MaxDuration uint64
+	MinSpanCount uint16
+	MaxSpanCount uint16
+	MinCost     float64
+	MaxCost     float64
 }
 
 // CostQuery defines filters for cost summary aggregation.

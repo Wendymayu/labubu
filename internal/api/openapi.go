@@ -54,7 +54,11 @@ const openAPISpecJSON = `{
           { "name": "start", "in": "query", "schema": { "type": "string" }, "description": "Start time (RFC3339)" },
           { "name": "end", "in": "query", "schema": { "type": "string" }, "description": "End time (RFC3339)" },
           { "name": "min_duration", "in": "query", "schema": { "type": "string" }, "description": "Minimum duration (e.g. 100ms)" },
-          { "name": "max_duration", "in": "query", "schema": { "type": "string" }, "description": "Maximum duration" }
+          { "name": "max_duration", "in": "query", "schema": { "type": "string" }, "description": "Maximum duration" },
+          { "name": "min_spans", "in": "query", "schema": { "type": "integer" }, "description": "Minimum span count" },
+          { "name": "max_spans", "in": "query", "schema": { "type": "integer" }, "description": "Maximum span count" },
+          { "name": "min_cost", "in": "query", "schema": { "type": "number" }, "description": "Minimum cost" },
+          { "name": "max_cost", "in": "query", "schema": { "type": "number" }, "description": "Maximum cost" }
         ],
         "responses": { "200": { "description": "Trace list" } }
       }
