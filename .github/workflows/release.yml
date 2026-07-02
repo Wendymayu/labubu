@@ -79,8 +79,11 @@ jobs:
       - name: Set Python package version
         shell: bash
         run: |
-          sed -i 's/^version = .*/version = "${{ env.VERSION }}"/' labubu-python/pyproject.toml
-          sed -i 's/^__version__ = .*/__version__ = "${{ env.VERSION }}"/' labubu-python/labubu/__init__.py
+          # sed -i.bak + rm is portable across GNU sed (Linux) and BSD sed (macOS),
+          # where bare `sed -i 's/.../'` is interpreted as a backup suffix.
+          sed -i.bak 's/^version = .*/version = "${{ env.VERSION }}"/' labubu-python/pyproject.toml
+          sed -i.bak 's/^__version__ = .*/__version__ = "${{ env.VERSION }}"/' labubu-python/labubu/__init__.py
+          rm -f labubu-python/pyproject.toml.bak labubu-python/labubu/__init__.py.bak
           echo "pyproject version:" && grep '^version' labubu-python/pyproject.toml
 
       - name: Build Go binary
