@@ -33,6 +33,7 @@
               <input type="checkbox" :checked="selectedIds.size === traces.length && traces.length > 0" @change="toggleSelectAll" />
             </th>
             <th>{{ t('traceList.name') }}</th>
+            <th>{{ t('traceList.input') }}</th>
             <th class="has-filter">
               <div class="th-head">
                 <span>{{ t('traceList.service') }}</span>
@@ -120,6 +121,7 @@
               <input type="checkbox" :checked="isSelected(trace.trace_id_hex)" @change="toggleSelect(trace.trace_id_hex)" />
             </td>
             <td class="cell-name" @click="goToTrace(trace.trace_id_hex)">{{ trace.root_name }}</td>
+            <td class="cell-input" @click="goToTrace(trace.trace_id_hex)" :title="trace.input_messages ?? ''">{{ formatInput(trace.input_messages) }}</td>
             <td @click="goToTrace(trace.trace_id_hex)">{{ trace.root_service }}</td>
             <td @click="goToTrace(trace.trace_id_hex)">{{ formatDuration(trace.duration_ms) }}</td>
             <td @click="goToTrace(trace.trace_id_hex)">{{ trace.span_count }}</td>
@@ -444,6 +446,14 @@ function formatDuration(ms: number): string {
   return `${mins}m ${secs}s`
 }
 
+// formatInput renders the root span's gen_ai.input.messages attribute. The
+// value is a JSON string (an array of messages); the cell truncates it and
+// the full value is available via the title tooltip. Returns '-' when the
+// probe has not populated the attribute yet.
+function formatInput(v?: string): string {
+  return v ? v : '-'
+}
+
 function formatTokens(tokens?: number): string {
   if (tokens == null) return '-'
   if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
@@ -530,6 +540,7 @@ onUnmounted(() => {
 .trace-row { cursor: pointer; }
 .trace-row:hover { background: var(--bg-surface); }
 .cell-name { font-weight: 600; color: var(--accent-blue); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-input { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 13px; }
 .cell-time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
 .status-ok { background: var(--status-ok-bg); color: var(--status-ok-text); }

@@ -12,6 +12,7 @@ export interface TraceListItem {
   total_tokens?: number
   cost?: number
   cost_currency?: string
+  input_messages?: string
 }
 
 export interface Pagination {
@@ -471,6 +472,7 @@ export interface SessionListItem {
 export interface SessionDetail {
   session: SessionListItem
   traces: TraceListItem[]
+  pagination: Pagination
 }
 
 export interface SessionQuery {
@@ -498,8 +500,11 @@ export async function listSessions(query: SessionQuery): Promise<SessionListResp
   })
 }
 
-export async function getSession(sessionId: string): Promise<SessionDetail> {
-  return get<SessionDetail>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}`)
+export async function getSession(sessionId: string, page = 1, pageSize = 20): Promise<SessionDetail> {
+  return get<SessionDetail>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}`, {
+    page,
+    page_size: pageSize,
+  })
 }
 
 // --- Log types and API ---
