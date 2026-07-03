@@ -227,7 +227,7 @@ costDashboard: {
     retry: 'Retry Diagnosis',
   },
   agentStats: {
-    agentBehavior: 'Agent Behavior',
+    agentBehavior: 'Behavior',
     agentStats: 'Agent Behavior Stats',
     noAgentData: 'No agent behavior data detected in this trace',
     dimLlm: 'LLM',

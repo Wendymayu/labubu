@@ -227,7 +227,7 @@ costDashboard: {
     retry: '重新诊断',
   },
   agentStats: {
-    agentBehavior: 'Agent 行为',
+    agentBehavior: '行为',
     agentStats: 'Agent 行为统计',
     noAgentData: '该 trace 未检测到 Agent 行为数据',
     dimLlm: 'LLM',
