@@ -119,16 +119,18 @@ Place a `labubu.yaml` in the working directory (or use `--config`):
 ```yaml
 trace:
   retention:
-    max_age: 7d           # delete traces older than this (0 = unlimited)
+    max_age: 168h          # delete traces older than this (0 = unlimited). Go duration: h/m/s/ms
     max_count: 10000      # keep only the newest N traces (0 = unlimited)
     cleanup_interval: 5m  # how often the cleanup goroutine runs
 log:
   retention:
-    max_age: 7d           # delete logs older than this by their own timestamp (0 = unlimited)
+    max_age: 168h          # delete logs older than this by their own timestamp (0 = unlimited)
 metric:
   retention:
-    max_age: 7d           # drop metrics older than this (tstorage TTL)
+    max_age: 168h          # drop metrics older than this (tstorage TTL)
 ```
+
+Durations use Go `time.ParseDuration` format (`h`/`m`/`s`/`ms`), e.g. `168h` = 7 days, `72h` = 3 days. The `d` suffix is **not** supported — `7d` will be silently ignored and the default (7 days) is used.
 
 No file? Built-in defaults are used silently — everything still works.
 
