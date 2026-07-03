@@ -13,7 +13,7 @@ class LabubuApiClient:
         """GET /api/v1/traces with query filters."""
         params = self._build_trace_params(kwargs)
         try:
-            async with httpx.AsyncClient(transport=self._transport) as client:
+            async with httpx.AsyncClient(transport=self._transport, trust_env=False, follow_redirects=True) as client:
                 r = await client.get(
                     f"{self.base_url}/api/v1/traces",
                     params=params,
@@ -39,7 +39,7 @@ class LabubuApiClient:
     async def get_trace_detail(self, trace_id: str):
         """GET /api/v1/traces/{trace_id}. Returns None if not found."""
         try:
-            async with httpx.AsyncClient(transport=self._transport) as client:
+            async with httpx.AsyncClient(transport=self._transport, trust_env=False, follow_redirects=True) as client:
                 r = await client.get(
                     f"{self.base_url}/api/v1/traces/{trace_id}",
                     timeout=30.0,
@@ -72,7 +72,7 @@ class LabubuApiClient:
         params["limit"] = min(kwargs.get("limit", 20), 50)
         params["offset"] = kwargs.get("offset", 0)
         try:
-            async with httpx.AsyncClient(transport=self._transport) as client:
+            async with httpx.AsyncClient(transport=self._transport, trust_env=False, follow_redirects=True) as client:
                 r = await client.get(
                     f"{self.base_url}/api/v1/logs",
                     params=params,
@@ -101,7 +101,7 @@ class LabubuApiClient:
         if time:
             params["time"] = time
         try:
-            async with httpx.AsyncClient(transport=self._transport) as client:
+            async with httpx.AsyncClient(transport=self._transport, trust_env=False, follow_redirects=True) as client:
                 r = await client.get(
                     f"{self.base_url}/api/v1/query",
                     params=params,
@@ -127,7 +127,7 @@ class LabubuApiClient:
     async def list_services(self):
         """GET /api/v1/services."""
         try:
-            async with httpx.AsyncClient(transport=self._transport) as client:
+            async with httpx.AsyncClient(transport=self._transport, trust_env=False, follow_redirects=True) as client:
                 r = await client.get(
                     f"{self.base_url}/api/v1/services",
                     timeout=30.0,

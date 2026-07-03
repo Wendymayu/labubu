@@ -11,11 +11,13 @@ import LlmConfig from './views/LlmConfig.vue'
 import RuleList from './views/alerts/RuleList.vue'
 import RuleForm from './views/alerts/RuleForm.vue'
 import AlertHistory from './views/alerts/AlertHistory.vue'
+import ApiDocs from './views/ApiDocs.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/traces' },
+    { path: '/api-docs', name: 'api-docs', component: ApiDocs },
     { path: '/traces', name: 'trace-list', component: TraceList },
     { path: '/traces/:id', name: 'trace-detail', component: TraceDetail },
     { path: '/sessions', name: 'session-list', component: SessionList },

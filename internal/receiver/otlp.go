@@ -8,12 +8,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 
 	ilog "github.com/labubu/labubu/internal/log"
 	"github.com/labubu/labubu/internal/metrics"
 	"github.com/labubu/labubu/internal/pipeline"
 	"github.com/labubu/labubu/internal/storage"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -42,8 +45,10 @@ func New(p *pipeline.Pipeline, ms metrics.Store, s storage.Store) *Receiver {
 	}
 }
 
-// Start begins listening on separate ports for gRPC (:4317) and HTTP (:4318).
-func (r *Receiver) Start() error {
+// Start begins listening on the given gRPC and HTTP ports for OTLP data.
+// Both listeners are bound synchronously so a port conflict fails fast and
+// returns an error, rather than starting a server that silently does not listen.
+func (r *Receiver) Start(grpcPort, httpPort int) error {
 	// gRPC server.
 	r.grpcSrv = grpc.NewServer()
 	coltracepb.RegisterTraceServiceServer(r.grpcSrv, &traceService{pipeline: r.pipeline})
@@ -54,7 +59,7 @@ func (r *Receiver) Start() error {
 		collogspb.RegisterLogsServiceServer(r.grpcSrv, &logsService{store: r.store})
 	}
 
-	// HTTP server for OTLP HTTP (/v1/traces).
+	// HTTP server for OTLP HTTP (/v1/traces, /v1/metrics, /v1/logs).
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", r.handleHTTPTraces)
 	if r.metricStore != nil {
@@ -65,26 +70,25 @@ func (r *Receiver) Start() error {
 	}
 	r.httpSrv = &http.Server{Handler: mux}
 
-	// Start gRPC on :4317.
+	// Bind synchronously so port conflicts fail fast.
+	grpcLis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", grpcPort))
+	if err != nil {
+		return fmt.Errorf("OTLP gRPC listen on :%d: %w", grpcPort, err)
+	}
+	httpLis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", httpPort))
+	if err != nil {
+		grpcLis.Close()
+		return fmt.Errorf("OTLP HTTP listen on :%d: %w", httpPort, err)
+	}
+
+	// Serve in goroutines; listeners are already bound.
 	go func() {
-		grpcLis, err := net.Listen("tcp", "0.0.0.0:4317")
-		if err != nil {
-			fmt.Printf("receiver: gRPC listen error: %v\n", err)
-			return
-		}
 		fmt.Printf("OTLP gRPC listening on %s\n", grpcLis.Addr())
 		if err := r.grpcSrv.Serve(grpcLis); err != nil {
 			fmt.Printf("receiver: gRPC serve error: %v\n", err)
 		}
 	}()
-
-	// Start HTTP on :4318.
 	go func() {
-		httpLis, err := net.Listen("tcp", "0.0.0.0:4318")
-		if err != nil {
-			fmt.Printf("receiver: HTTP listen error: %v\n", err)
-			return
-		}
 		fmt.Printf("OTLP HTTP listening on %s\n", httpLis.Addr())
 		if err := r.httpSrv.Serve(httpLis); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("receiver: HTTP serve error: %v\n", err)
@@ -114,16 +118,16 @@ type traceService struct {
 // Export receives trace data via gRPC.
 func (s *traceService) Export(ctx context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
 	for _, resourceSpan := range req.ResourceSpans {
-		resource := translateResource(resourceSpan.Resource)
+		resource := TranslateResource(resourceSpan.Resource)
 		if resourceSpan.SchemaUrl != "" {
 			resource.SchemaURL = resourceSpan.SchemaUrl
 		}
 		for _, scopeSpan := range resourceSpan.ScopeSpans {
-			scope := translateScope(scopeSpan.Scope)
+			scope := TranslateScope(scopeSpan.Scope)
 			if scopeSpan.SchemaUrl != "" {
 				scope.SchemaURL = scopeSpan.SchemaUrl
 			}
-			spans := translateSpans(scopeSpan.Spans)
+			spans := TranslateSpans(scopeSpan.Spans)
 
 			if len(spans) == 0 {
 				continue
@@ -219,15 +223,9 @@ func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 	var exportReq coltracepb.ExportTraceServiceRequest
 
 	contentType := req.Header.Get("Content-Type")
-	if contentType == "application/json" {
-		// Use protojson for JSON-encoded OTLP.
-		// For simplicity in Phase 1, use the protobuf JSON unmarshaler.
-		// protojson is in google.golang.org/protobuf/encoding/protojson
-		// Fallback: try proto unmarshal first, then handle as needed.
-		if err := proto.Unmarshal(body, &exportReq); err != nil {
-			// Try JSON unmarshal as fallback.
-			// Many OTLP HTTP clients send JSON.
-			http.Error(w, fmt.Sprintf("failed to unmarshal request: %v", err), http.StatusBadRequest)
+	if strings.Contains(contentType, "application/json") {
+		if err := protojson.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal JSON: %v", err), http.StatusBadRequest)
 			return
 		}
 	} else {
@@ -238,16 +236,16 @@ func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, resourceSpan := range exportReq.ResourceSpans {
-		resource := translateResource(resourceSpan.Resource)
+		resource := TranslateResource(resourceSpan.Resource)
 		if resourceSpan.SchemaUrl != "" {
 			resource.SchemaURL = resourceSpan.SchemaUrl
 		}
 		for _, scopeSpan := range resourceSpan.ScopeSpans {
-			scope := translateScope(scopeSpan.Scope)
+			scope := TranslateScope(scopeSpan.Scope)
 			if scopeSpan.SchemaUrl != "" {
 				scope.SchemaURL = scopeSpan.SchemaUrl
 			}
-			spans := translateSpans(scopeSpan.Spans)
+			spans := TranslateSpans(scopeSpan.Spans)
 
 			if len(spans) == 0 {
 				continue
@@ -334,9 +332,17 @@ func (r *Receiver) handleHTTPLogs(w http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
 	var exportReq collogspb.ExportLogsServiceRequest
-	if err := proto.Unmarshal(body, &exportReq); err != nil {
-		http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
-		return
+	contentType := req.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		if err := protojson.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := proto.Unmarshal(body, &exportReq); err != nil {
+			http.Error(w, fmt.Sprintf("failed to unmarshal protobuf: %v", err), http.StatusBadRequest)
+			return
+		}
 	}
 
 	logs := translateLogs(exportReq.ResourceLogs)
@@ -360,7 +366,7 @@ func (r *Receiver) handleHTTPLogs(w http.ResponseWriter, req *http.Request) {
 
 // --- Translation helpers ---
 
-func translateResource(resource *resourcepb.Resource) storage.ResourceInfo {
+func TranslateResource(resource *resourcepb.Resource) storage.ResourceInfo {
 	if resource == nil {
 		return storage.ResourceInfo{}
 	}
@@ -369,7 +375,7 @@ func translateResource(resource *resourcepb.Resource) storage.ResourceInfo {
 	}
 }
 
-func translateScope(scope *commonpb.InstrumentationScope) storage.ScopeInfo {
+func TranslateScope(scope *commonpb.InstrumentationScope) storage.ScopeInfo {
 	if scope == nil {
 		return storage.ScopeInfo{}
 	}
@@ -380,7 +386,7 @@ func translateScope(scope *commonpb.InstrumentationScope) storage.ScopeInfo {
 	}
 }
 
-func translateSpans(protoSpans []*tracepb.Span) []storage.Span {
+func TranslateSpans(protoSpans []*tracepb.Span) []storage.Span {
 	spans := make([]storage.Span, 0, len(protoSpans))
 	for _, ps := range protoSpans {
 		if ps == nil {
@@ -409,23 +415,15 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 	}
 	durationMS := endMS - startMS
 
-	inputTokens := getUint32Attr(ps.Attributes, "gen_ai.usage.input_tokens")
-	outputTokens := getUint32Attr(ps.Attributes, "gen_ai.usage.output_tokens")
-	var totalTokens *uint32
-	if inputTokens != nil || outputTokens != nil {
-		var sum uint32
-		if inputTokens != nil {
-			sum += *inputTokens
-		}
-		if outputTokens != nil {
-			sum += *outputTokens
-		}
-		if tt := getUint32Attr(ps.Attributes, "gen_ai.usage.total_tokens"); tt != nil {
-			sum = *tt
-		}
-		totalTokens = &sum
-	}
-	genAIModel := getStringAttr(ps.Attributes, "gen_ai.request.model")
+	// Normalize attributes BEFORE extracting typed columns,
+	// so fallback keys (e.g. "input_tokens" from Claude Code)
+	// are copied to standard keys (e.g. "gen_ai.usage.input_tokens")
+	// that getUint32Attr/getStringAttr look for.
+	attrs := normalizeAttributes(keyValueToMap(ps.Attributes))
+
+	inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, totalTokens :=
+		storage.DeriveTokenBuckets(attrs)
+	genAIModel := getStringAttrFromMap(attrs, "gen_ai.request.model")
 
 	eventsJSON := serializeEvents(ps.Events)
 	linksJSON := serializeLinks(ps.Links)
@@ -439,7 +437,7 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 		StartTimeMS:       startMS,
 		EndTimeMS:         endMS,
 		DurationMS:        durationMS,
-		Attributes:        keyValueToMap(ps.Attributes),
+		Attributes:        attrs,
 		Events:            eventsJSON,
 		Links:             linksJSON,
 		StatusCode:        int32(ps.Status.GetCode()),
@@ -447,12 +445,53 @@ func translateSpan(ps *tracepb.Span) storage.Span {
 		InputTokens:       inputTokens,
 		OutputTokens:      outputTokens,
 		TotalTokens:       totalTokens,
+		CacheCreationTokens: cacheCreationTokens,
+		CacheReadTokens:     cacheReadTokens,
 		GenAIRequestModel: genAIModel,
 		TraceState:        ps.TraceState,
 	}
 }
 
 // --- Attribute helpers ---
+
+// attrAliases maps a standard OTel attribute key to fallback keys
+// that various agents use instead. If the standard key is absent but
+// a fallback key exists, the fallback value is copied to the standard key.
+// Adding a new agent only requires appending its key names to the fallback lists.
+var attrAliases = map[string][]string{
+	// Token usage (GenAI semconv → Claude Code → OpenInference)
+	"gen_ai.usage.input_tokens":  {"input_tokens", "llm.usage.input_tokens"},
+	"gen_ai.usage.output_tokens": {"output_tokens", "llm.usage.output_tokens"},
+	"gen_ai.usage.total_tokens":  {"total_tokens", "llm.usage.total_tokens"},
+	// Prompt-caching tokens (Claude Code / Anthropic). These dominate real
+	// token consumption but are reported as separate attributes, so they must
+	// be folded into total_tokens to reflect true throughput.
+	"gen_ai.usage.cache_creation_input_tokens": {"cache_creation_tokens", "cache_creation_input_tokens"},
+	"gen_ai.usage.cache_read_input_tokens":     {"cache_read_tokens", "cache_read_input_tokens"},
+	// Request model
+	"gen_ai.request.model":       {"model", "llm.request.model"},
+	// Session ID (JiuwenClaw → Claude Code → Codex)
+	"jiuwenclaw.session.id":      {"session.id", "codex.session.id"},
+}
+
+// normalizeAttributes copies values from fallback keys to standard keys
+// when the standard key is absent. Original keys are preserved.
+// This makes downstream extraction (typed columns, session, etc.)
+// work regardless of which agent produced the data.
+func normalizeAttributes(attrs map[string]string) map[string]string {
+	for stdKey, fallbacks := range attrAliases {
+		if _, exists := attrs[stdKey]; exists {
+			continue
+		}
+		for _, fb := range fallbacks {
+			if v, exists := attrs[fb]; exists {
+				attrs[stdKey] = v
+				break
+			}
+		}
+	}
+	return attrs
+}
 
 func keyValueToMap(attrs []*commonpb.KeyValue) map[string]string {
 	result := make(map[string]string, len(attrs))
@@ -510,6 +549,30 @@ func getUint32Attr(attrs []*commonpb.KeyValue, key string) *uint32 {
 		}
 	}
 	return nil
+}
+
+// getUint32AttrFromMap reads a uint32 value from a normalized attributes map.
+// Used after normalizeAttributes so fallback keys are already copied to standard keys.
+func getUint32AttrFromMap(attrs map[string]string, key string) *uint32 {
+	v, ok := attrs[key]
+	if !ok {
+		return nil
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil || n == 0 {
+		return nil
+	}
+	u := uint32(n)
+	return &u
+}
+
+// getStringAttrFromMap reads a string value from a normalized attributes map.
+func getStringAttrFromMap(attrs map[string]string, key string) *string {
+	v, ok := attrs[key]
+	if !ok || v == "" {
+		return nil
+	}
+	return &v
 }
 
 func serializeEvents(events []*tracepb.Span_Event) string {

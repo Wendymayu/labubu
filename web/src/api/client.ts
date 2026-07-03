@@ -12,12 +12,22 @@ export interface TraceListItem {
   total_tokens?: number
   cost?: number
   cost_currency?: string
+  input_messages?: string
 }
 
 export interface Pagination {
   page: number
   page_size: number
   total: number
+}
+
+// TimeRangeSelection is the payload emitted by the shared TimeRangePicker
+// component. `start`/`end` are epoch ms; both are undefined for the "all"
+// preset (no time filter). For presets (today/7d/30d) and custom, both are set.
+export interface TimeRangeSelection {
+  period: string
+  start?: number
+  end?: number
 }
 
 export interface TraceListResponse {
@@ -40,7 +50,12 @@ export interface SpanDetail {
   input_tokens?: number
   output_tokens?: number
   total_tokens?: number
+  cache_creation_tokens?: number // prompt-caching write tokens (Claude/Anthropic)
+  cache_read_tokens?: number     // prompt-caching read tokens (Claude/Anthropic)
   gen_ai_request_model?: string
+  gen_ai_system?: string       // Attributes["gen_ai.system"]
+  tool_name?: string           // Attributes["gen_ai.tool.name"]
+  is_tool_call: boolean        // tool_name != null
 }
 
 export interface ScopeDetail {
@@ -73,8 +88,12 @@ export interface TraceQuery {
   q?: string
   start?: number
   end?: number
-  min_duration?: number
-  max_duration?: number
+  min_duration?: number | ''
+  max_duration?: number | ''
+  min_spans?: number | ''
+  max_spans?: number | ''
+  min_cost?: number | ''
+  max_cost?: number | ''
 }
 
 async function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
@@ -104,6 +123,10 @@ export async function listTraces(query: TraceQuery): Promise<TraceListResponse> 
     end: query.end,
     min_duration: query.min_duration,
     max_duration: query.max_duration,
+    min_spans: query.min_spans,
+    max_spans: query.max_spans,
+    min_cost: query.min_cost,
+    max_cost: query.max_cost,
   })
 }
 
@@ -130,6 +153,24 @@ export async function exportTraces(traceIds: string[], format: string): Promise<
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
     throw new Error(err.error || `Export failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export interface ImportResult {
+  imported: number
+  skipped: number
+}
+
+export async function importTraces(jsonData: string): Promise<ImportResult> {
+  const res = await fetch(`${BASE_URL}/traces/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: jsonData,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Import failed: ${res.status}`)
   }
   return res.json()
 }
@@ -301,6 +342,8 @@ export interface CostOverview {
   total_cost: number
   total_tokens: number
   total_input_tokens: number
+  total_cache_creation_tokens: number
+  total_cache_read_tokens: number
   total_output_tokens: number
   avg_cost_per_trace: number
   trace_count: number
@@ -311,6 +354,20 @@ export interface ModelCost {
   cost: number
   tokens: number
   input_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  output_tokens: number
+  trace_count: number
+  avg_cost: number
+}
+
+export interface ServiceCost {
+  service: string
+  cost: number
+  tokens: number
+  input_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
   output_tokens: number
   trace_count: number
   avg_cost: number
@@ -320,11 +377,24 @@ export interface CostSummary {
   period: string
   currency: string
   overview: CostOverview
-  by_model: ModelCost[]
+  group_by: 'model' | 'service'
+  by_model?: ModelCost[]
+  by_service?: ServiceCost[]
 }
 
-export async function getCostSummary(period: string): Promise<CostSummary> {
-  return get<CostSummary>(`${BASE_URL}/cost-summary?period=${period}`)
+export async function getCostSummary(
+  period: string,
+  groupBy: 'model' | 'service' = 'model',
+  range?: { start: number; end: number }
+): Promise<CostSummary> {
+  // When `range` is set (custom time), start/end (epoch ms) override the preset
+  // period on the backend. The get() helper skips undefined params.
+  return get<CostSummary>(`${BASE_URL}/cost-summary`, {
+    period,
+    group_by: groupBy,
+    start: range?.start,
+    end: range?.end,
+  })
 }
 
 // --- LLM Config types and API ---
@@ -332,6 +402,7 @@ export async function getCostSummary(period: string): Promise<CostSummary> {
 export interface LlmConfig {
   id: string
   model_name: string
+  provider_type: string // "openai" or "anthropic"
   provider_url: string
   api_key: string
   is_default: boolean
@@ -401,6 +472,7 @@ export interface SessionListItem {
 export interface SessionDetail {
   session: SessionListItem
   traces: TraceListItem[]
+  pagination: Pagination
 }
 
 export interface SessionQuery {
@@ -428,8 +500,11 @@ export async function listSessions(query: SessionQuery): Promise<SessionListResp
   })
 }
 
-export async function getSession(sessionId: string): Promise<SessionDetail> {
-  return get<SessionDetail>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}`)
+export async function getSession(sessionId: string, page = 1, pageSize = 20): Promise<SessionDetail> {
+  return get<SessionDetail>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}`, {
+    page,
+    page_size: pageSize,
+  })
 }
 
 // --- Log types and API ---
@@ -451,8 +526,10 @@ export interface LogQuery {
   event_name?: string
   q?: string
   trace_id?: string
+  span_id?: string
   start?: number
   end?: number
+  asc?: boolean
 }
 
 export interface LogListResponse {
@@ -468,13 +545,19 @@ export async function listLogs(query: LogQuery): Promise<LogListResponse> {
     event_name: query.event_name,
     q: query.q,
     trace_id: query.trace_id,
+    span_id: query.span_id,
     start: query.start,
     end: query.end,
+    asc: query.asc ? 'true' : undefined,
   })
 }
 
 export async function getLogsByTrace(traceIdHex: string): Promise<{ logs: LogRecord[] }> {
   return get<{ logs: LogRecord[] }>(`${BASE_URL}/logs/${traceIdHex}`)
+}
+
+export async function getLogCounts(traceIdHex: string): Promise<{ counts: Record<string, number> }> {
+  return get<{ counts: Record<string, number> }>(`${BASE_URL}/logs/${traceIdHex}/counts`)
 }
 
 // --- Diagnosis types and API ---
@@ -530,6 +613,31 @@ export async function diagnoseTrace(traceIdHex: string, force?: boolean, locale?
     throw new Error(err.error || `Diagnosis failed: ${res.status}`)
   }
   return res.json()
+}
+
+export interface ToolUsageItem {
+  tool_name: string
+  call_count: number
+  success_rate: number
+  avg_retries: number
+  max_loop: number
+}
+
+export interface AgentStats {
+  trace_success_rate: number
+  avg_tool_success_rate: number
+  avg_retries: number
+  avg_loop_depth: number
+  max_loop_depth: number
+  span_per_trace: number
+  total_tool_calls: number
+  successful_tool_calls: number
+  tool_usage: ToolUsageItem[]
+  insights: string[]
+}
+
+export async function getAgentStats(sessionId: string): Promise<AgentStats> {
+  return get<AgentStats>(`${BASE_URL}/sessions/${sessionId}/agent-stats`)
 }
 
 export async function getLogEventNames(): Promise<string[]> {

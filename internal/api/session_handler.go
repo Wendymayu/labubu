@@ -59,7 +59,17 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	detail, err := h.store.GetSession(r.Context(), sessionID)
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	detail, err := h.store.GetSession(r.Context(), sessionID, page, pageSize)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get session: %v", err)})
 		return
@@ -70,4 +80,18 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request, sess
 	}
 
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// GetAgentStats handles GET /api/v1/sessions/{sessionId}/agent-stats.
+func (h *SessionHandler) GetAgentStats(w http.ResponseWriter, r *http.Request, sessionID string) {
+	result, err := h.store.GetSessionAgentStats(r.Context(), sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get agent stats: %v", err)})
+		return
+	}
+	if result == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no_agent_data"})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

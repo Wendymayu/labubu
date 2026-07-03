@@ -288,6 +288,16 @@ func (s *chDBStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]Log
 	return parseLogListItems(result)
 }
 
+// GetLogCountsByTrace returns the per-span log count for a trace.
+func (s *chDBStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	sql := buildLogCountsByTraceSQL(traceID) + " FORMAT JSONEachRow"
+	result, err := s.querySQL(sql)
+	if err != nil {
+		return nil, fmt.Errorf("get log counts by trace: %w", err)
+	}
+	return parseLogCounts(result), nil
+}
+
 // GetLogEventNames returns distinct event_name values.
 func (s *chDBStore) GetLogEventNames(ctx context.Context) ([]string, error) {
 	sql := buildLogEventNamesSQL() + " FORMAT JSONEachRow"
@@ -325,6 +335,12 @@ func (s *chDBStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListRes
 		return nil, fmt.Errorf("parse trace list: %w", err)
 	}
 
+	if len(traces) > 0 {
+		if err := s.loadRootSpanInputMessages(ctx, traces); err != nil {
+			return nil, fmt.Errorf("load input messages: %w", err)
+		}
+	}
+
 	return &TraceListResult{
 		Traces: traces,
 		Pagination: Pagination{
@@ -333,6 +349,49 @@ func (s *chDBStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListRes
 			Total:    total,
 		},
 	}, nil
+}
+
+// loadRootSpanInputMessages fetches gen_ai.input.messages from each trace's
+// root span and attaches it to the matching item. The root span is the span
+// whose parent_span_id is all zeros — the same rule isRootSpan uses at
+// ingestion. A future probe populates this attribute on root spans.
+func (s *chDBStore) loadRootSpanInputMessages(ctx context.Context, traces []TraceListItem) error {
+	_ = ctx
+	idxByTid := make(map[string]int, len(traces))
+	inList := make([]string, 0, len(traces))
+	for i, t := range traces {
+		idxByTid[strings.ToLower(t.TraceIDHex)] = i
+		inList = append(inList, fmt.Sprintf("unhex('%s')", escapeSQL(t.TraceIDHex)))
+	}
+	query := fmt.Sprintf(
+		`SELECT lower(hex(trace_id)) AS trace_id_hex, attributes['gen_ai.input.messages'] AS input_messages
+		FROM spans
+		WHERE parent_span_id = unhex('0000000000000000') AND trace_id IN (%s)`,
+		strings.Join(inList, ","))
+	result, err := s.querySQL(query + " FORMAT JSONEachRow")
+	if err != nil {
+		return fmt.Errorf("query root span input: %w", err)
+	}
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			TraceIDHex    string `json:"trace_id_hex"`
+			InputMessages string `json:"input_messages"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return fmt.Errorf("parse root span input: %w", err)
+		}
+		if row.InputMessages == "" {
+			continue
+		}
+		if idx, ok := idxByTid[strings.ToLower(row.TraceIDHex)]; ok {
+			v := row.InputMessages
+			traces[idx].InputMessages = &v
+		}
+	}
+	return nil
 }
 
 // GetTrace returns all spans for a trace.
@@ -404,7 +463,14 @@ func (s *chDBStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionL
 }
 
 // GetSession returns the session summary and all traces for a session.
-func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+func (s *chDBStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*SessionDetail, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+
 	// Get the aggregated session summary using exact-match query.
 	summarySQL := buildSessionSummarySQL(sessionID) + " FORMAT JSONEachRow"
 	summaryResult, err := s.querySQL(summarySQL)
@@ -419,8 +485,15 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionD
 		return nil, nil
 	}
 
-	// Get all traces for this session.
-	tracesSQL := buildSessionTracesSQL(sessionID) + " FORMAT JSONEachRow"
+	// Total traces for pagination.
+	countResult, err := s.querySQL(buildSessionTraceCountSQL(sessionID) + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("count session traces: %w", err)
+	}
+	total := parseCount(countResult)
+
+	// Get a page of traces for this session.
+	tracesSQL := buildSessionTracesSQL(sessionID, page, pageSize) + " FORMAT JSONEachRow"
 	tracesResult, err := s.querySQL(tracesSQL)
 	if err != nil {
 		return nil, fmt.Errorf("get session traces: %w", err)
@@ -431,8 +504,9 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionD
 	}
 
 	return &SessionDetail{
-		Session: sessions[0],
-		Traces:  traces,
+		Session:    sessions[0],
+		Traces:     traces,
+		Pagination: Pagination{Page: page, PageSize: pageSize, Total: total},
 	}, nil
 }
 
@@ -603,6 +677,69 @@ func (s *chDBStore) UpsertDiagnosisResult(ctx context.Context, result *Diagnosis
 	return s.execSQL(insertSQL)
 }
 
+func (s *chDBStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error) {
+	sid := escapeSQL(sessionID)
+
+	// Traces for the session — only StatusCode is needed for trace success rate.
+	traceResult, err := s.querySQL(fmt.Sprintf(
+		`SELECT toString(status_code) AS status_code
+		 FROM traces WHERE session_id = '%s' FORMAT JSONEachRow`, sid))
+	if err != nil {
+		return nil, fmt.Errorf("query session traces: %w", err)
+	}
+	var traces []Trace
+	for _, line := range splitLines(traceResult) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			StatusCode string `json:"status_code"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("parse session trace: %w (line: %s)", err, line)
+		}
+		traces = append(traces, Trace{StatusCode: StatusCodeFromString(row.StatusCode)})
+	}
+	if len(traces) == 0 {
+		// No data -> handler returns 404 no_agent_data so the UI hides the
+		// section gracefully (matches memstore/SQLite), rather than a 500.
+		return nil, nil
+	}
+
+	// Spans belonging to those traces. trace_id is binary (FixedString(16)) in
+	// both tables, so the subquery compares directly without unhex.
+	// computeAgentStats only reads StartTimeMS, StatusCode and Attributes.
+	spanResult, err := s.querySQL(fmt.Sprintf(
+		`SELECT start_time_ms, toString(status_code) AS status_code, attributes
+		 FROM spans
+		 WHERE trace_id IN (SELECT trace_id FROM traces WHERE session_id = '%s')
+		 ORDER BY start_time_ms FORMAT JSONEachRow`, sid))
+	if err != nil {
+		return nil, fmt.Errorf("query session spans: %w", err)
+	}
+	var spans []Span
+	for _, line := range splitLines(spanResult) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			StartTimeMS uint64            `json:"start_time_ms"`
+			StatusCode  string            `json:"status_code"`
+			Attributes  map[string]string `json:"attributes"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("parse session span: %w (line: %s)", err, line)
+		}
+		spans = append(spans, Span{
+			StartTimeMS: row.StartTimeMS,
+			StatusCode:  StatusCodeFromString(row.StatusCode),
+			Attributes:  row.Attributes,
+		})
+	}
+
+	return computeAgentStats(traces, spans), nil
+}
+
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
 		C.chdb_close(s.conn)
@@ -661,11 +798,7 @@ func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount in
 		}
 	}
 
-	// Phase 3: delete orphaned log records.
-	if err := s.execSQL("ALTER TABLE logs DELETE WHERE trace_id NOT IN (SELECT trace_id FROM traces)"); err != nil {
-		// Non-fatal: log cleanup failure shouldn't block trace purge.
-		// The logs table may not exist on first run before any logs are ingested.
-	}
+	// Phase 3: orphaned log records are age-purged separately via PurgeLogs.
 
 	// Estimate deletions (MergeTree mutations are async, exact counts unavailable).
 	traceCountAfter, _ := s.querySQL("SELECT count(*) AS count FROM traces FORMAT JSONEachRow")
@@ -683,6 +816,20 @@ func (s *chDBStore) Purge(ctx context.Context, maxAge time.Duration, maxCount in
 	}
 
 	return deletedTraces, deletedSpans, nil
+}
+
+// PurgeLogs removes log records older than (now - maxAge) by their own
+// timestamp. Non-fatal: the logs table may not exist on first run.
+func (s *chDBStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	_ = ctx
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	cutoffMS := uint64(time.Now().UnixMilli()) - uint64(maxAge.Milliseconds())
+	if err := s.execSQL(fmt.Sprintf("ALTER TABLE logs DELETE WHERE timestamp < %d", cutoffMS)); err != nil {
+		return 0, nil // non-fatal: logs table may not exist yet
+	}
+	return 0, nil // MergeTree mutations are async; exact count unavailable
 }
 
 // JSON parsing helpers
@@ -753,6 +900,25 @@ func parseCount(result string) int {
 		return 0
 	}
 	return rows[0].Count
+}
+
+// parseLogCounts parses JSONEachRow rows of {span_id_hex, n} into a map.
+func parseLogCounts(result string) map[string]int {
+	counts := make(map[string]int)
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			SpanIDHex string `json:"span_id_hex"`
+			N         int    `json:"n"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		counts[row.SpanIDHex] = row.N
+	}
+	return counts
 }
 
 func parseTraceListItems(result string) ([]TraceListItem, error) {
@@ -1066,7 +1232,7 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 	events := parseJSONArray(getStr("events"))
 	links := parseJSONArray(getStr("links"))
 
-	return SpanDetail{
+	sd := SpanDetail{
 		SpanID:            getStr("span_id"),
 		ParentSpanID:      getStr("parent_span_id"),
 		Name:              getStr("name"),
@@ -1081,8 +1247,23 @@ func mapToSpanDetail(raw map[string]interface{}) SpanDetail {
 		InputTokens:       getNullableUint32("input_tokens"),
 		OutputTokens:      getNullableUint32("output_tokens"),
 		TotalTokens:       getNullableUint32("total_tokens"),
+		CacheCreationTokens: getNullableUint32("cache_creation_tokens"),
+		CacheReadTokens:   getNullableUint32("cache_read_tokens"),
 		GenAIRequestModel: getNullableString("gen_ai_request_model"),
 	}
+
+	// Extract GenAI semantic attributes.
+	if attrs != nil {
+		if v, ok := attrs["gen_ai.system"]; ok {
+			sd.GenAISystem = &v
+		}
+		if v, ok := attrs["gen_ai.tool.name"]; ok {
+			sd.ToolName = &v
+			sd.IsToolCall = true
+		}
+	}
+
+	return sd
 }
 
 func splitLines(s string) []string {

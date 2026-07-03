@@ -64,8 +64,8 @@ Base URL: `/api/v1`
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/llm-configs` | List all LLM model configurations |
-| `POST` | `/llm-configs` | Create config (`{ model_name, provider_url, api_key, is_default?, temperature?, max_tokens? }`) |
-| `PUT` | `/llm-configs/:id` | Update config (api_key value `***` leaves existing key unchanged) |
+| `POST` | `/llm-configs` | Create config (`{ model_name, provider_type?, provider_url, api_key, is_default?, temperature?, max_tokens? }`). `provider_type` defaults to `"openai"`; must be `"openai"` or `"anthropic"` |
+| `PUT` | `/llm-configs/:id` | Update config (api_key value `***` leaves existing key unchanged. `provider_type` must be `"openai"` or `"anthropic"` if provided) |
 | `DELETE` | `/llm-configs/:id` | Delete config |
 
 ## System

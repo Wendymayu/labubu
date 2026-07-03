@@ -74,6 +74,8 @@ func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 
 	port := fs.Int("port", 8080, "API and UI listen port")
+	otlpGRPCPort := fs.Int("otlp-grpc-port", 4317, "OTLP gRPC listen port")
+	otlpHTTPPort := fs.Int("otlp-http-port", 4318, "OTLP HTTP listen port")
 	dataDir := fs.String("data-dir", "data", "data directory for persistence")
 	bufferSize := fs.Int("buffer-size", 1000, "pipeline buffer capacity")
 	flushInterval := fs.Duration("flush-interval", 200*time.Millisecond, "pipeline flush interval")
@@ -109,8 +111,8 @@ func runServe(args []string) {
 
 	// Print startup banner.
 	fmt.Printf("Labubu v%s starting...\n", Version)
-	fmt.Printf("  OTLP gRPC:      http://localhost:4317\n")
-	fmt.Printf("  OTLP HTTP:      http://localhost:4318\n")
+	fmt.Printf("  OTLP gRPC:      http://localhost:%d\n", *otlpGRPCPort)
+	fmt.Printf("  OTLP HTTP:      http://localhost:%d\n", *otlpHTTPPort)
 	fmt.Printf("  API & UI:       http://localhost:%d\n", *port)
 	if *dataDir == "" {
 		fmt.Printf("  Storage:        in-memory (data lost on exit)\n")
@@ -119,6 +121,7 @@ func runServe(args []string) {
 	}
 	fmt.Printf("  Trace retention:  max_age=%s, max_count=%d, cleanup=%s\n",
 		cfg.Trace.Retention.MaxAge, cfg.Trace.Retention.MaxCount, cfg.Trace.Retention.CleanupInterval)
+	fmt.Printf("  Log retention:    max_age=%s\n", cfg.Log.Retention.MaxAge)
 	fmt.Printf("  Metric retention: max_age=%s\n", cfg.Metric.Retention.MaxAge)
 	fmt.Println()
 
@@ -132,7 +135,7 @@ func runServe(args []string) {
 	// Start retention cleanup goroutine.
 	retentionCtx, retentionCancel := context.WithCancel(context.Background())
 	defer retentionCancel()
-	go runRetentionCleanup(retentionCtx, store, cfg.Trace.Retention)
+	go runRetentionCleanup(retentionCtx, store, cfg.Trace.Retention, cfg.Log.Retention.MaxAge)
 
 	// Initialize metrics store (if enabled).
 	var metricStore metrics.Store
@@ -160,7 +163,7 @@ func runServe(args []string) {
 
 	// Initialize OTLP receiver.
 	recv := receiver.New(pipe, metricStore, store)
-	if err := recv.Start(); err != nil {
+	if err := recv.Start(*otlpGRPCPort, *otlpHTTPPort); err != nil {
 		log.Fatalf("Failed to start OTLP receiver: %v", err)
 	}
 	defer func() {
@@ -239,7 +242,7 @@ func runServe(args []string) {
 	log.Println("Labubu stopped.")
 }
 
-func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.RetentionConfig) {
+func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.RetentionConfig, logMaxAge time.Duration) {
 	ticker := time.NewTicker(ret.CleanupInterval)
 	defer ticker.Stop()
 
@@ -251,6 +254,12 @@ func runRetentionCleanup(ctx context.Context, store storage.Store, ret storage.R
 				log.Printf("Trace cleanup error: %v", err)
 			} else if deleted > 0 {
 				log.Printf("Trace cleanup: removed %d traces, %d spans", deleted, spans)
+			}
+			logsDeleted, err := store.PurgeLogs(ctx, logMaxAge)
+			if err != nil {
+				log.Printf("Log cleanup error: %v", err)
+			} else if logsDeleted > 0 {
+				log.Printf("Log cleanup: removed %d logs", logsDeleted)
 			}
 		case <-ctx.Done():
 			return

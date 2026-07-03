@@ -17,3 +17,10 @@ labubu-python/dist/
 labubu-python/labubu/bin/
 labubu-python/*.egg-info/
 labubu-python/labubu.egg-info/
+
+# Local deploy script (contains server credentials — keep local, never commit)
+/deploy.py
+
+# Root build binary (no extension) and local test database
+/labubu
+/data-test/

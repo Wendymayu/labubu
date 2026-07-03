@@ -23,8 +23,7 @@
         >{{ opt.label }}</button>
       </div>
       <div class="toolbar-actions">
-        <button class="action-btn" @click="expandAll" title="Expand All">⇤</button>
-        <button class="action-btn" @click="collapseAll" title="Collapse All">⇥</button>
+        <button class="action-btn" @click="toggleExpandCollapse" :title="allExpanded ? 'Collapse All' : 'Expand All'">{{ allExpanded ? '⇥' : '⇤' }}</button>
       </div>
     </div>
     <div class="waterfall-stats">
@@ -68,6 +67,7 @@
         <span v-else class="toggle-icon toggle-placeholder"></span>
         <span :class="['kind-dot', kindDotClass(span.kind)]"></span>
         <span :class="{ 'match-text': span._searchMatch && searchQuery }">{{ span.name }}</span>
+        <span v-if="span.tool_name" class="tool-name-tag"> · {{ span.tool_name }}</span>
         <span v-if="selectedSpanId === span.span_id" class="selected-marker">◀</span>
       </span>
 
@@ -112,6 +112,9 @@ defineEmits<{
 const collapsedParents = ref<Set<string>>(new Set())
 const previousSpans = ref<SpanDetail[] | null>(null)
 const DEFAULT_EXPAND_DEPTH = 1
+// When the trace has fewer spans than this, expand everything by default —
+// small traces are easy to take in at a glance, so collapsing adds friction.
+const AUTO_EXPAND_ALL_THRESHOLD = 20
 
 // --- Search & Filter ---
 const searchQuery = ref('')
@@ -182,12 +185,29 @@ interface DisplaySpan extends SpanDetail {
   _filterMatch: boolean
 }
 
+// A span is treated as a root when its parent is empty OR not present in the
+// current span set. This keeps in-progress/incomplete traces visible: when the
+// root span hasn't been exported yet, every received child span points at a
+// missing parent and would otherwise be unreachable from the tree root,
+// leaving the waterfall empty.
+const knownSpanIds = computed(() => {
+  const ids = new Set<string>()
+  for (const span of props.spans) ids.add(span.span_id)
+  return ids
+})
+
+function parentKeyOf(span: SpanDetail): string {
+  const p = span.parent_span_id
+  if (!p || !knownSpanIds.value.has(p)) return '__root__'
+  return p
+}
+
 const displaySpans = computed(() => {
   // --- Build childrenMap and childCountMap (once, reused below) ---
   const childrenMap = new Map<string, SpanDetail[]>()
   const childCountMap = new Map<string, number>()
   for (const span of props.spans) {
-    const parentKey = span.parent_span_id || '__root__'
+    const parentKey = parentKeyOf(span)
     if (!childrenMap.has(parentKey)) childrenMap.set(parentKey, [])
     childrenMap.get(parentKey)!.push(span)
     childCountMap.set(parentKey, (childCountMap.get(parentKey) || 0) + 1)
@@ -196,17 +216,20 @@ const displaySpans = computed(() => {
   // --- First load: init collapsed state ---
   if (previousSpans.value !== props.spans) {
     collapsedParents.value = new Set()
-    function markCollapsed(parentId: string, depth: number) {
-      const children = childrenMap.get(parentId) || []
-      for (const span of children) {
-        const hasKids = (childrenMap.get(span.span_id)?.length ?? 0) > 0
-        if (hasKids && depth >= DEFAULT_EXPAND_DEPTH) {
-          collapsedParents.value.add(span.span_id)
+    // Skip collapse-marking for small traces — leave all parents expanded.
+    if (props.spans.length >= AUTO_EXPAND_ALL_THRESHOLD) {
+      function markCollapsed(parentId: string, depth: number) {
+        const children = childrenMap.get(parentId) || []
+        for (const span of children) {
+          const hasKids = (childrenMap.get(span.span_id)?.length ?? 0) > 0
+          if (hasKids && depth >= DEFAULT_EXPAND_DEPTH) {
+            collapsedParents.value.add(span.span_id)
+          }
+          markCollapsed(span.span_id, depth + 1)
         }
-        markCollapsed(span.span_id, depth + 1)
       }
+      markCollapsed('__root__', 0)
     }
-    markCollapsed('__root__', 0)
     previousSpans.value = props.spans
   }
 
@@ -299,6 +322,16 @@ watch(searchQuery, (newVal) => {
   }
 })
 
+const allExpanded = computed(() => collapsedParents.value.size === 0)
+
+function toggleExpandCollapse() {
+  if (allExpanded.value) {
+    collapseAll()
+  } else {
+    expandAll()
+  }
+}
+
 function expandAll() {
   collapsedParents.value = new Set()
 }
@@ -308,7 +341,7 @@ function collapseAll() {
   // Collect all parent spans at depth >= 1
   const childrenMap = new Map<string, SpanDetail[]>()
   for (const span of props.spans) {
-    const pk = span.parent_span_id || '__root__'
+    const pk = parentKeyOf(span)
     if (!childrenMap.has(pk)) childrenMap.set(pk, [])
     childrenMap.get(pk)!.push(span)
   }
@@ -362,6 +395,7 @@ function formatDuration(ms: number): string {
 }
 
 function formatTokens(tokens: number): string {
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(0)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}K`
   return String(tokens)
 }
@@ -431,6 +465,7 @@ function formatTokens(tokens: number): string {
   display: flex;
   align-items: center;
   gap: 6px;
+  order: 2;
 }
 .search-input {
   padding: 4px 10px;
@@ -454,6 +489,7 @@ function formatTokens(tokens: number): string {
 .toolbar-filters {
   display: flex;
   gap: 4px;
+  order: 1;
 }
 .filter-btn {
   padding: 3px 10px;
@@ -474,9 +510,9 @@ function formatTokens(tokens: number): string {
   border-color: var(--accent-blue);
 }
 .toolbar-actions {
-  margin-left: auto;
   display: flex;
   gap: 4px;
+  order: 0;
 }
 .action-btn {
   padding: 3px 8px;
@@ -531,4 +567,5 @@ function formatTokens(tokens: number): string {
   opacity: 0.6;
 }
 .match-text { font-weight: 700; color: var(--status-error-accent); }
+.tool-name-tag { font-weight: 500; color: var(--text-primary); }
 </style>

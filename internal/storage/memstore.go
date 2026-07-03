@@ -1,4 +1,4 @@
-//go:build !cgo && nosqlite
+//go:build !local_engine && nosqlite
 
 // Package storage provides an in-memory Store implementation for non-CGO builds
 // with nosqlite tag. By default, non-CGO builds use SQLite Store instead.
@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -112,6 +113,7 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 	}
 
 	// Calculate costs inline for traces with token data (lock already held).
+	// Set per-span Cost on stored spans and aggregate trace cost.
 	for traceID := range traceMap {
 		merged, ok := m.traces[traceID]
 		if !ok || merged.TotalTokens == nil || *merged.TotalTokens == 0 {
@@ -120,24 +122,35 @@ func (m *memStore) InsertSpans(ctx context.Context, resource ResourceInfo, scope
 		var totalCost float64
 		var currency string
 		hasCost := false
-		for _, span := range inSpans {
-			if span.TraceID != traceID {
+		for i := range m.spans {
+			s := &m.spans[i]
+			if s.TraceID != traceID {
 				continue
 			}
-			if span.TotalTokens == nil || *span.TotalTokens == 0 || span.GenAIRequestModel == nil || *span.GenAIRequestModel == "" {
+			if s.TotalTokens == nil || *s.TotalTokens == 0 || s.GenAIRequestModel == nil || *s.GenAIRequestModel == "" {
 				continue
 			}
 			for _, p := range m.pricing {
-				if p.ModelName == *span.GenAIRequestModel {
-					inputT := float64(0)
-					outputT := float64(0)
-					if span.InputTokens != nil {
-						inputT = float64(*span.InputTokens)
+				if p.ModelName == *s.GenAIRequestModel {
+					inputT, outputT, ccT, crT := 0.0, 0.0, 0.0, 0.0
+					if s.InputTokens != nil {
+						inputT = float64(*s.InputTokens)
 					}
-					if span.OutputTokens != nil {
-						outputT = float64(*span.OutputTokens)
+					if s.OutputTokens != nil {
+						outputT = float64(*s.OutputTokens)
 					}
-					totalCost += (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+					if s.CacheCreationTokens != nil {
+						ccT = float64(*s.CacheCreationTokens)
+					}
+					if s.CacheReadTokens != nil {
+						crT = float64(*s.CacheReadTokens)
+					}
+					spanCost := (inputT*p.InputPrice+ccT*p.InputPrice*1.25+
+						crT*p.InputPrice*0.1+outputT*p.OutputPrice) / 1_000_000.0
+					spanCost = math.Round(spanCost*1e6) / 1e6
+					s.Cost = &spanCost
+					s.CostCurrency = p.Currency
+					totalCost += spanCost
 					hasCost = true
 					if currency == "" {
 						currency = p.Currency
@@ -185,6 +198,10 @@ func (m *memStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, er
 		if q.TraceID != zeroTrace && l.TraceID != q.TraceID {
 			continue
 		}
+		var zeroSpan [8]byte
+		if q.SpanID != zeroSpan && l.SpanID != q.SpanID {
+			continue
+		}
 		if q.StartTime > 0 && l.Timestamp < q.StartTime {
 			continue
 		}
@@ -194,8 +211,11 @@ func (m *memStore) ListLogs(ctx context.Context, q LogQuery) (*LogListResult, er
 		filtered = append(filtered, l)
 	}
 
-	// Sort by timestamp descending.
+	// Sort by timestamp (descending by default; ascending when Asc is set).
 	sort.Slice(filtered, func(i, j int) bool {
+		if q.Asc {
+			return filtered[i].Timestamp < filtered[j].Timestamp
+		}
 		return filtered[i].Timestamp > filtered[j].Timestamp
 	})
 
@@ -266,6 +286,21 @@ func (m *memStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogL
 	return items, nil
 }
 
+// GetLogCountsByTrace returns the per-span log count for a trace.
+func (m *memStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
+	_ = ctx
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	counts := make(map[string]int)
+	for _, l := range m.logs {
+		if l.TraceID == traceID {
+			counts[SpanIDToHex(l.SpanID)]++
+		}
+	}
+	return counts, nil
+}
+
 func (m *memStore) GetLogEventNames(ctx context.Context) ([]string, error) {
 	_ = ctx
 	m.mu.RLock()
@@ -321,6 +356,18 @@ func (m *memStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResu
 		if q.MaxDuration > 0 && t.DurationMS > q.MaxDuration {
 			continue
 		}
+		if q.MinSpanCount > 0 && t.SpanCount < q.MinSpanCount {
+			continue
+		}
+		if q.MaxSpanCount > 0 && t.SpanCount > q.MaxSpanCount {
+			continue
+		}
+		if q.MinCost > 0 && (t.Cost == nil || *t.Cost < q.MinCost) {
+			continue
+		}
+		if q.MaxCost > 0 && (t.Cost == nil || *t.Cost > q.MaxCost) {
+			continue
+		}
 		filtered = append(filtered, t)
 	}
 
@@ -349,15 +396,39 @@ func (m *memStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResu
 	items := make([]TraceListItem, len(page))
 	for i, t := range page {
 		items[i] = TraceListItem{
-			TraceIDHex:  TraceIDToHex(t.TraceID),
-			RootSpanID:  SpanIDToHex(t.RootSpanID),
-			RootName:    t.RootName,
-			RootService: t.ResourceAttrs["service.name"],
-			StartTimeMS: t.StartTimeMS,
-			DurationMS:  t.DurationMS,
-			SpanCount:   t.SpanCount,
-			Status:      StatusCodeToString(t.StatusCode),
-			TotalTokens: t.TotalTokens,
+			TraceIDHex:   TraceIDToHex(t.TraceID),
+			RootSpanID:   SpanIDToHex(t.RootSpanID),
+			RootName:     t.RootName,
+			RootService:  t.ResourceAttrs["service.name"],
+			StartTimeMS:  t.StartTimeMS,
+			DurationMS:   t.DurationMS,
+			SpanCount:    t.SpanCount,
+			Status:       StatusCodeToString(t.StatusCode),
+			TotalTokens:  t.TotalTokens,
+			Cost:         t.Cost,
+			CostCurrency: t.CostCurrency,
+		}
+	}
+
+	// Attach gen_ai.input.messages from each trace's root span.
+	if len(items) > 0 {
+		idxByTid := make(map[string]int, len(items))
+		for i := range items {
+			idxByTid[items[i].TraceIDHex] = i
+		}
+		for i := range m.spans {
+			sp := &m.spans[i]
+			if !isRootSpan(sp.ParentSpanID) {
+				continue
+			}
+			idx, ok := idxByTid[TraceIDToHex(sp.TraceID)]
+			if !ok {
+				continue
+			}
+			if v, ok := sp.Attributes["gen_ai.input.messages"]; ok && v != "" {
+				vv := v
+				items[idx].InputMessages = &vv
+			}
 		}
 	}
 
@@ -416,7 +487,20 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 			InputTokens:       s.InputTokens,
 			OutputTokens:      s.OutputTokens,
 			TotalTokens:       s.TotalTokens,
+			CacheCreationTokens: s.CacheCreationTokens,
+			CacheReadTokens:   s.CacheReadTokens,
 			GenAIRequestModel: s.GenAIRequestModel,
+		}
+
+		// Extract GenAI semantic attributes.
+		if s.Attributes != nil {
+			if v, ok := s.Attributes["gen_ai.system"]; ok {
+				detailSpans[i].GenAISystem = &v
+			}
+			if v, ok := s.Attributes["gen_ai.tool.name"]; ok {
+				detailSpans[i].ToolName = &v
+				detailSpans[i].IsToolCall = true
+			}
 		}
 
 		if s.ParentSpanID == [8]byte{} {
@@ -447,7 +531,31 @@ func (m *memStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionLi
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Group traces by session_id.
+	// The filter only gates WHICH sessions appear (sessions with at least one
+	// matching trace); aggregates run over the whole session so they match
+	// GetSession. See memstore_session_list_count_test.
+	// First pass: collect session IDs that have a matching trace.
+	matched := make(map[string]bool)
+	for _, t := range m.traces {
+		if t.SessionID == "" {
+			continue
+		}
+		if q.Service != "" && t.ResourceAttrs["service.name"] != q.Service {
+			continue
+		}
+		if q.Query != "" && !containsSubstring(t.SessionID, q.Query) {
+			continue
+		}
+		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
+			continue
+		}
+		if q.EndTimeMS > 0 && t.StartTimeMS > q.EndTimeMS {
+			continue
+		}
+		matched[t.SessionID] = true
+	}
+
+	// Second pass: aggregate ALL traces for matched sessions (unfiltered).
 	type agg struct {
 		traceCount      int
 		totalTokens     uint32
@@ -461,26 +569,9 @@ func (m *memStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionLi
 	groups := make(map[string]*agg)
 
 	for _, t := range m.traces {
-		if t.SessionID == "" {
+		if !matched[t.SessionID] { // includes empty session IDs (never matched)
 			continue
 		}
-		if q.Service != "" {
-			if t.ResourceAttrs["service.name"] != q.Service {
-				continue
-			}
-		}
-		if q.Query != "" {
-			if !containsSubstring(t.SessionID, q.Query) {
-				continue
-			}
-		}
-		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
-			continue
-		}
-		if q.EndTimeMS > 0 && t.StartTimeMS > q.EndTimeMS {
-			continue
-		}
-
 		g, ok := groups[t.SessionID]
 		if !ok {
 			g = &agg{firstActiveMS: t.StartTimeMS, lastActiveMS: t.StartTimeMS}
@@ -564,10 +655,17 @@ func (m *memStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionLi
 	}, nil
 }
 
-func (m *memStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+func (m *memStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*SessionDetail, error) {
 	_ = ctx
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
 
 	// Collect traces for this session.
 	var sessionTraces []Trace
@@ -643,9 +741,25 @@ func (m *memStore) GetSession(ctx context.Context, sessionID string) (*SessionDe
 		summary.ErrorRate = float64(errorCount) / float64(len(sessionTraces))
 	}
 
+	// Paginate the traces (already sorted ascending by start_time_ms).
+	total := len(traces)
+	offset := (page - 1) * pageSize
+	if offset > total {
+		offset = total
+	}
+	end := offset + pageSize
+	if end > total {
+		end = total
+	}
+	pageTraces := traces[offset:end]
+	if pageTraces == nil {
+		pageTraces = []TraceListItem{}
+	}
+
 	return &SessionDetail{
-		Session: summary,
-		Traces:  traces,
+		Session:    summary,
+		Traces:     pageTraces,
+		Pagination: Pagination{Page: page, PageSize: pageSize, Total: total},
 	}, nil
 }
 
@@ -713,6 +827,7 @@ func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int
 	}
 
 	// Delete spans belonging to deleted traces.
+	// (Logs are age-purged separately via PurgeLogs.)
 	newSpans := make([]Span, 0, len(m.spans))
 	for _, s := range m.spans {
 		if keepTraces[s.TraceID] {
@@ -723,16 +838,29 @@ func (m *memStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int
 	}
 	m.spans = newSpans
 
-	// Delete logs belonging to deleted traces.
+	return deletedTraces, deletedSpans, nil
+}
+
+func (m *memStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	_ = ctx
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cutoff := uint64(time.Now().UnixMilli()) - uint64(maxAge.Milliseconds())
+	deleted := 0
 	newLogs := make([]LogRecord, 0, len(m.logs))
 	for _, l := range m.logs {
-		if keepTraces[l.TraceID] {
+		if l.Timestamp < cutoff {
+			deleted++
+		} else {
 			newLogs = append(newLogs, l)
 		}
 	}
 	m.logs = newLogs
-
-	return deletedTraces, deletedSpans, nil
+	return deleted, nil
 }
 
 func (m *memStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
@@ -862,13 +990,25 @@ func (m *memStore) UpdateTraceCost(ctx context.Context, traceID [16]byte) error 
 			if p.ModelName == *span.GenAIRequestModel {
 				inputT := float64(0)
 				outputT := float64(0)
+				cacheCreateT := float64(0)
+				cacheReadT := float64(0)
 				if span.InputTokens != nil {
 					inputT = float64(*span.InputTokens)
 				}
 				if span.OutputTokens != nil {
 					outputT = float64(*span.OutputTokens)
 				}
-				c := (inputT*p.InputPrice + outputT*p.OutputPrice) / 1_000_000.0
+				if span.CacheCreationTokens != nil {
+					cacheCreateT = float64(*span.CacheCreationTokens)
+				}
+				if span.CacheReadTokens != nil {
+					cacheReadT = float64(*span.CacheReadTokens)
+				}
+				// Anthropic prompt-caching differential rates.
+				c := (inputT*p.InputPrice +
+					cacheCreateT*p.InputPrice*1.25 +
+					cacheReadT*p.InputPrice*0.1 +
+					outputT*p.OutputPrice) / 1_000_000.0
 				totalCost += c
 				hasCost = true
 				if currency == "" {
@@ -892,23 +1032,11 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Collect traces in the time range.
-	type modelAgg struct {
-		cost         float64
-		tokens       uint64
-		inputTokens  uint64
-		outputTokens uint64
-		traceCount   int
-	}
-	aggByModel := make(map[string]*modelAgg)
+	// Traces in range with cost>0.
+	costlyTraces := make(map[[16]byte]struct{})
 	var totalCost float64
-	var totalTokens uint64
-	var totalInputTokens uint64
-	var totalOutputTokens uint64
-	traceCount := 0
 	var currency string
-
-	for traceID, t := range m.traces {
+	for tid, t := range m.traces {
 		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
 			continue
 		}
@@ -916,93 +1044,190 @@ func (m *memStore) GetCostSummary(ctx context.Context, q CostQuery) (*CostSummar
 			continue
 		}
 		if t.Cost == nil || *t.Cost == 0 {
-			continue // skip traces with no cost
+			continue
 		}
-
-		traceCount++
+		costlyTraces[tid] = struct{}{}
 		totalCost += *t.Cost
-		if t.TotalTokens != nil {
-			totalTokens += uint64(*t.TotalTokens)
-		}
 		if currency == "" && t.CostCurrency != "" {
 			currency = t.CostCurrency
 		}
+	}
+	traceCount := len(costlyTraces)
 
-		// Find the model name from spans.
-		modelName := ""
-		for _, s := range m.spans {
-			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel != "" {
-				modelName = *s.GenAIRequestModel
-				break // use the first span's model
+	if q.GroupBy == "service" {
+		type svcAgg struct {
+			cost, input, cc, cr, output uint64
+			traces                       map[[16]byte]struct{}
+		}
+		sagg := map[string]*svcAgg{}
+		var oIn, oCC, oCR, oOut uint64
+
+		for i := range m.spans {
+			s := &m.spans[i]
+			if _, ok := costlyTraces[s.TraceID]; !ok {
+				continue
 			}
-		}
-		if modelName == "" {
-			modelName = "(unknown)"
-		}
-
-		entry, exists := aggByModel[modelName]
-		if !exists {
-			entry = &modelAgg{}
-			aggByModel[modelName] = entry
-		}
-		entry.cost += *t.Cost
-		if t.TotalTokens != nil {
-			entry.tokens += uint64(*t.TotalTokens)
-		}
-		entry.traceCount++
-
-		// Also accumulate input/output tokens for the model entry.
-		for _, s := range m.spans {
-			if s.TraceID == traceID && s.GenAIRequestModel != nil && *s.GenAIRequestModel == modelName {
-				if s.InputTokens != nil {
-					entry.inputTokens += uint64(*s.InputTokens)
-					totalInputTokens += uint64(*s.InputTokens)
-				}
-				if s.OutputTokens != nil {
-					entry.outputTokens += uint64(*s.OutputTokens)
-					totalOutputTokens += uint64(*s.OutputTokens)
+			if s.TotalTokens == nil {
+				continue
+			}
+			svc := "(unknown)"
+			if t, ok := m.traces[s.TraceID]; ok {
+				if name := t.ResourceAttrs["service.name"]; name != "" {
+					svc = name
 				}
 			}
+			entry := sagg[svc]
+			if entry == nil {
+				entry = &svcAgg{traces: map[[16]byte]struct{}{}}
+				sagg[svc] = entry
+			}
+			entry.traces[s.TraceID] = struct{}{}
+			if s.Cost != nil {
+				entry.cost += uint64(math.Round(*s.Cost * 1e6))
+			}
+			if s.InputTokens != nil {
+				entry.input += uint64(*s.InputTokens)
+				oIn += uint64(*s.InputTokens)
+			}
+			if s.CacheCreationTokens != nil {
+				entry.cc += uint64(*s.CacheCreationTokens)
+				oCC += uint64(*s.CacheCreationTokens)
+			}
+			if s.CacheReadTokens != nil {
+				entry.cr += uint64(*s.CacheReadTokens)
+				oCR += uint64(*s.CacheReadTokens)
+			}
+			if s.OutputTokens != nil {
+				entry.output += uint64(*s.OutputTokens)
+				oOut += uint64(*s.OutputTokens)
+			}
+		}
+
+		byService := make([]ServiceCostItem, 0, len(sagg))
+		for svc, e := range sagg {
+			tc := len(e.traces)
+			costF := float64(e.cost) / 1e6
+			avg := 0.0
+			if tc > 0 {
+				avg = math.Round(costF/float64(tc)*1e6) / 1e6
+			}
+			byService = append(byService, ServiceCostItem{
+				Service: svc, Cost: costF,
+				Tokens:              e.input + e.cc + e.cr + e.output,
+				InputTokens:         e.input, CacheCreationTokens: e.cc,
+				CacheReadTokens:     e.cr, OutputTokens: e.output,
+				TraceCount:          tc, AvgCost: avg,
+			})
+		}
+		sort.Slice(byService, func(i, j int) bool { return byService[i].Cost > byService[j].Cost })
+
+		avgPerTrace := 0.0
+		if traceCount > 0 {
+			avgPerTrace = math.Round(totalCost/float64(traceCount)*1e6) / 1e6
+		}
+
+		return &CostSummaryResult{
+			Period:   "",
+			Currency: currency,
+			Overview: CostOverview{
+				TotalCost:                totalCost,
+				TotalInputTokens:         oIn,
+				TotalCacheCreationTokens: oCC,
+				TotalCacheReadTokens:     oCR,
+				TotalOutputTokens:        oOut,
+				TotalTokens:              oIn + oCC + oCR + oOut,
+				AvgCostPerTrace:          avgPerTrace,
+				TraceCount:               traceCount,
+			},
+			GroupBy:   "service",
+			ByService: byService,
+		}, nil
+	}
+
+	type modelAgg struct {
+		cost, input, cc, cr, output uint64
+		traces                       map[[16]byte]struct{}
+	}
+	agg := map[string]*modelAgg{}
+	var oIn, oCC, oCR, oOut uint64
+
+	for i := range m.spans {
+		s := &m.spans[i]
+		if _, ok := costlyTraces[s.TraceID]; !ok {
+			continue
+		}
+		if s.TotalTokens == nil {
+			continue
+		}
+		model := "(unknown)"
+		if s.GenAIRequestModel != nil && *s.GenAIRequestModel != "" {
+			model = *s.GenAIRequestModel
+		}
+		entry := agg[model]
+		if entry == nil {
+			entry = &modelAgg{traces: map[[16]byte]struct{}{}}
+			agg[model] = entry
+		}
+		entry.traces[s.TraceID] = struct{}{}
+		if s.Cost != nil {
+			entry.cost += uint64(math.Round(*s.Cost * 1e6))
+		}
+		if s.InputTokens != nil {
+			entry.input += uint64(*s.InputTokens)
+			oIn += uint64(*s.InputTokens)
+		}
+		if s.CacheCreationTokens != nil {
+			entry.cc += uint64(*s.CacheCreationTokens)
+			oCC += uint64(*s.CacheCreationTokens)
+		}
+		if s.CacheReadTokens != nil {
+			entry.cr += uint64(*s.CacheReadTokens)
+			oCR += uint64(*s.CacheReadTokens)
+		}
+		if s.OutputTokens != nil {
+			entry.output += uint64(*s.OutputTokens)
+			oOut += uint64(*s.OutputTokens)
 		}
 	}
 
-	// Build ByModel slice, sorted by cost descending.
-	byModel := make([]ModelCostItem, 0, len(aggByModel))
-	for model, agg := range aggByModel {
-		avgCost := 0.0
-		if agg.traceCount > 0 {
-			avgCost = agg.cost / float64(agg.traceCount)
+	byModel := make([]ModelCostItem, 0, len(agg))
+	for model, e := range agg {
+		tc := len(e.traces)
+		var costF float64
+		costF = float64(e.cost) / 1e6
+		avg := 0.0
+		if tc > 0 {
+			avg = math.Round(costF/float64(tc)*1e6) / 1e6
 		}
 		byModel = append(byModel, ModelCostItem{
-			Model:        model,
-			Cost:         agg.cost,
-			Tokens:       agg.tokens,
-			InputTokens:  agg.inputTokens,
-			OutputTokens: agg.outputTokens,
-			TraceCount:   agg.traceCount,
-			AvgCost:      avgCost,
+			Model: model, Cost: costF,
+			Tokens: e.input + e.cc + e.cr + e.output,
+			InputTokens: e.input, CacheCreationTokens: e.cc,
+			CacheReadTokens: e.cr, OutputTokens: e.output,
+			TraceCount: tc, AvgCost: avg,
 		})
 	}
-	sort.Slice(byModel, func(i, j int) bool {
-		return byModel[i].Cost > byModel[j].Cost
-	})
+	sort.Slice(byModel, func(i, j int) bool { return byModel[i].Cost > byModel[j].Cost })
 
-	avgCostPerTrace := 0.0
+	avgPerTrace := 0.0
 	if traceCount > 0 {
-		avgCostPerTrace = totalCost / float64(traceCount)
+		avgPerTrace = math.Round(totalCost/float64(traceCount)*1e6) / 1e6
 	}
 
 	return &CostSummaryResult{
 		Period:   "",
 		Currency: currency,
 		Overview: CostOverview{
-			TotalCost:         totalCost,
-			TotalTokens:       totalTokens,
-			TotalInputTokens:  totalInputTokens,
-			TotalOutputTokens: totalOutputTokens,
-			AvgCostPerTrace:   avgCostPerTrace,
-			TraceCount:        traceCount,
+			TotalCost:                totalCost,
+			TotalInputTokens:         oIn,
+			TotalCacheCreationTokens: oCC,
+			TotalCacheReadTokens:     oCR,
+			TotalOutputTokens:        oOut,
+			TotalTokens:              oIn + oCC + oCR + oOut,
+			AvgCostPerTrace:          avgPerTrace,
+			TraceCount:               traceCount,
 		},
+		GroupBy: "model",
 		ByModel: byModel,
 	}, nil
 }
@@ -1028,6 +1253,37 @@ func (m *memStore) UpsertDiagnosisResult(ctx context.Context, result *DiagnosisR
 	defer m.mu.Unlock()
 	m.diagnosisResults[result.TraceID] = result
 	return m.saveToDiskLocked()
+}
+
+func (m *memStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Collect all traces for this session.
+	var sessionTraces []Trace
+	for _, t := range m.traces {
+		if t.SessionID == sessionID {
+			sessionTraces = append(sessionTraces, t)
+		}
+	}
+
+	if len(sessionTraces) == 0 {
+		return nil, nil
+	}
+
+	// Collect all spans for these traces.
+	var allSpans []Span
+	traceIDs := make(map[[16]byte]struct{})
+	for _, t := range sessionTraces {
+		traceIDs[t.TraceID] = struct{}{}
+	}
+	for _, s := range m.spans {
+		if _, ok := traceIDs[s.TraceID]; ok {
+			allSpans = append(allSpans, s)
+		}
+	}
+
+	return computeAgentStats(sessionTraces, allSpans), nil
 }
 
 // --- JSON file persistence for LLM configs and diagnosis results ---

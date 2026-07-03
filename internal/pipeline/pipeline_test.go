@@ -43,12 +43,16 @@ func (m *mockStore) ListSessions(ctx context.Context, q storage.SessionQuery) (*
 	return &storage.SessionListResult{}, nil
 }
 
-func (m *mockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
+func (m *mockStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*storage.SessionDetail, error) {
 	return nil, nil
 }
 
 func (m *mockStore) Purge(ctx context.Context, maxAge time.Duration, maxCount int) (int, int, error) {
 	return 0, 0, nil
+}
+
+func (m *mockStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
+	return 0, nil
 }
 
 func (m *mockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
@@ -58,6 +62,10 @@ func (m *mockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.
 }
 
 func (m *mockStore) GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]storage.LogListItem, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error) {
 	return nil, nil
 }
 
@@ -97,6 +105,10 @@ func (m *mockStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*
 }
 func (m *mockStore) UpsertDiagnosisResult(ctx context.Context, r *storage.DiagnosisResult) error {
 	return fmt.Errorf("not implemented")
+}
+
+func (m *mockStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*storage.AgentStats, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (m *mockStore) Close() error { return nil }

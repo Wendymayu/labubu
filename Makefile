@@ -10,26 +10,26 @@ LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 # Build Go binary (requires web/dist to exist for frontend embedding)
 build: web-build
-	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/labubu
+	go build -tags nosqlite $(LDFLAGS) -o bin/$(BINARY) ./cmd/labubu
 
 # Alias for build (explicit name for embedded frontend)
 build-embed: build
 
-# Build without CGO (uses SQLite Store by default)
+# Build without chDB (uses SQLite Store by default, no CGO needed)
 build-nocgo:
-	CGO_ENABLED=0 go build -tags "dev" -o /dev/null ./cmd/labubu
+	go build -tags "dev nosqlite" -o /dev/null ./cmd/labubu
 
-# Build without CGO and without SQLite (uses memStore, pure in-memory)
+# Build without SQLite (uses memStore, pure in-memory)
 build-mem:
-	CGO_ENABLED=0 go build -tags "nosqlite dev" -o /dev/null ./cmd/labubu
+	go build -tags "nosqlite dev" -o /dev/null ./cmd/labubu
 
 # Run all tests
 test:
 	go test -v ./internal/... ./web/... ./cmd/...
 
-# Run tests (SQLite Store by default on non-CGO)
+# Run tests (SQLite/memStore, no CGO needed)
 test-nocgo:
-	go test -v ./internal/...
+	go test -v -tags nosqlite ./internal/...
 
 # Run with dev mode (reads frontend from disk, no embed)
 run:

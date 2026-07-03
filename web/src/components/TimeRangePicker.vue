@@ -1,0 +1,199 @@
+<template>
+  <div class="period-bar">
+    <select
+      class="period-select"
+      :value="activePeriod"
+      @change="onSelectChange"
+    >
+      <option v-if="showAll" value="all">{{ t('timeRange.all') }}</option>
+      <option v-for="p in periods" :key="p" :value="p">{{ t(`timeRange.${p}`) }}</option>
+    </select>
+    <div v-if="activePeriod === 'custom'" class="custom-range">
+      <input type="datetime-local" v-model="customStart" @change="onCustomChange" />
+      <span>{{ t('timeRange.to') }}</span>
+      <input type="datetime-local" v-model="customEnd" @change="onCustomChange" />
+    </div>
+    <span v-if="rangeError" class="range-error">{{ t('timeRange.invalidRange') }}</span>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import type { TimeRangeSelection } from '../api/client'
+
+withDefaults(defineProps<{ showAll?: boolean }>(), {
+  showAll: false,
+})
+
+const emit = defineEmits<{
+  (e: 'change', selection: TimeRangeSelection): void
+}>()
+
+const { t } = useI18n()
+
+// Presets always rendered (the "all" button is conditional on showAll).
+const periods = ['today', '7d', '30d', 'custom'] as const
+
+const activePeriod = ref<string>('today')
+const customStart = ref('')
+const customEnd = ref('')
+const rangeError = ref(false)
+
+// <input type="datetime-local"> values are local time with no zone suffix.
+function toLocalInputValue(ms: number): string {
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// Compute start/end (epoch ms) for a non-custom preset. 'all' → no bounds.
+function presetRange(period: string): { start?: number; end?: number } {
+  const now = Date.now()
+  switch (period) {
+    case 'today': {
+      const d = new Date()
+      return { start: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(), end: now }
+    }
+    case '7d':
+      return { start: now - 7 * 24 * 3600 * 1000, end: now }
+    case '30d':
+      return { start: now - 30 * 24 * 3600 * 1000, end: now }
+    default: // 'all' or unknown
+      return {}
+  }
+}
+
+// Build the selection for a period without emitting. Returns null for an
+// incomplete/invalid custom range.
+function buildSelection(period: string): TimeRangeSelection | null {
+  if (period === 'custom') {
+    if (!customStart.value || !customEnd.value) return null
+    const start = new Date(customStart.value).getTime()
+    const end = new Date(customEnd.value).getTime()
+    if (start > end) return null
+    return { period, start, end }
+  }
+  if (period === 'all') return { period }
+  const { start, end } = presetRange(period)
+  return { period, start, end }
+}
+
+function emitSelection(period: string) {
+  rangeError.value = false
+  const sel = buildSelection(period)
+  if (sel === null) {
+    if (period === 'custom') rangeError.value = true
+    return // incomplete/invalid custom range — do not emit
+  }
+  emit('change', sel)
+}
+
+// Refresh the time range against "now" for the currently-active preset.
+// Returns a fresh selection for relative presets (today/7d/30d), or null
+// for 'all'/'custom' (their bounds don't drift with time, so the caller
+// should keep its last-known selection). Used by list views' search button
+// so a relative window moves forward instead of being frozen at selection.
+function refresh(): TimeRangeSelection | null {
+  const p = activePeriod.value
+  if (p === 'all' || p === 'custom') return null
+  return buildSelection(p)
+}
+
+defineExpose({ refresh })
+
+function setPeriod(key: string) {
+  if (key === 'custom') {
+    // Seed the custom range from the current preset so the user can fine-tune.
+    const now = Date.now()
+    let start: number
+    switch (activePeriod.value) {
+      case 'today': {
+        const d = new Date()
+        start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+        break
+      }
+      case '7d': start = now - 7 * 24 * 3600 * 1000; break
+      case '30d': start = now - 30 * 24 * 3600 * 1000; break
+      default: start = now - 24 * 3600 * 1000 // 'all' or already-custom → last 24h
+    }
+    customStart.value = toLocalInputValue(start)
+    customEnd.value = toLocalInputValue(now)
+    activePeriod.value = 'custom'
+    emitSelection('custom')
+    return
+  }
+  activePeriod.value = key
+  emitSelection(key)
+}
+
+function onCustomChange() {
+  emitSelection('custom')
+}
+
+function onSelectChange(e: Event) {
+  setPeriod((e.target as HTMLSelectElement).value)
+}
+
+onMounted(() => {
+  // Emit the default 'today' selection so parents run their first fetch with
+  // the correct time range. Vue mounts children before parents, so this fires
+  // before the parent's onMounted.
+  emitSelection(activePeriod.value)
+})
+</script>
+
+<style scoped>
+.period-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.period-select {
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+html[data-theme="dark"] .period-select {
+  color-scheme: dark;
+}
+
+.custom-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+}
+
+.custom-range input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.custom-range span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+html[data-theme="dark"] .custom-range input {
+  color-scheme: dark;
+}
+
+.range-error {
+  color: var(--status-error-accent);
+  font-size: 13px;
+  margin-left: 8px;
+}
+</style>

@@ -50,7 +50,11 @@ CREATE TABLE IF NOT EXISTS spans (
     input_tokens       INTEGER,
     output_tokens      INTEGER,
     total_tokens       INTEGER,
+    cache_creation_tokens INTEGER,
+    cache_read_tokens  INTEGER,
     gen_ai_request_model TEXT,
+    cost               REAL,
+    cost_currency      TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (trace_id_hex, span_id_hex)
 );
 
@@ -82,14 +86,15 @@ CREATE TABLE IF NOT EXISTS model_pricing (
 );
 
 CREATE TABLE IF NOT EXISTS llm_configs (
-    id           TEXT NOT NULL PRIMARY KEY,
-    model_name   TEXT NOT NULL,
-    provider_url TEXT NOT NULL,
-    api_key      TEXT NOT NULL DEFAULT '',
-    is_default   INTEGER NOT NULL DEFAULT 0,
-    temperature  REAL NOT NULL DEFAULT 0.7,
-    max_tokens   INTEGER NOT NULL DEFAULT 4096,
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    id            TEXT NOT NULL PRIMARY KEY,
+    model_name    TEXT NOT NULL,
+    provider_type TEXT NOT NULL DEFAULT 'openai',
+    provider_url  TEXT NOT NULL,
+    api_key       TEXT NOT NULL DEFAULT '',
+    is_default    INTEGER NOT NULL DEFAULT 0,
+    temperature   REAL NOT NULL DEFAULT 0.7,
+    max_tokens    INTEGER NOT NULL DEFAULT 4096,
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS diagnosis_results (

@@ -44,6 +44,13 @@
         </div>
       </div>
 
+      <!-- Agent Stats Section -->
+      <AgentStatsSection
+        :stats="agentStats"
+        :loading="agentStatsLoading"
+        :error="agentStatsError"
+      />
+
       <!-- Context Window Chart -->
       <div class="ctx-window-section">
         <h3 class="ctx-heading">{{ t('sessionDetail.contextWindow') }}</h3>
@@ -71,16 +78,17 @@
         </div>
       </div>
 
-      <h3 class="turns-heading">Turns ({{ detail.traces.length }})</h3>
+      <h3 class="turns-heading">Turns ({{ detail.pagination.total }})</h3>
 
-      <div class="turns-list">
+      <div v-if="turnsLoading" class="turns-loading">{{ t('common.loading') }}</div>
+      <div class="turns-list" v-else>
         <div
           v-for="(trace, idx) in detail.traces"
           :key="trace.trace_id_hex"
           class="turn-row"
           @click="goToTrace(trace.trace_id_hex)"
         >
-          <span class="turn-number">#{{ idx + 1 }}</span>
+          <span class="turn-number">#{{ (page - 1) * pageSize + idx + 1 }}</span>
           <span class="turn-name">{{ trace.root_name }}</span>
           <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
           <span class="turn-duration">{{ formatDuration(trace.duration_ms) }}</span>
@@ -89,16 +97,47 @@
           <span class="turn-time">{{ formatTime(trace.start_time_ms) }}</span>
         </div>
       </div>
+
+      <div class="pagination" v-if="detail.pagination.total > 0">
+        <button
+          :disabled="page <= 1 || turnsLoading"
+          @click="goToTurnsPage(page - 1)"
+          class="btn"
+        >
+          {{ t('common.prev') }}
+        </button>
+        <span class="page-info">
+          {{ t('common.pageOf', { page: page, total: totalPages, count: detail.pagination.total }) }}
+        </span>
+        <button
+          :disabled="page >= totalPages || turnsLoading"
+          @click="goToTurnsPage(page + 1)"
+          class="btn"
+        >
+          {{ t('common.next') }}
+        </button>
+        <span class="page-size">
+          <label>{{ t('common.perPage') }}</label>
+          <select
+            :value="pageSize"
+            @change="changeTurnsPageSize(Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option v-for="n in pageSizeOptions" :key="n" :value="n">{{ n }}</option>
+          </select>
+        </span>
+      </div>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '../composables/useTheme'
-import { getSession, type SessionDetail, type QueryResult } from '../api/client'
+import { usePageSize } from '../composables/usePageSize'
+import { getSession, getAgentStats, type SessionDetail, type AgentStats, type QueryResult } from '../api/client'
+import AgentStatsSection from '../components/AgentStatsSection.vue'
 import { formatCost } from '../utils/format'
 import {
   Chart, LineController, CategoryScale, LinearScale,
@@ -136,7 +175,20 @@ const { theme } = useTheme()
 
 const detail = ref<SessionDetail | null>(null)
 const loading = ref(true)
+const turnsLoading = ref(false)
 const error = ref('')
+
+// Turns (session traces) pagination.
+const { options: pageSizeOptions, loadPageSize, savePageSize } = usePageSize('sessionDetail')
+const page = ref(1)
+const pageSize = ref(loadPageSize())
+
+const totalPages = computed(() => Math.max(1, Math.ceil((detail.value?.pagination.total ?? 0) / pageSize.value)))
+
+// Agent stats state
+const agentStats = ref<AgentStats | null>(null)
+const agentStatsLoading = ref(false)
+const agentStatsError = ref('')
 
 // Context window chart state
 const ctxLoading = ref(false)
@@ -155,15 +207,52 @@ const CTX_COLORS = [
 ]
 
 async function fetchSession() {
-  loading.value = true
+  const firstLoad = detail.value == null
+  if (firstLoad) {
+    loading.value = true
+  } else {
+    turnsLoading.value = true
+  }
   error.value = ''
   try {
-    detail.value = await getSession(sessionId)
-    fetchContextWindow()  // fetch context window data in background
+    detail.value = await getSession(sessionId, page.value, pageSize.value)
+    if (firstLoad) {
+      fetchContextWindow()  // fetch context window data in background
+    }
   } catch (e: any) {
     error.value = e.message || 'Failed to load session'
   } finally {
     loading.value = false
+    turnsLoading.value = false
+  }
+}
+
+function goToTurnsPage(p: number) {
+  page.value = p
+  fetchSession()
+}
+
+function changeTurnsPageSize(n: number) {
+  pageSize.value = n
+  savePageSize(n)
+  page.value = 1
+  fetchSession()
+}
+
+async function fetchAgentStats() {
+  if (!route.params.sessionId) return
+  agentStatsLoading.value = true
+  agentStatsError.value = ''
+  try {
+    agentStats.value = await getAgentStats(route.params.sessionId as string)
+  } catch (e: any) {
+    if (e.message === 'no_agent_data') {
+      agentStats.value = null
+    } else {
+      agentStatsError.value = e.message || 'Failed to load agent stats'
+    }
+  } finally {
+    agentStatsLoading.value = false
   }
 }
 
@@ -181,6 +270,7 @@ function formatDuration(ms: number): string {
 
 function formatTokens(tokens?: number): string {
   if (tokens == null) return '-'
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
   return String(tokens)
 }
@@ -410,6 +500,7 @@ function errorRateClass(rate: number): string {
 
 onMounted(() => {
   fetchSession()
+  fetchAgentStats()
   setupCtxTooltipListeners()
 })
 
@@ -461,6 +552,16 @@ onUnmounted(() => {
 .turn-tokens { color: var(--token-highlight); font-weight: 600; min-width: 60px; text-align: right; }
 .turn-service { color: var(--text-secondary); font-size: 13px; min-width: 100px; }
 .turn-time { color: var(--text-secondary); font-size: 13px; min-width: 80px; text-align: right; }
+
+.turns-loading { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 14px; }
+
+.pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
+.page-info { font-size: 14px; color: var(--text-secondary); }
+.page-size { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-secondary); }
+.page-size select { padding: 2px 6px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: 4px; font-size: 13px; }
+.btn { padding: 8px 16px; background: var(--bg-surface-hover); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-primary); cursor: pointer; font-size: 14px; }
+.btn:hover { background: var(--border-strong); }
+.btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Context window chart section */
 .ctx-window-section {

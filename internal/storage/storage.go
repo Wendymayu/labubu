@@ -27,8 +27,12 @@ type Span struct {
 	StatusMessage          string
 	InputTokens            *uint32 // nullable — only set for LLM spans
 	OutputTokens           *uint32
-	TotalTokens            *uint32
+	TotalTokens            *uint32 // input + cache_creation + cache_read + output
+	CacheCreationTokens    *uint32 // prompt-caching write tokens (Claude/Anthropic)
+	CacheReadTokens        *uint32 // prompt-caching read tokens (Claude/Anthropic)
 	GenAIRequestModel      *string // nullable
+	Cost                   *float64 // per-span cost (differential cache rates applied)
+	CostCurrency           string   // currency of Cost, empty if no cost
 	TraceState             string
 }
 
@@ -81,41 +85,66 @@ type TraceQuery struct {
 	EndTimeMS   uint64
 	MinDuration uint64
 	MaxDuration uint64
+	MinSpanCount uint16
+	MaxSpanCount uint16
+	MinCost     float64
+	MaxCost     float64
 }
 
 // CostQuery defines filters for cost summary aggregation.
 type CostQuery struct {
 	StartTimeMS uint64
 	EndTimeMS   uint64
+	GroupBy     string // "model" (default) or "service"
 }
 
 // CostOverview holds aggregated cost totals.
 type CostOverview struct {
-	TotalCost         float64 `json:"total_cost"`
-	TotalTokens       uint64  `json:"total_tokens"`
-	TotalInputTokens  uint64  `json:"total_input_tokens"`
-	TotalOutputTokens uint64  `json:"total_output_tokens"`
-	AvgCostPerTrace   float64 `json:"avg_cost_per_trace"`
-	TraceCount        int     `json:"trace_count"`
+	TotalCost                float64 `json:"total_cost"`
+	TotalTokens              uint64  `json:"total_tokens"`
+	TotalInputTokens         uint64  `json:"total_input_tokens"`
+	TotalCacheCreationTokens uint64  `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     uint64  `json:"total_cache_read_tokens"`
+	TotalOutputTokens        uint64  `json:"total_output_tokens"`
+	AvgCostPerTrace          float64 `json:"avg_cost_per_trace"`
+	TraceCount               int     `json:"trace_count"`
 }
 
 // ModelCostItem holds cost aggregation for a single model.
 type ModelCostItem struct {
-	Model        string  `json:"model"`
-	Cost         float64 `json:"cost"`
-	Tokens       uint64  `json:"tokens"`
-	InputTokens  uint64  `json:"input_tokens"`
-	OutputTokens uint64  `json:"output_tokens"`
-	TraceCount   int     `json:"trace_count"`
-	AvgCost      float64 `json:"avg_cost"`
+	Model               string  `json:"model"`
+	Cost                float64 `json:"cost"`
+	Tokens              uint64  `json:"tokens"`
+	InputTokens         uint64  `json:"input_tokens"`
+	CacheCreationTokens uint64  `json:"cache_creation_tokens"`
+	CacheReadTokens     uint64  `json:"cache_read_tokens"`
+	OutputTokens        uint64  `json:"output_tokens"`
+	TraceCount          int     `json:"trace_count"`
+	AvgCost             float64 `json:"avg_cost"`
+}
+
+// ServiceCostItem holds cost aggregation for a single service.
+// Mirrors ModelCostItem; the dimension value is the trace's service.name.
+type ServiceCostItem struct {
+	Service             string  `json:"service"`
+	Cost                float64 `json:"cost"`
+	Tokens              uint64  `json:"tokens"`
+	InputTokens         uint64  `json:"input_tokens"`
+	CacheCreationTokens uint64  `json:"cache_creation_tokens"`
+	CacheReadTokens     uint64  `json:"cache_read_tokens"`
+	OutputTokens        uint64  `json:"output_tokens"`
+	TraceCount          int     `json:"trace_count"`
+	AvgCost             float64 `json:"avg_cost"`
 }
 
 // CostSummaryResult holds the full cost dashboard response.
 type CostSummaryResult struct {
-	Period   string          `json:"period"`
-	Currency string          `json:"currency"`
-	Overview CostOverview    `json:"overview"`
-	ByModel  []ModelCostItem `json:"by_model"`
+	Period    string            `json:"period"`
+	Currency  string            `json:"currency"`
+	Overview  CostOverview      `json:"overview"`
+	GroupBy   string            `json:"group_by"`
+	ByModel   []ModelCostItem   `json:"by_model"`
+	ByService []ServiceCostItem `json:"by_service"`
 }
 
 // TraceListResult holds a page of trace summaries.
@@ -137,6 +166,9 @@ type TraceListItem struct {
 	TotalTokens  *uint32  `json:"total_tokens"`
 	Cost         *float64 `json:"cost"`
 	CostCurrency string   `json:"cost_currency"`
+	// InputMessages is the root span's gen_ai.input.messages attribute
+	// (a JSON string), surfaced for the trace list "Input" column.
+	InputMessages *string `json:"input_messages,omitempty"`
 }
 
 // Pagination holds page metadata.
@@ -172,10 +204,11 @@ type SessionListItem struct {
 	LastActiveMS    uint64  `json:"last_active_ms"`
 }
 
-// SessionDetail is a session with all its traces.
+// SessionDetail is a session summary plus a page of its traces.
 type SessionDetail struct {
-	Session SessionListItem `json:"session"`
-	Traces  []TraceListItem `json:"traces"`
+	Session    SessionListItem `json:"session"`
+	Traces     []TraceListItem `json:"traces"`
+	Pagination Pagination      `json:"pagination"`
 }
 
 // SessionListResult holds a page of session summaries.
@@ -223,7 +256,35 @@ type SpanDetail struct {
 	InputTokens         *uint32           `json:"input_tokens"`
 	OutputTokens        *uint32           `json:"output_tokens"`
 	TotalTokens         *uint32           `json:"total_tokens"`
+	CacheCreationTokens *uint32           `json:"cache_creation_tokens"`
+	CacheReadTokens     *uint32           `json:"cache_read_tokens"`
 	GenAIRequestModel   *string           `json:"gen_ai_request_model"`
+	GenAISystem         *string           `json:"gen_ai_system"`        // Attributes["gen_ai.system"]
+	ToolName            *string           `json:"tool_name"`            // Attributes["gen_ai.tool.name"]
+	IsToolCall          bool              `json:"is_tool_call"`         // ToolName != nil
+}
+
+// ToolUsageItem holds statistics for a single tool across a session.
+type ToolUsageItem struct {
+	ToolName    string  `json:"tool_name"`
+	CallCount   int     `json:"call_count"`
+	SuccessRate float64 `json:"success_rate"`
+	AvgRetries  float64 `json:"avg_retries"`
+	MaxLoop     int     `json:"max_loop"`
+}
+
+// AgentStats holds aggregate agent behavior statistics for a session.
+type AgentStats struct {
+	TraceSuccessRate    float64        `json:"trace_success_rate"`
+	AvgToolSuccessRate  float64        `json:"avg_tool_success_rate"`
+	AvgRetries          float64        `json:"avg_retries"`
+	AvgLoopDepth        float64        `json:"avg_loop_depth"`
+	MaxLoopDepth        int            `json:"max_loop_depth"`
+	SpanPerTrace        float64        `json:"span_per_trace"`
+	TotalToolCalls      int            `json:"total_tool_calls"`
+	SuccessfulToolCalls int            `json:"successful_tool_calls"`
+	ToolUsage           []ToolUsageItem `json:"tool_usage"`
+	Insights            []string       `json:"insights"`
 }
 
 // ModelPricing holds pricing configuration for a single model.
@@ -236,13 +297,14 @@ type ModelPricing struct {
 
 // LLMConfig holds configuration for a single LLM model used for trace analysis.
 type LLMConfig struct {
-	ID          string  `json:"id"`
-	ModelName   string  `json:"model_name"`
-	ProviderURL string  `json:"provider_url"`
-	APIKey      string  `json:"api_key"`     // plaintext at rest, masked on GET
-	IsDefault   bool    `json:"is_default"`
-	Temperature float64 `json:"temperature"` // default 0.7
-	MaxTokens   int     `json:"max_tokens"`  // default 4096
+	ID           string  `json:"id"`
+	ModelName    string  `json:"model_name"`
+	ProviderType string  `json:"provider_type"` // "openai" or "anthropic", default "openai"
+	ProviderURL  string  `json:"provider_url"`
+	APIKey       string  `json:"api_key"`     // plaintext at rest, masked on GET
+	IsDefault    bool    `json:"is_default"`
+	Temperature  float64 `json:"temperature"` // default 0.7
+	MaxTokens    int     `json:"max_tokens"`  // default 4096
 }
 
 // MaskAPIKey truncates an API key for display: shows first 3 and last 2 chars
@@ -312,14 +374,20 @@ type Store interface {
 	// ListSessions returns a paginated list of session summaries.
 	ListSessions(ctx context.Context, q SessionQuery) (*SessionListResult, error)
 
-	// GetSession returns a session summary and all its traces.
-	GetSession(ctx context.Context, sessionID string) (*SessionDetail, error)
+	// GetSession returns a session summary and a page of its traces. page
+	// (1-based) and pageSize control the traces page; Session.TraceCount and
+	// Pagination.Total reflect the total trace count for the session.
+	GetSession(ctx context.Context, sessionID string, page, pageSize int) (*SessionDetail, error)
 
 	// Purge removes traces (and their spans) that exceed the retention policy.
 	// maxAge: delete traces with start_time_ms older than (now - maxAge). 0 = no age limit.
 	// maxCount: keep only the newest maxCount traces. 0 = no count limit.
 	// Returns the number of deleted traces and spans.
 	Purge(ctx context.Context, maxAge time.Duration, maxCount int) (deletedTraces int, deletedSpans int, err error)
+
+	// PurgeLogs removes log records older than (now - maxAge) by their own
+	// timestamp. 0 = no age limit. Returns the number of deleted logs.
+	PurgeLogs(ctx context.Context, maxAge time.Duration) (deletedLogs int, err error)
 
 	// InsertLogs writes a batch of log records.
 	InsertLogs(ctx context.Context, logs []LogRecord) error
@@ -329,6 +397,9 @@ type Store interface {
 
 	// GetLogsByTrace returns all log records for a given trace, ordered by timestamp.
 	GetLogsByTrace(ctx context.Context, traceID [16]byte) ([]LogListItem, error)
+
+	// GetLogCountsByTrace returns the number of logs per span_id_hex for a trace.
+	GetLogCountsByTrace(ctx context.Context, traceID [16]byte) (map[string]int, error)
 
 	// GetLogEventNames returns distinct event_name values for the filter dropdown.
 	GetLogEventNames(ctx context.Context) ([]string, error)
@@ -355,6 +426,9 @@ type Store interface {
 
 	// UpsertDiagnosisResult inserts or replaces the diagnosis result for a trace.
 	UpsertDiagnosisResult(ctx context.Context, result *DiagnosisResult) error
+
+	// GetSessionAgentStats computes agent behavior statistics for a session.
+	GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error)
 
 	// Close releases resources (e.g., chDB session).
 	Close() error
@@ -410,6 +484,21 @@ func StatusCodeToString(code int32) string {
 	}
 }
 
+// StatusCodeFromString converts a stored status string back to the OTel
+// StatusCode int32. chDB and SQLite persist status_code as a string; this
+// restores the int32 form that computeAgentStats consumes. Unknown values
+// map to UNSET (0).
+func StatusCodeFromString(s string) int32 {
+	switch s {
+	case "OK":
+		return 1
+	case "ERROR":
+		return 2
+	default:
+		return 0
+	}
+}
+
 // --- Log types ---
 
 // LogRecord represents a single OTLP log record stored in the logs table.
@@ -431,8 +520,10 @@ type LogQuery struct {
 	EventName string   // "" = all
 	Query     string   // full-text search on body
 	TraceID   [16]byte // zero value = no trace filter
+	SpanID    [8]byte  // zero value = no span filter
 	StartTime uint64
 	EndTime   uint64
+	Asc       bool // true = oldest-first (timestamp ASC); false = newest-first (DESC, default)
 }
 
 // LogListItem is the API response item for a log record.

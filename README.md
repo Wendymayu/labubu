@@ -4,7 +4,7 @@ A local-first LLM observability platform. It receives OTLP traces and metrics fr
 
 ## Features
 
-- **OTLP Ingestion** — gRPC (port 4317) and HTTP (port 4318) for traces and metrics
+- **OTLP Ingestion** — gRPC (port 4317) and HTTP (port 4318) for traces and metrics; ports configurable via `--otlp-grpc-port` / `--otlp-http-port`
 - **Embedded chDB Storage** — ClickHouse-compatible, no external database required (optional, with in-memory fallback)
 - **Trace Explorer** — searchable trace list with service/status/duration filters
 - **Waterfall View** — span-level waterfall chart with slide-in detail drawer
@@ -19,10 +19,10 @@ A local-first LLM observability platform. It receives OTLP traces and metrics fr
 
 ### Prerequisites
 
-- **Go** 1.19+
+- **Go** 1.25+
 - **Node.js** 18+ (frontend development only)
 
-chDB (`libchdb.so`) is optional — the in-memory store works without it for development.
+No external database required — SQLite is used by default. chDB (`libchdb.so`) is optional for ClickHouse-compatible storage on Linux/macOS.
 
 ### 1. Clone & install
 
@@ -37,14 +37,21 @@ cd web && npm install && cd ..
 ### 2. Start backend
 
 ```bash
-# Dev mode (reads frontend from disk, in-memory storage)
 go run -tags dev ./cmd/labubu serve
 ```
+
+> Uses SQLite storage by default. For chDB (Linux/macOS with CGO): `go run -tags "dev local_engine" ./cmd/labubu serve`
 
 The backend starts at:
 - **API & UI:** http://localhost:8080
 - **OTLP gRPC:** http://localhost:4317
 - **OTLP HTTP:** http://localhost:4318
+
+> To listen on different OTLP ports (e.g. to avoid conflicts with another collector), pass the flags explicitly — all three listening ports are then overridden:
+> ```bash
+> go run -tags dev ./cmd/labubu serve --port 18080 --otlp-grpc-port 14317 --otlp-http-port 14318
+> ```
+> If a port is already in use, startup now fails fast with a clear error instead of silently skipping the listener.
 
 ### 3. Start frontend (optional — for hot-reload dev)
 
@@ -61,8 +68,11 @@ Vite dev server starts at http://localhost:3001 and proxies API requests to `:80
 ### Build a single binary
 
 ```bash
-# Build frontend assets + Go binary
+# Build with chDB (requires CGO)
 make build
+
+# Build without chDB (no CGO, for Windows or CI)
+make build-nocgo
 
 # Binary at bin/labubu
 ./bin/labubu serve
@@ -92,13 +102,14 @@ Open http://localhost:8080 to explore traces, sessions, and metrics.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port` | `8080` | API and UI listen port |
+| `--otlp-grpc-port` | `4317` | OTLP gRPC listen port |
+| `--otlp-http-port` | `4318` | OTLP HTTP listen port |
 | `--data-dir` | `""` | chDB data directory (empty = in-memory) |
 | `--config` | `labubu.yaml` | YAML config file path |
 | `--buffer-size` | `1000` | Pipeline buffer capacity |
 | `--flush-interval` | `200ms` | Pipeline flush interval |
 | `--metrics-enabled` | `true` | Enable/disable metrics ingestion |
 | `--metrics-data-dir` | `""` | tstorage data directory (empty = memory only) |
-| `--metrics-retention` | `2h` | tstorage retention duration |
 | `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 
 ### YAML config (`labubu.yaml`)
@@ -108,10 +119,18 @@ Place a `labubu.yaml` in the working directory (or use `--config`):
 ```yaml
 trace:
   retention:
-    max_age: 24h          # delete traces older than this (0 = unlimited)
+    max_age: 168h          # delete traces older than this (0 = unlimited). Go duration: h/m/s/ms
     max_count: 10000      # keep only the newest N traces (0 = unlimited)
     cleanup_interval: 5m  # how often the cleanup goroutine runs
+log:
+  retention:
+    max_age: 168h          # delete logs older than this by their own timestamp (0 = unlimited)
+metric:
+  retention:
+    max_age: 168h          # drop metrics older than this (tstorage TTL)
 ```
+
+Durations use Go `time.ParseDuration` format (`h`/`m`/`s`/`ms`), e.g. `168h` = 7 days, `72h` = 3 days. The `d` suffix is **not** supported — `7d` will be silently ignored and the default (7 days) is used.
 
 No file? Built-in defaults are used silently — everything still works.
 
@@ -123,8 +142,8 @@ Quick overview:
 
 | Section | Endpoints |
 |---------|-----------|
-| Traces | `GET /api/v1/traces`, `GET /api/v1/traces/:id`, `POST /api/v1/traces/export`, `GET /api/v1/services` |
-| Sessions | `GET /api/v1/sessions`, `GET /api/v1/sessions/:id` |
+| Traces | `GET /api/v1/traces`, `GET /api/v1/traces/:id`, `POST /api/v1/traces/export`, `GET /api/v1/services`, `GET /api/v1/traces/:id/diagnosis`, `POST /api/v1/traces/:id/diagnose` |
+| Sessions | `GET /api/v1/sessions`, `GET /api/v1/sessions/:id`, `GET /api/v1/sessions/:id/agent-stats` |
 | Logs | `GET /api/v1/logs`, `GET /api/v1/logs/:traceId`, `GET /api/v1/log-event-names` |
 | Metrics | `GET /api/v1/query`, `/query_range`, `/labels`, `/label/:name/values`, `/metadata`, `/metric-names` |
 | Dashboards | Full CRUD at `/api/v1/dashboards` + panels sub-resource |
@@ -135,7 +154,7 @@ Quick overview:
 ## Architecture
 
 ```
-OTLP (gRPC/HTTP) → Receiver → Pipeline → Storage (chDB or in-memory)
+OTLP (gRPC/HTTP) → Receiver → Pipeline → Storage (chDB, SQLite, or in-memory)
                     │                        │
                     ▼                        ▼
                Metric Store           REST API ← Vue 3 SPA
@@ -147,11 +166,14 @@ Detailed project structure: **[docs/project-structure.md](docs/project-structure
 ## Development
 
 ```bash
-# Run all Go tests
+# Run all Go tests (requires CGO)
 make test
 
-# Run tests excluding chDB integration tests
+# Run tests without CGO (recommended for Windows/CI)
 make test-nocgo
+
+# Or run directly:
+go test -tags nosqlite -v ./internal/...
 
 # TypeScript type check
 cd web && npx vue-tsc --noEmit

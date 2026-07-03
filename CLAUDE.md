@@ -59,7 +59,7 @@ internal/
   api/                — HTTP handlers (traces, sessions, metrics, dashboards, logs, pricing, llm-configs)
   receiver/           — OTLP gRPC + HTTP receiver (traces, metrics, logs)
   pipeline/           — Async ingestion pipeline with backpressure
-  storage/            — Store interface + chDB (CGO) / memstore (non-CGO) implementations
+  storage/            — Store interface + chDB (CGO) / SQLite (default) / memstore (fallback) implementations
   metrics/            — tstorage-backed metrics store
   log/                — Structured logging (slog)
 web/src/              — Vue 3 SPA (views, components, router, API client, i18n)
@@ -71,7 +71,8 @@ Full directory tree: `docs/project-structure.md`
 ## Key Patterns
 
 - **Build tags:** `!dev` (production, embeds frontend), `dev` (development, reads from disk)
-- **Storage:** `Store` interface (see `internal/storage/storage.go`). chDB implementation requires `local_engine` build tag; memstore works everywhere.
+- **Storage:** `Store` interface (see `internal/storage/storage.go`). chDB implementation requires `local_engine` build tag; SQLite is the default non-CGO implementation; memstore is a no-CGO fallback.
+- **LLM diagnosis:** Multi-provider adapter pattern (see `internal/api/diagnosis_llm.go`). `callLLMForDiagnosis` dispatches by `provider_type` field (`openai` / `anthropic`). OpenAI adapter handles polymorphic content for ZhipuAI/GLM. Anthropic adapter uses Messages API format (`x-api-key` auth, `system` top-level field). Provider URL is used directly — no auto-appending.
 - **Frontend serving:** `web.StaticFS` (embed or disk) → `fs.Sub` → `serveSPA` in `internal/api/router.go`
 - **Version:** Set at build time via `-ldflags "-X main.Version=..."`
 - **Router pattern:** Go 1.22 `http.ServeMux` with path-based routing. Handlers subroute with `strings.TrimPrefix`.
@@ -95,4 +96,5 @@ Full directory tree: `docs/project-structure.md`
 | `docs/api.md` | Complete API endpoint reference |
 | `docs/roadmap.md` | Feature plan and completion status |
 | `docs/deployment.md` | Server deployment + systemd setup |
+| `docs/release.md` | PyPI/TestPyPI package publishing via tag-triggered CI |
 | `docs/integrations/` | Integration guides (e.g., Claude Code metrics) |

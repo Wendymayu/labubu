@@ -15,6 +15,7 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 
 	// API routes.
 	mux.HandleFunc("/api/v1/traces/export", traceHandler.ExportTraces)
+	mux.HandleFunc("/api/v1/traces/import", traceHandler.ImportTraces)
 	mux.HandleFunc("/api/v1/traces/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/traces")
 		if path == "" || path == "/" {
@@ -73,6 +74,12 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 				return
 			}
 			sessionID := strings.TrimPrefix(path, "/")
+			// Check for sub-path: agent-stats
+			parts := strings.SplitN(sessionID, "/", 2)
+			if len(parts) == 2 && parts[1] == "agent-stats" {
+				sessionHandler.GetAgentStats(w, r, parts[0])
+				return
+			}
 			sessionHandler.GetSession(w, r, sessionID)
 		})
 		mux.HandleFunc("/api/v1/sessions", sessionHandler.ListSessions)
@@ -113,6 +120,9 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	// OpenAPI spec for the API docs page.
+	mux.HandleFunc("/api/v1/openapi.json", OpenAPIHandler)
 
 	// Serve Vue SPA from embedded or disk-based FS.
 	spaFS, err := fs.Sub(web.StaticFS, "dist")

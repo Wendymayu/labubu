@@ -5,6 +5,7 @@
       <nav class="app-nav">
         <router-link to="/traces">{{ t('nav.traces') }}</router-link>
         <router-link to="/sessions">{{ t('nav.sessions') }}</router-link>
+        <router-link to="/logs">{{ t('nav.logs') }}</router-link>
         <div class="nav-group">
           <button class="nav-group-title" @click="metricsOpen = !metricsOpen">
             {{ t('nav.metrics') }}
@@ -15,7 +16,6 @@
             <router-link to="/cost">{{ t('nav.cost') }}</router-link>
           </div>
         </div>
-        <router-link to="/logs">{{ t('nav.logs') }}</router-link>
         <div class="nav-group">
           <button class="nav-group-title" @click="alertsOpen = !alertsOpen">
             {{ t('nav.alerts') }}
@@ -38,6 +38,7 @@
         </div>
       </nav>
       <div class="sidebar-footer">
+        <router-link to="/api-docs" class="footer-link">{{ t('nav.apiDocs') }}</router-link>
         <ThemeToggle />
         <LanguageToggle />
       </div>
@@ -119,5 +120,20 @@ const settingsOpen = ref(false)
   flex-direction: column;
   gap: 10px;
 }
+.footer-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+.footer-link:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.footer-link.router-link-active { color: var(--accent-blue); border-color: var(--accent-blue); }
 
 </style>

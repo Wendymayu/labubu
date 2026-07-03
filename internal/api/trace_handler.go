@@ -5,12 +5,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/encoding/protojson"
+
+	"github.com/labubu/labubu/internal/receiver"
 	"github.com/labubu/labubu/internal/storage"
 )
 
@@ -46,17 +52,25 @@ func (h *TraceHandler) ListTraces(w http.ResponseWriter, r *http.Request) {
 	endMS, _ := strconv.ParseUint(q.Get("end"), 10, 64)
 	minDuration, _ := strconv.ParseUint(q.Get("min_duration"), 10, 64)
 	maxDuration, _ := strconv.ParseUint(q.Get("max_duration"), 10, 64)
+	minSpans, _ := strconv.ParseUint(q.Get("min_spans"), 10, 16)
+	maxSpans, _ := strconv.ParseUint(q.Get("max_spans"), 10, 16)
+	minCost, _ := strconv.ParseFloat(q.Get("min_cost"), 64)
+	maxCost, _ := strconv.ParseFloat(q.Get("max_cost"), 64)
 
 	query := storage.TraceQuery{
-		Page:        page,
-		PageSize:    pageSize,
-		Service:     q.Get("service"),
-		Status:      q.Get("status"),
-		Query:       q.Get("q"),
-		StartTimeMS: startMS,
-		EndTimeMS:   endMS,
-		MinDuration: minDuration,
-		MaxDuration: maxDuration,
+		Page:         page,
+		PageSize:     pageSize,
+		Service:      q.Get("service"),
+		Status:       q.Get("status"),
+		Query:        q.Get("q"),
+		StartTimeMS:  startMS,
+		EndTimeMS:    endMS,
+		MinDuration:  minDuration,
+		MaxDuration:  maxDuration,
+		MinSpanCount: uint16(minSpans),
+		MaxSpanCount: uint16(maxSpans),
+		MinCost:      minCost,
+		MaxCost:      maxCost,
 	}
 
 	result, err := h.store.ListTraces(r.Context(), query)
@@ -95,7 +109,15 @@ func (h *TraceHandler) GetTrace(w http.ResponseWriter, r *http.Request, traceIDH
 	}
 
 	if r.URL.Query().Get("format") == "otlp" {
-		writeOTLPResponse(w, detail)
+		td := convertToProto(detail)
+		jsonBytes, err := marshalOTLPJSON(td)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal otlp: %v", err)})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(jsonBytes)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"trace": detail})
@@ -115,7 +137,7 @@ func (h *TraceHandler) GetServices(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExportTraces handles POST /api/v1/traces/export.
-// Accepts a list of trace IDs and returns them as an OTLP JSON array.
+// Accepts a list of trace IDs and returns them as a single OTLP TracesData JSON envelope.
 func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "only POST allowed"})
@@ -145,7 +167,8 @@ func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := make([]otlpTraceResponse, 0, len(req.TraceIDs))
+	// Collect all ResourceSpans into a single TracesData.
+	allResourceSpans := make([]*tracepb.ResourceSpans, 0, len(req.TraceIDs))
 	for _, hexID := range req.TraceIDs {
 		if len(hexID) != 32 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid trace_id length: %s (must be 32 hex chars)", hexID)})
@@ -168,10 +191,21 @@ func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 			continue // silently skip missing traces
 		}
 
-		results = append(results, convertToOTLP(detail))
+		td := convertToProto(detail)
+		allResourceSpans = append(allResourceSpans, td.ResourceSpans...)
 	}
 
-	writeJSON(w, http.StatusOK, results)
+	tracesData := &tracepb.TracesData{
+		ResourceSpans: allResourceSpans,
+	}
+	jsonBytes, err := marshalOTLPJSON(tracesData)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal otlp: %v", err)})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(jsonBytes)
 }
 
 // GetDiagnosis handles GET /api/v1/traces/{traceIdHex}/diagnosis.
@@ -355,4 +389,106 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		fmt.Printf("api: json encode error: %v\n", err)
 	}
+}
+
+const maxImportSize = 10 * 1024 * 1024 // 10MB
+
+// ImportTraces handles POST /api/v1/traces/import.
+// Accepts OTLP JSON (TracesData or ExportTraceServiceRequest format),
+// deserializes with protojson, and ingests new traces via the storage pipeline.
+// Traces that already exist in the DB are skipped entirely.
+func (h *TraceHandler) ImportTraces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "only POST allowed"})
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxImportSize+1))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("read body: %v", err)})
+		return
+	}
+	if len(body) > maxImportSize {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request body exceeds 10MB limit"})
+		return
+	}
+	if len(body) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty request body"})
+		return
+	}
+
+	// Pre-process: convert hex traceId/spanId to base64 for protojson compatibility
+	body = replaceHexWithBase64(body)
+
+	// Try TracesData first, then ExportTraceServiceRequest
+	var td tracepb.TracesData
+	if err := protojson.Unmarshal(body, &td); err != nil {
+		var exportReq coltracepb.ExportTraceServiceRequest
+		if err2 := protojson.Unmarshal(body, &exportReq); err2 != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid OTLP JSON: %v (as ExportRequest: %v)", err, err2)})
+			return
+		}
+		td.ResourceSpans = exportReq.ResourceSpans
+	}
+
+	imported := 0
+	skipped := 0
+
+	for _, rs := range td.ResourceSpans {
+		if rs == nil {
+			continue
+		}
+		resource := receiver.TranslateResource(rs.Resource)
+		if rs.SchemaUrl != "" {
+			resource.SchemaURL = rs.SchemaUrl
+		}
+
+		for _, ss := range rs.ScopeSpans {
+			if ss == nil {
+				continue
+			}
+			scope := receiver.TranslateScope(ss.Scope)
+			if ss.SchemaUrl != "" {
+				scope.SchemaURL = ss.SchemaUrl
+			}
+
+			spans := receiver.TranslateSpans(ss.Spans)
+			if len(spans) == 0 {
+				continue
+			}
+
+			// Determine which trace_ids in this batch are new
+			newSpans := make([]storage.Span, 0, len(spans))
+			seenTraceIDs := make(map[[16]byte]bool)
+			for _, span := range spans {
+				if seenTraceIDs[span.TraceID] {
+					newSpans = append(newSpans, span)
+					continue
+				}
+				seenTraceIDs[span.TraceID] = true
+
+				existing, err := h.store.GetTrace(r.Context(), span.TraceID)
+				if err != nil || existing != nil {
+					skipped++
+					continue
+				}
+				newSpans = append(newSpans, span)
+				imported++
+			}
+
+			if len(newSpans) == 0 {
+				continue
+			}
+
+			if err := h.store.InsertSpans(r.Context(), resource, scope, newSpans); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("insert spans: %v", err)})
+				return
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"imported": imported,
+		"skipped":  skipped,
+	})
 }

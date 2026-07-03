@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -11,6 +12,8 @@ func buildInsertSpanSQL(span Span) string {
 	inputTokens := nullUint32(span.InputTokens)
 	outputTokens := nullUint32(span.OutputTokens)
 	totalTokens := nullUint32(span.TotalTokens)
+	cacheCreateTokens := nullUint32(span.CacheCreationTokens)
+	cacheReadTokens := nullUint32(span.CacheReadTokens)
 	genAIModel := nullString(span.GenAIRequestModel)
 
 	return fmt.Sprintf(
@@ -21,7 +24,7 @@ func buildInsertSpanSQL(span Span) string {
 			events, dropped_events_count,
 			links, dropped_links_count,
 			status_code, status_message,
-			input_tokens, output_tokens, total_tokens, gen_ai_request_model
+			input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
 		) VALUES (
 			unhex('%x'), unhex('%x'), unhex('%x'), '%s', '%s', %d,
 			%d, %d, %d,
@@ -29,7 +32,7 @@ func buildInsertSpanSQL(span Span) string {
 			'%s', 0,
 			'%s', 0,
 			%d, '%s',
-			%s, %s, %s, %s
+			%s, %s, %s, %s, %s, %s
 		)`,
 		span.TraceID, span.SpanID, span.ParentSpanID,
 		escapeSQL(span.TraceState),
@@ -39,7 +42,7 @@ func buildInsertSpanSQL(span Span) string {
 		escapeSQL(span.Events),
 		escapeSQL(span.Links),
 		span.StatusCode, escapeSQL(span.StatusMessage),
-		inputTokens, outputTokens, totalTokens, genAIModel,
+		inputTokens, outputTokens, totalTokens, cacheCreateTokens, cacheReadTokens, genAIModel,
 	)
 }
 
@@ -170,6 +173,26 @@ func buildTraceWhereClause(q TraceQuery) string {
 			"duration_ms <= %d", q.MaxDuration,
 		))
 	}
+	if q.MinSpanCount > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"span_count >= %d", q.MinSpanCount,
+		))
+	}
+	if q.MaxSpanCount > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"span_count <= %d", q.MaxSpanCount,
+		))
+	}
+	if q.MinCost > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"cost >= %s", strconv.FormatFloat(q.MinCost, 'f', -1, 64),
+		))
+	}
+	if q.MaxCost > 0 {
+		clauses = append(clauses, fmt.Sprintf(
+			"cost <= %s", strconv.FormatFloat(q.MaxCost, 'f', -1, 64),
+		))
+	}
 
 	if len(clauses) == 0 {
 		return ""
@@ -196,6 +219,8 @@ func buildGetTraceSQL(traceID [16]byte) string {
 			input_tokens,
 			output_tokens,
 			total_tokens,
+			cache_creation_tokens,
+			cache_read_tokens,
 			gen_ai_request_model
 		FROM spans
 		WHERE trace_id = unhex('%x')
@@ -255,6 +280,9 @@ func buildSessionCountSQL(q SessionQuery) string {
 }
 
 // buildSessionListSQL builds a query that aggregates session metrics.
+// The WHERE filter only gates WHICH sessions appear (sessions with at least
+// one matching trace); aggregates run over the whole session so they match
+// buildSessionSummarySQL. See sqlite_session_list_count_test.
 func buildSessionListSQL(q SessionQuery) string {
 	offset := (q.Page - 1) * q.PageSize
 	return fmt.Sprintf(
@@ -271,7 +299,8 @@ func buildSessionListSQL(q SessionQuery) string {
 			round(sum(if(status_code = 'ERROR', 1, 0)) / count(), 4) AS error_rate,
 			min(start_time_ms) AS first_active_ms,
 			max(start_time_ms) AS last_active_ms
-		FROM traces%s
+		FROM traces
+		WHERE session_id IN (SELECT DISTINCT session_id FROM traces%s)
 		GROUP BY session_id
 		ORDER BY last_active_ms DESC
 		LIMIT %d OFFSET %d`,
@@ -302,8 +331,9 @@ func buildSessionSummarySQL(sessionID string) string {
 	)
 }
 
-// buildSessionTracesSQL builds a query to fetch all traces for a session.
-func buildSessionTracesSQL(sessionID string) string {
+// buildSessionTracesSQL builds a query to fetch a page of traces for a session.
+func buildSessionTracesSQL(sessionID string, page, pageSize int) string {
+	offset := (page - 1) * pageSize
 	return fmt.Sprintf(
 		`SELECT
 			trace_id_hex, root_name, root_span_id,
@@ -313,7 +343,16 @@ func buildSessionTracesSQL(sessionID string) string {
 			total_tokens, cost, cost_currency
 		FROM traces
 		WHERE session_id = '%s'
-		ORDER BY start_time_ms ASC`,
+		ORDER BY start_time_ms ASC
+		LIMIT %d OFFSET %d`,
+		escapeSQL(sessionID), pageSize, offset,
+	)
+}
+
+// buildSessionTraceCountSQL builds a query counting traces for a session.
+func buildSessionTraceCountSQL(sessionID string) string {
+	return fmt.Sprintf(
+		`SELECT count() AS count FROM traces WHERE session_id = '%s'`,
 		escapeSQL(sessionID),
 	)
 }
@@ -338,15 +377,19 @@ func buildLogCountSQL(q LogQuery) string {
 // buildLogListSQL builds a list query for logs with filters, ordering, and pagination.
 func buildLogListSQL(q LogQuery) string {
 	offset := (q.Page - 1) * q.PageSize
+	order := "DESC"
+	if q.Asc {
+		order = "ASC"
+	}
 	return fmt.Sprintf(
 		`SELECT
 			hex(trace_id) AS trace_id_hex,
 			hex(span_id) AS span_id_hex,
 			timestamp, severity, event_name, body, attributes
 		FROM logs%s
-		ORDER BY timestamp DESC
+		ORDER BY timestamp %s
 		LIMIT %d OFFSET %d`,
-		buildLogWhereClause(q), q.PageSize, offset,
+		buildLogWhereClause(q), order, q.PageSize, offset,
 	)
 }
 
@@ -373,6 +416,12 @@ func buildLogWhereClause(q LogQuery) string {
 	if q.TraceID != zeroTrace {
 		clauses = append(clauses, fmt.Sprintf(
 			"trace_id = unhex('%x')", q.TraceID,
+		))
+	}
+	var zeroSpan [8]byte
+	if q.SpanID != zeroSpan {
+		clauses = append(clauses, fmt.Sprintf(
+			"span_id = unhex('%x')", q.SpanID,
 		))
 	}
 	if q.StartTime > 0 {
@@ -402,6 +451,17 @@ func buildGetLogsByTraceSQL(traceID [16]byte) string {
 		FROM logs
 		WHERE trace_id = unhex('%x')
 		ORDER BY timestamp ASC`,
+		traceID,
+	)
+}
+
+// buildLogCountsByTraceSQL builds a query returning per-span log counts for a trace.
+func buildLogCountsByTraceSQL(traceID [16]byte) string {
+	return fmt.Sprintf(
+		`SELECT hex(span_id) AS span_id_hex, COUNT(*) AS n
+		FROM logs
+		WHERE trace_id = unhex('%x')
+		GROUP BY span_id`,
 		traceID,
 	)
 }
@@ -501,7 +561,6 @@ func aggregateTraces(resource ResourceInfo, scope ScopeInfo, spans []Span) map[[
 				ScopeSchemaURL:    scope.SchemaURL,
 				StatusCode:        span.StatusCode,
 				StatusMessage:     span.StatusMessage,
-				TotalTokens:       span.TotalTokens,
 			}
 		}
 		if isRootSpan(span.ParentSpanID) {
@@ -549,7 +608,7 @@ func isZeroSpanID(id [8]byte) bool {
 
 // buildLLMConfigSelectSQL builds a query to fetch all LLM config entries.
 func buildLLMConfigSelectSQL() string {
-	return `SELECT id, model_name, provider_url, api_key, is_default, temperature, max_tokens FROM llm_configs ORDER BY model_name`
+	return `SELECT id, model_name, provider_type, provider_url, api_key, is_default, temperature, max_tokens FROM llm_configs ORDER BY model_name`
 }
 
 // buildLLMConfigInsertSQL builds an INSERT for a new LLM config entry.
@@ -559,8 +618,8 @@ func buildLLMConfigInsertSQL(c LLMConfig) string {
 		isDefault = 1
 	}
 	return fmt.Sprintf(
-		`INSERT INTO llm_configs (id, model_name, provider_url, api_key, is_default, temperature, max_tokens) VALUES ('%s', '%s', '%s', '%s', %d, %f, %d)`,
-		escapeSQL(c.ID), escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens,
+		`INSERT INTO llm_configs (id, model_name, provider_type, provider_url, api_key, is_default, temperature, max_tokens) VALUES ('%s', '%s', '%s', '%s', '%s', %d, %f, %d)`,
+		escapeSQL(c.ID), escapeSQL(c.ModelName), escapeSQL(c.ProviderType), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens,
 	)
 }
 
@@ -571,8 +630,8 @@ func buildLLMConfigUpdateSQL(c LLMConfig) string {
 		isDefault = 1
 	}
 	return fmt.Sprintf(
-		`ALTER TABLE llm_configs UPDATE model_name = '%s', provider_url = '%s', api_key = '%s', is_default = %d, temperature = %f, max_tokens = %d, updated_at = now() WHERE id = '%s'`,
-		escapeSQL(c.ModelName), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens, escapeSQL(c.ID),
+		`ALTER TABLE llm_configs UPDATE model_name = '%s', provider_type = '%s', provider_url = '%s', api_key = '%s', is_default = %d, temperature = %f, max_tokens = %d, updated_at = now() WHERE id = '%s'`,
+		escapeSQL(c.ModelName), escapeSQL(c.ProviderType), escapeSQL(c.ProviderURL), escapeSQL(c.APIKey), isDefault, c.Temperature, c.MaxTokens, escapeSQL(c.ID),
 	)
 }
 
