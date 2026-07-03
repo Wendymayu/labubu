@@ -36,11 +36,14 @@ func (m *memTestStore) GetServices(_ context.Context) ([]string, error) {
 func (m *memTestStore) ListSessions(_ context.Context, _ storage.SessionQuery) (*storage.SessionListResult, error) {
 	return &storage.SessionListResult{Sessions: []storage.SessionListItem{}}, nil
 }
-func (m *memTestStore) GetSession(_ context.Context, _ string) (*storage.SessionDetail, error) {
+func (m *memTestStore) GetSession(_ context.Context, _ string, _, _ int) (*storage.SessionDetail, error) {
 	return nil, nil
 }
 func (m *memTestStore) Purge(_ context.Context, _ time.Duration, _ int) (int, int, error) {
 	return 0, 0, nil
+}
+func (m *memTestStore) PurgeLogs(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil
 }
 func (m *memTestStore) InsertLogs(_ context.Context, _ []storage.LogRecord) error {
 	return nil
