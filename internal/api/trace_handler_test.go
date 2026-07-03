@@ -53,7 +53,7 @@ func (m *handlerMockStore) ListSessions(ctx context.Context, q storage.SessionQu
 	return nil, nil
 }
 
-func (m *handlerMockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
+func (m *handlerMockStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*storage.SessionDetail, error) {
 	return nil, nil
 }
 

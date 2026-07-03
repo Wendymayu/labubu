@@ -36,7 +36,7 @@ func TestSQLiteSessionErrorRateIsRatio(t *testing.T) {
 	}
 
 	// GetSession (detail path).
-	detail, err := store.GetSession(ctx, sess)
+	detail, err := store.GetSession(ctx, sess, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}

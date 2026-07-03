@@ -335,6 +335,12 @@ func (s *chDBStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListRes
 		return nil, fmt.Errorf("parse trace list: %w", err)
 	}
 
+	if len(traces) > 0 {
+		if err := s.loadRootSpanInputMessages(ctx, traces); err != nil {
+			return nil, fmt.Errorf("load input messages: %w", err)
+		}
+	}
+
 	return &TraceListResult{
 		Traces: traces,
 		Pagination: Pagination{
@@ -343,6 +349,49 @@ func (s *chDBStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListRes
 			Total:    total,
 		},
 	}, nil
+}
+
+// loadRootSpanInputMessages fetches gen_ai.input.messages from each trace's
+// root span and attaches it to the matching item. The root span is the span
+// whose parent_span_id is all zeros — the same rule isRootSpan uses at
+// ingestion. A future probe populates this attribute on root spans.
+func (s *chDBStore) loadRootSpanInputMessages(ctx context.Context, traces []TraceListItem) error {
+	_ = ctx
+	idxByTid := make(map[string]int, len(traces))
+	inList := make([]string, 0, len(traces))
+	for i, t := range traces {
+		idxByTid[strings.ToLower(t.TraceIDHex)] = i
+		inList = append(inList, fmt.Sprintf("unhex('%s')", escapeSQL(t.TraceIDHex)))
+	}
+	query := fmt.Sprintf(
+		`SELECT lower(hex(trace_id)) AS trace_id_hex, attributes['gen_ai.input.messages'] AS input_messages
+		FROM spans
+		WHERE parent_span_id = unhex('0000000000000000') AND trace_id IN (%s)`,
+		strings.Join(inList, ","))
+	result, err := s.querySQL(query + " FORMAT JSONEachRow")
+	if err != nil {
+		return fmt.Errorf("query root span input: %w", err)
+	}
+	for _, line := range splitLines(result) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			TraceIDHex    string `json:"trace_id_hex"`
+			InputMessages string `json:"input_messages"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return fmt.Errorf("parse root span input: %w", err)
+		}
+		if row.InputMessages == "" {
+			continue
+		}
+		if idx, ok := idxByTid[strings.ToLower(row.TraceIDHex)]; ok {
+			v := row.InputMessages
+			traces[idx].InputMessages = &v
+		}
+	}
+	return nil
 }
 
 // GetTrace returns all spans for a trace.
@@ -414,7 +463,14 @@ func (s *chDBStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionL
 }
 
 // GetSession returns the session summary and all traces for a session.
-func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+func (s *chDBStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*SessionDetail, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+
 	// Get the aggregated session summary using exact-match query.
 	summarySQL := buildSessionSummarySQL(sessionID) + " FORMAT JSONEachRow"
 	summaryResult, err := s.querySQL(summarySQL)
@@ -429,8 +485,15 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionD
 		return nil, nil
 	}
 
-	// Get all traces for this session.
-	tracesSQL := buildSessionTracesSQL(sessionID) + " FORMAT JSONEachRow"
+	// Total traces for pagination.
+	countResult, err := s.querySQL(buildSessionTraceCountSQL(sessionID) + " FORMAT JSONEachRow")
+	if err != nil {
+		return nil, fmt.Errorf("count session traces: %w", err)
+	}
+	total := parseCount(countResult)
+
+	// Get a page of traces for this session.
+	tracesSQL := buildSessionTracesSQL(sessionID, page, pageSize) + " FORMAT JSONEachRow"
 	tracesResult, err := s.querySQL(tracesSQL)
 	if err != nil {
 		return nil, fmt.Errorf("get session traces: %w", err)
@@ -441,8 +504,9 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string) (*SessionD
 	}
 
 	return &SessionDetail{
-		Session: sessions[0],
-		Traces:  traces,
+		Session:    sessions[0],
+		Traces:     traces,
+		Pagination: Pagination{Page: page, PageSize: pageSize, Total: total},
 	}, nil
 }
 

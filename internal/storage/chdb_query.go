@@ -280,6 +280,9 @@ func buildSessionCountSQL(q SessionQuery) string {
 }
 
 // buildSessionListSQL builds a query that aggregates session metrics.
+// The WHERE filter only gates WHICH sessions appear (sessions with at least
+// one matching trace); aggregates run over the whole session so they match
+// buildSessionSummarySQL. See sqlite_session_list_count_test.
 func buildSessionListSQL(q SessionQuery) string {
 	offset := (q.Page - 1) * q.PageSize
 	return fmt.Sprintf(
@@ -296,7 +299,8 @@ func buildSessionListSQL(q SessionQuery) string {
 			round(sum(if(status_code = 'ERROR', 1, 0)) / count(), 4) AS error_rate,
 			min(start_time_ms) AS first_active_ms,
 			max(start_time_ms) AS last_active_ms
-		FROM traces%s
+		FROM traces
+		WHERE session_id IN (SELECT DISTINCT session_id FROM traces%s)
 		GROUP BY session_id
 		ORDER BY last_active_ms DESC
 		LIMIT %d OFFSET %d`,
@@ -327,8 +331,9 @@ func buildSessionSummarySQL(sessionID string) string {
 	)
 }
 
-// buildSessionTracesSQL builds a query to fetch all traces for a session.
-func buildSessionTracesSQL(sessionID string) string {
+// buildSessionTracesSQL builds a query to fetch a page of traces for a session.
+func buildSessionTracesSQL(sessionID string, page, pageSize int) string {
+	offset := (page - 1) * pageSize
 	return fmt.Sprintf(
 		`SELECT
 			trace_id_hex, root_name, root_span_id,
@@ -338,7 +343,16 @@ func buildSessionTracesSQL(sessionID string) string {
 			total_tokens, cost, cost_currency
 		FROM traces
 		WHERE session_id = '%s'
-		ORDER BY start_time_ms ASC`,
+		ORDER BY start_time_ms ASC
+		LIMIT %d OFFSET %d`,
+		escapeSQL(sessionID), pageSize, offset,
+	)
+}
+
+// buildSessionTraceCountSQL builds a query counting traces for a session.
+func buildSessionTraceCountSQL(sessionID string) string {
+	return fmt.Sprintf(
+		`SELECT count() AS count FROM traces WHERE session_id = '%s'`,
 		escapeSQL(sessionID),
 	)
 }

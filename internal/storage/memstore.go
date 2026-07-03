@@ -410,6 +410,28 @@ func (m *memStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListResu
 		}
 	}
 
+	// Attach gen_ai.input.messages from each trace's root span.
+	if len(items) > 0 {
+		idxByTid := make(map[string]int, len(items))
+		for i := range items {
+			idxByTid[items[i].TraceIDHex] = i
+		}
+		for i := range m.spans {
+			sp := &m.spans[i]
+			if !isRootSpan(sp.ParentSpanID) {
+				continue
+			}
+			idx, ok := idxByTid[TraceIDToHex(sp.TraceID)]
+			if !ok {
+				continue
+			}
+			if v, ok := sp.Attributes["gen_ai.input.messages"]; ok && v != "" {
+				vv := v
+				items[idx].InputMessages = &vv
+			}
+		}
+	}
+
 	return &TraceListResult{
 		Traces: items,
 		Pagination: Pagination{
@@ -509,7 +531,31 @@ func (m *memStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionLi
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Group traces by session_id.
+	// The filter only gates WHICH sessions appear (sessions with at least one
+	// matching trace); aggregates run over the whole session so they match
+	// GetSession. See memstore_session_list_count_test.
+	// First pass: collect session IDs that have a matching trace.
+	matched := make(map[string]bool)
+	for _, t := range m.traces {
+		if t.SessionID == "" {
+			continue
+		}
+		if q.Service != "" && t.ResourceAttrs["service.name"] != q.Service {
+			continue
+		}
+		if q.Query != "" && !containsSubstring(t.SessionID, q.Query) {
+			continue
+		}
+		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
+			continue
+		}
+		if q.EndTimeMS > 0 && t.StartTimeMS > q.EndTimeMS {
+			continue
+		}
+		matched[t.SessionID] = true
+	}
+
+	// Second pass: aggregate ALL traces for matched sessions (unfiltered).
 	type agg struct {
 		traceCount      int
 		totalTokens     uint32
@@ -523,26 +569,9 @@ func (m *memStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionLi
 	groups := make(map[string]*agg)
 
 	for _, t := range m.traces {
-		if t.SessionID == "" {
+		if !matched[t.SessionID] { // includes empty session IDs (never matched)
 			continue
 		}
-		if q.Service != "" {
-			if t.ResourceAttrs["service.name"] != q.Service {
-				continue
-			}
-		}
-		if q.Query != "" {
-			if !containsSubstring(t.SessionID, q.Query) {
-				continue
-			}
-		}
-		if q.StartTimeMS > 0 && t.StartTimeMS < q.StartTimeMS {
-			continue
-		}
-		if q.EndTimeMS > 0 && t.StartTimeMS > q.EndTimeMS {
-			continue
-		}
-
 		g, ok := groups[t.SessionID]
 		if !ok {
 			g = &agg{firstActiveMS: t.StartTimeMS, lastActiveMS: t.StartTimeMS}
@@ -626,10 +655,17 @@ func (m *memStore) ListSessions(ctx context.Context, q SessionQuery) (*SessionLi
 	}, nil
 }
 
-func (m *memStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+func (m *memStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*SessionDetail, error) {
 	_ = ctx
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
 
 	// Collect traces for this session.
 	var sessionTraces []Trace
@@ -705,9 +741,25 @@ func (m *memStore) GetSession(ctx context.Context, sessionID string) (*SessionDe
 		summary.ErrorRate = float64(errorCount) / float64(len(sessionTraces))
 	}
 
+	// Paginate the traces (already sorted ascending by start_time_ms).
+	total := len(traces)
+	offset := (page - 1) * pageSize
+	if offset > total {
+		offset = total
+	}
+	end := offset + pageSize
+	if end > total {
+		end = total
+	}
+	pageTraces := traces[offset:end]
+	if pageTraces == nil {
+		pageTraces = []TraceListItem{}
+	}
+
 	return &SessionDetail{
-		Session: summary,
-		Traces:  traces,
+		Session:    summary,
+		Traces:     pageTraces,
+		Pagination: Pagination{Page: page, PageSize: pageSize, Total: total},
 	}, nil
 }
 

@@ -59,7 +59,17 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 
-	detail, err := h.store.GetSession(r.Context(), sessionID)
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	detail, err := h.store.GetSession(r.Context(), sessionID, page, pageSize)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get session: %v", err)})
 		return

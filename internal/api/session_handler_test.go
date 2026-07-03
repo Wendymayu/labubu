@@ -24,7 +24,7 @@ func (m *sessionMockStore) ListSessions(ctx context.Context, q storage.SessionQu
 	return m.sessions, m.sessionErr
 }
 
-func (m *sessionMockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
+func (m *sessionMockStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*storage.SessionDetail, error) {
 	return m.sessionDetail, m.sessionErr
 }
 

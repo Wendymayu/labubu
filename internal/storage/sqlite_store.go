@@ -498,6 +498,12 @@ func (s *sqliteStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListR
 		traces = []TraceListItem{}
 	}
 
+	if len(traces) > 0 {
+		if err := loadRootSpanInputMessages(ctx, s.db, traces); err != nil {
+			return nil, fmt.Errorf("load input messages: %w", err)
+		}
+	}
+
 	return &TraceListResult{
 		Traces: traces,
 		Pagination: Pagination{
@@ -506,6 +512,46 @@ func (s *sqliteStore) ListTraces(ctx context.Context, q TraceQuery) (*TraceListR
 			Total:    total,
 		},
 	}, nil
+}
+
+// loadRootSpanInputMessages fetches the gen_ai.input.messages attribute from
+// each trace's root span (looked up by trace_id_hex + root_span_id_hex, the
+// spans table PK) and attaches it to the matching item. A future probe
+// populates this attribute on root spans; until then it is absent and the
+// column renders empty.
+func loadRootSpanInputMessages(ctx context.Context, db *sql.DB, traces []TraceListItem) error {
+	placeholders := make([]string, len(traces))
+	args := make([]interface{}, 0, len(traces)*2)
+	for i := range traces {
+		placeholders[i] = "(?, ?)"
+		args = append(args, traces[i].TraceIDHex, traces[i].RootSpanID)
+	}
+	query := "SELECT trace_id_hex, json_extract(attributes, '$.\"gen_ai.input.messages\"') AS input_messages " +
+		"FROM spans WHERE (trace_id_hex, span_id_hex) IN (" + strings.Join(placeholders, ",") + ")"
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byTrace := make(map[string]string, len(traces))
+	for rows.Next() {
+		var tid, input sql.NullString
+		if err := rows.Scan(&tid, &input); err != nil {
+			return err
+		}
+		if tid.Valid && input.Valid && input.String != "" {
+			byTrace[tid.String] = input.String
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range traces {
+		if v, ok := byTrace[traces[i].TraceIDHex]; ok {
+			traces[i].InputMessages = &v
+		}
+	}
+	return nil
 }
 
 func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail, error) {
@@ -683,7 +729,9 @@ func (s *sqliteStore) ListSessions(ctx context.Context, q SessionQuery) (*Sessio
 		return nil, fmt.Errorf("count sessions: %w", err)
 	}
 
-	// List
+	// List. The WHERE filter only gates WHICH sessions appear (sessions with
+	// at least one matching trace); aggregates run over the whole session so
+	// they match GetSession. See sqlite_session_list_count_test.
 	offset := (q.Page - 1) * q.PageSize
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT session_id,
@@ -698,8 +746,9 @@ func (s *sqliteStore) ListSessions(ctx context.Context, q SessionQuery) (*Sessio
 		        sum(total_tokens) AS total_tokens,
 		        sum(cost) AS cost,
 		        CASE WHEN count(DISTINCT cost_currency) > 1 THEN 'mixed' ELSE max(cost_currency) END AS cost_currency
-		 FROM traces WHERE session_id != ''`+where+
-			` GROUP BY session_id ORDER BY last_active_ms DESC LIMIT ? OFFSET ?`,
+		 FROM traces WHERE session_id IN (
+		        SELECT DISTINCT session_id FROM traces WHERE session_id != ''` + where + `
+		 ) GROUP BY session_id ORDER BY last_active_ms DESC LIMIT ? OFFSET ?`,
 		append(args, q.PageSize, offset)...,
 	)
 	if err != nil {
@@ -749,9 +798,16 @@ func (s *sqliteStore) ListSessions(ctx context.Context, q SessionQuery) (*Sessio
 	}, nil
 }
 
-func (s *sqliteStore) GetSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+func (s *sqliteStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*SessionDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
 
 	// Session summary
 	var sl SessionListItem
@@ -779,6 +835,9 @@ func (s *sqliteStore) GetSession(ctx context.Context, sessionID string) (*Sessio
 		&totalTokens, &cost, &costCurrency,
 	)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("query session: %w", err)
 	}
 	if totalTokens.Valid {
@@ -793,14 +852,23 @@ func (s *sqliteStore) GetSession(ctx context.Context, sessionID string) (*Sessio
 		sl.CostCurrency = costCurrency.String
 	}
 
-	// Session traces
+	// Total traces for pagination.
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM traces WHERE session_id = ?`, sessionID,
+	).Scan(&total); err != nil {
+		return nil, fmt.Errorf("count session traces: %w", err)
+	}
+
+	// Session traces (page).
+	offset := (page - 1) * pageSize
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT trace_id_hex, root_span_id_hex, root_name,
 		        json_extract(resource_attributes, '$."service.name"') AS root_service,
 		        start_time_ms, duration_ms, span_count, status_code,
 		        total_tokens, cost, cost_currency
-		 FROM traces WHERE session_id = ? ORDER BY start_time_ms ASC`,
-		sessionID,
+		 FROM traces WHERE session_id = ? ORDER BY start_time_ms ASC LIMIT ? OFFSET ?`,
+		sessionID, pageSize, offset,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query session traces: %w", err)
@@ -843,7 +911,11 @@ func (s *sqliteStore) GetSession(ctx context.Context, sessionID string) (*Sessio
 		traces = []TraceListItem{}
 	}
 
-	return &SessionDetail{Session: sl, Traces: traces}, nil
+	return &SessionDetail{
+		Session:    sl,
+		Traces:     traces,
+		Pagination: Pagination{Page: page, PageSize: pageSize, Total: total},
+	}, nil
 }
 
 // --- Log methods ---

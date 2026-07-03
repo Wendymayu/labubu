@@ -43,7 +43,7 @@ func (m *mockStore) ListSessions(ctx context.Context, q storage.SessionQuery) (*
 	return &storage.SessionListResult{}, nil
 }
 
-func (m *mockStore) GetSession(ctx context.Context, sessionID string) (*storage.SessionDetail, error) {
+func (m *mockStore) GetSession(ctx context.Context, sessionID string, page, pageSize int) (*storage.SessionDetail, error) {
 	return nil, nil
 }
 

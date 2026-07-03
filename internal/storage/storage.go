@@ -166,6 +166,9 @@ type TraceListItem struct {
 	TotalTokens  *uint32  `json:"total_tokens"`
 	Cost         *float64 `json:"cost"`
 	CostCurrency string   `json:"cost_currency"`
+	// InputMessages is the root span's gen_ai.input.messages attribute
+	// (a JSON string), surfaced for the trace list "Input" column.
+	InputMessages *string `json:"input_messages,omitempty"`
 }
 
 // Pagination holds page metadata.
@@ -201,10 +204,11 @@ type SessionListItem struct {
 	LastActiveMS    uint64  `json:"last_active_ms"`
 }
 
-// SessionDetail is a session with all its traces.
+// SessionDetail is a session summary plus a page of its traces.
 type SessionDetail struct {
-	Session SessionListItem `json:"session"`
-	Traces  []TraceListItem `json:"traces"`
+	Session    SessionListItem `json:"session"`
+	Traces     []TraceListItem `json:"traces"`
+	Pagination Pagination      `json:"pagination"`
 }
 
 // SessionListResult holds a page of session summaries.
@@ -370,8 +374,10 @@ type Store interface {
 	// ListSessions returns a paginated list of session summaries.
 	ListSessions(ctx context.Context, q SessionQuery) (*SessionListResult, error)
 
-	// GetSession returns a session summary and all its traces.
-	GetSession(ctx context.Context, sessionID string) (*SessionDetail, error)
+	// GetSession returns a session summary and a page of its traces. page
+	// (1-based) and pageSize control the traces page; Session.TraceCount and
+	// Pagination.Total reflect the total trace count for the session.
+	GetSession(ctx context.Context, sessionID string, page, pageSize int) (*SessionDetail, error)
 
 	// Purge removes traces (and their spans) that exceed the retention policy.
 	// maxAge: delete traces with start_time_ms older than (now - maxAge). 0 = no age limit.
