@@ -65,6 +65,29 @@
         </div>
       </div>
 
+      <!-- Tools Used summary -->
+      <div v-if="toolsUsed.length > 0" class="tools-used-section">
+        <h4>{{ t('agentStats.toolsUsedTitle') }}</h4>
+        <table class="tools-used-table">
+          <thead>
+            <tr>
+              <th>{{ t('agentStats.tool') }}</th>
+              <th class="num">{{ t('agentStats.callCount') }}</th>
+              <th class="num">{{ t('agentStats.successRateCol') }}</th>
+              <th class="num">{{ t('agentStats.avgDuration') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, i) in toolsUsed" :key="i">
+              <td class="tool-name">{{ row.name }}</td>
+              <td class="num">{{ row.calls }}</td>
+              <td class="num" :class="rateClass(row.successRate)">{{ formatRate(row.successRate) }}</td>
+              <td class="num">{{ formatDuration(row.avgDuration) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <!-- Tool Call Chain -->
       <div v-if="callChainItems.length > 0" class="call-chain-section">
         <h4>{{ t('agentStats.toolCallChain') }}</h4>
@@ -208,6 +231,27 @@ const skillCount = computed(() => {
     if (name) names.add(name)
   }
   return names.size > 0 ? names.size : invocations
+})
+
+// --- 已用工具汇总（按工具名聚合，调用次数降序） ---
+
+const toolsUsed = computed(() => {
+  const map: Record<string, { name: string; calls: number; ok: number; totalDur: number }> = {}
+  for (const s of toolSpans.value) {
+    const name = s.tool_name ?? s.name
+    if (!map[name]) map[name] = { name, calls: 0, ok: 0, totalDur: 0 }
+    map[name].calls++
+    if (s.status === 'ok') map[name].ok++
+    map[name].totalDur += s.duration_ms
+  }
+  return Object.values(map)
+    .map(t => ({
+      name: t.name,
+      calls: t.calls,
+      successRate: t.calls > 0 ? t.ok / t.calls : 0,
+      avgDuration: t.calls > 0 ? t.totalDur / t.calls : 0,
+    }))
+    .sort((a, b) => b.calls - a.calls)
 })
 
 const llmModelLabel = computed(() => {
@@ -578,4 +622,52 @@ function formatNullableTokens(tokens: number | null): string {
   color: #92400e;
   margin-top: 4px;
 }
+
+/* Tools used summary table */
+.tools-used-section h4 {
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+
+.tools-used-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.tools-used-table th,
+.tools-used-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.tools-used-table th {
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+}
+
+.tools-used-table td.num,
+.tools-used-table th.num {
+  text-align: right;
+}
+
+.tools-used-table .tool-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tools-used-table tr:last-child td {
+  border-bottom: none;
+}
+
+.tools-used-table td.rate-green { color: #22c55e; }
+.tools-used-table td.rate-yellow { color: #eab308; }
+.tools-used-table td.rate-red { color: #ef4444; }
 </style>
