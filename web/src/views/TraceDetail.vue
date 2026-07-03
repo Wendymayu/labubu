@@ -50,6 +50,9 @@
             <button :class="['btn-insight', { active: activeInsight === 'agent' }]" @click="toggleInsight('agent')">
               {{ t('agentStats.agentBehavior') }}
             </button>
+            <button :class="['btn-insight', { active: activeInsight === 'context' }]" @click="toggleInsight('context')">
+              {{ t('traceDetail.context') }}
+            </button>
           </div>
         </div>
       </div>
@@ -60,7 +63,8 @@
           <span class="insight-overlay-title">{{
             activeInsight === 'logs' ? t('logList.logCount', { count: totalLogCount })
             : activeInsight === 'diagnosis' ? t('diagnosis.tab')
-            : t('agentStats.agentBehavior')
+            : activeInsight === 'agent' ? t('agentStats.agentBehavior')
+            : t('traceDetail.contextTitle')
           }}</span>
           <div class="insight-overlay-actions">
             <button
@@ -85,6 +89,11 @@
           <AgentBehaviorTab
             v-if="activeInsight === 'agent'"
             :spans="trace.spans"
+          />
+          <ContextBarChart
+            v-if="activeInsight === 'context'"
+            :points="contextPoints"
+            @select="openDrawerBySpanId"
           />
           <div v-if="activeInsight === 'logs'" class="log-overlay">
             <div v-if="logSpanFilter" class="log-filter-tag">
@@ -205,9 +214,10 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
+import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult, type ContextPoint } from '../api/client'
 import DiagnosisTab from '../components/DiagnosisTab.vue'
 import AgentBehaviorTab from '../components/AgentBehaviorTab.vue'
+import ContextBarChart from '../components/ContextBarChart.vue'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
@@ -229,9 +239,9 @@ const logPage = ref(1)
 const logPageSize = 50
 const logTotal = ref(0)
 const logCounts = ref<Record<string, number>>({})
-const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | null>(null)
+const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | 'context' | null>(null)
 
-function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent') {
+function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent' | 'context') {
   if (activeInsight.value === insight) {
     activeInsight.value = null
   } else {
@@ -289,6 +299,26 @@ const selectedSpanOutputTokens = computed(() => {
   const span = selectedSpan.value
   if (!span) return 0
   return span.output_tokens ?? 0
+})
+
+/** LLM calls in this trace, sorted by start time — drives the context bar chart. */
+const contextPoints = computed<ContextPoint[]>(() => {
+  const spans = trace.value?.spans
+  if (!spans) return []
+  return spans
+    .filter(s => (s.total_tokens ?? 0) > 0)
+    .slice()
+    .sort((a, b) => a.start_time_ms - b.start_time_ms)
+    .map((s, i) => ({
+      index: i + 1,
+      spanId: s.span_id,
+      spanName: s.name,
+      model: s.gen_ai_request_model ?? '',
+      input: s.input_tokens ?? 0,
+      cacheRead: s.cache_read_tokens ?? 0,
+      cacheCreation: s.cache_creation_tokens ?? 0,
+      output: s.output_tokens ?? 0,
+    }))
 })
 
 const totalLogCount = computed(() => {
@@ -422,6 +452,11 @@ function onDiagnosisNavigateSpan(spanIndex: number) {
 function openDrawer(span: SpanDetailType) {
   selectedSpan.value = span
   drawerOpen.value = true
+}
+
+function openDrawerBySpanId(spanId: string) {
+  const span = trace.value?.spans.find(s => s.span_id === spanId)
+  if (span) openDrawer(span)
 }
 
 function closeDrawer() {
