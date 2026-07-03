@@ -88,37 +88,6 @@
         </table>
       </div>
 
-      <!-- Tool Call Chain -->
-      <div v-if="callChainItems.length > 0" class="call-chain-section">
-        <h4>{{ t('agentStats.toolCallChain') }}</h4>
-        <div class="call-chain">
-          <div
-            v-for="(item, i) in callChainItems"
-            :key="i"
-            class="chain-item"
-            :class="{
-              'chain-item-error': item.status === 'error',
-              'chain-item-loop': item.isLoopGroup
-            }"
-          >
-            <span class="chain-icon">{{ item.icon }}</span>
-            <div class="chain-main">
-              <span class="chain-name">{{ item.name }}</span>
-              <span class="chain-attr-label">{{ item.attrLabel }}</span>
-            </div>
-            <div class="chain-retry-info">
-              <template v-if="item.retryAnnotation">
-                <span class="retry-annotation">{{ item.retryAnnotation }}</span>
-              </template>
-            </div>
-            <span class="chain-meta">{{ item.meta }}</span>
-            <span class="chain-badge" :class="item.status === 'ok' ? 'badge-ok' : 'badge-error'">
-              {{ item.status === 'ok' ? 'OK' : 'ERROR' }}
-            </span>
-          </div>
-        </div>
-      </div>
-
       <!-- Loop Warning -->
       <div v-if="maxLoopDepth >= 3" class="loop-warning">
         <div class="loop-warning-title">{{ t('agentStats.loopWarning', { tool: loopToolName, count: maxLoopDepth }) }}</div>
@@ -147,10 +116,6 @@ const toolSpans = computed(() =>
   props.spans.filter(s => s.is_tool_call === true)
 )
 
-const toolAndLLMSpans = computed(() =>
-  props.spans.filter(s => s.is_tool_call === true || s.gen_ai_system !== undefined)
-)
-
 const hasToolCalls = computed(() => toolSpans.value.length > 0)
 
 const totalToolCalls = computed(() => toolSpans.value.length)
@@ -160,7 +125,7 @@ const successfulToolCalls = computed(() =>
 )
 
 // --- LLM spans ---
-// LLM 调用：gen_ai_system 已设置且非 tool 调用（与 callChainItems 的 isLLM 判定一致）
+// LLM 调用：gen_ai_system 已设置且非 tool 调用
 
 const llmSpans = computed(() =>
   props.spans.filter(s => s.gen_ai_system !== undefined && !s.is_tool_call)
@@ -300,115 +265,6 @@ const loopToolName = computed(() => {
   return resultName
 })
 
-// --- Call chain items ---
-// Ordered list of tool calls and LLM calls with metadata
-
-const callChainItems = computed(() => {
-  const items: Array<{
-    icon: string
-    name: string
-    attrLabel: string
-    status: string
-    meta: string
-    retryAnnotation: string | null
-    isLoopGroup: boolean
-  }> = []
-
-  // Track consecutive same-tool groups for loop border highlighting
-  let prevToolName = ''
-  let consecutiveCount = 0
-
-  // Track retry annotations per tool group
-  const toolRetryTracker: Record<string, { attempt: number; maxAttempt: number }> = {}
-
-  // Pre-compute retry sequences per tool
-  const toolGroups: Record<string, SpanDetailType[]> = {}
-  for (const s of toolAndLLMSpans.value) {
-    const key = s.is_tool_call ? (s.tool_name ?? '') : '__llm__'
-    if (!toolGroups[key]) toolGroups[key] = []
-    toolGroups[key].push(s)
-  }
-
-  // For each tool group, determine if there's a retry pattern (consecutive errors then ok)
-  const retrySequences: Record<string, Array<{ start: number; total: number }>> = {}
-  for (const [key, spans] of Object.entries(toolGroups)) {
-    const sequences: Array<{ start: number; total: number }> = []
-    let seqStart = -1
-    let seqLen = 0
-    for (let i = 0; i < spans.length; i++) {
-      if (spans[i].status === 'error') {
-        if (seqStart === -1) seqStart = i
-        seqLen++
-      } else if (spans[i].status === 'ok' && seqStart !== -1) {
-        // errors followed by ok = retry sequence
-        sequences.push({ start: seqStart, total: seqLen + 1 })
-        seqStart = -1
-        seqLen = 0
-      } else {
-        seqStart = -1
-        seqLen = 0
-      }
-    }
-    if (sequences.length > 0) retrySequences[key] = sequences
-  }
-
-  // Build per-span retry annotation lookup
-  const spanRetryAnnotation: Record<string, string> = {}
-  for (const [key, sequences] of Object.entries(retrySequences)) {
-    const spans = toolGroups[key]
-    for (const seq of sequences) {
-      for (let i = seq.start; i < seq.start + seq.total; i++) {
-        const span = spans[i]
-        const attemptNum = i - seq.start + 1
-        const annotation = span.status === 'error'
-          ? `❌ attempt ${attemptNum}/${seq.total}`
-          : `✅ attempt ${attemptNum}/${seq.total}`
-        spanRetryAnnotation[span.span_id] = annotation
-      }
-    }
-  }
-
-  // Build chain items from tool+LLM spans
-  for (const s of toolAndLLMSpans.value) {
-    const isTool = s.is_tool_call
-    const isLLM = s.gen_ai_system !== undefined && !s.is_tool_call
-
-    // Loop detection: consecutive same tool_name
-    const currentToolName = s.tool_name ?? ''
-    if (isTool && currentToolName === prevToolName) {
-      consecutiveCount++
-    } else {
-      consecutiveCount = 1
-    }
-    prevToolName = currentToolName
-
-    const icon = isLLM ? '🤖' : '🔧'
-    const name = isTool ? (s.tool_name ?? s.name) : (s.gen_ai_system ?? s.name)
-    const attrLabel = isTool ? 'gen_ai.tool.name' : 'gen_ai.system'
-
-    // Meta: duration for tools, tokens for LLM
-    let meta = ''
-    if (isTool) {
-      meta = formatDuration(s.duration_ms)
-    } else if (isLLM) {
-      const tokens = s.total_tokens ?? (s.input_tokens ?? 0) + (s.output_tokens ?? 0)
-      meta = formatTokens(tokens) + ' tokens'
-    }
-
-    items.push({
-      icon,
-      name,
-      attrLabel,
-      status: s.status || 'ok',
-      meta,
-      retryAnnotation: spanRetryAnnotation[s.span_id] ?? null,
-      isLoopGroup: isTool && consecutiveCount >= 2
-    })
-  }
-
-  return items
-})
-
 // --- Formatting helpers ---
 
 function formatRate(rate: number): string {
@@ -508,96 +364,6 @@ function formatNullableTokens(tokens: number | null): string {
 .rate-green { border-left: 3px solid #22c55e; }
 .rate-yellow { border-left: 3px solid #eab308; }
 .rate-red { border-left: 3px solid #ef4444; }
-
-/* Call chain section */
-.call-chain-section h4 {
-  font-size: 14px;
-  margin-bottom: 10px;
-  color: var(--text-primary);
-}
-
-.call-chain {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.chain-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: 6px;
-  font-size: 13px;
-}
-
-.chain-item-error {
-  background: #fef2f2;
-  border-left: 3px solid #ef4444;
-}
-
-.chain-item-loop {
-  border-left: 3px solid #eab308;
-}
-
-.chain-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
-.chain-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.chain-name {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.chain-attr-label {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.chain-retry-info {
-  flex-shrink: 0;
-}
-
-.retry-annotation {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.chain-meta {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.chain-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.badge-ok {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.badge-error {
-  background: #fecaca;
-  color: #991b1b;
-}
 
 /* Loop warning */
 .loop-warning {

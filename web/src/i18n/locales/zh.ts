@@ -229,7 +229,6 @@ costDashboard: {
   agentStats: {
     agentBehavior: 'Agent 行为',
     agentStats: 'Agent 行为统计',
-    toolCallChain: '工具调用链',
     noToolCalls: '该 trace 未检测到工具调用',
     loopWarning: '检测到循环：{tool} 连续调用 {count} 次',
     loopWarningDesc: 'Agent 连续 {count} 次调用 {tool}，可能陷入重试循环',

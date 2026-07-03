@@ -229,7 +229,6 @@ costDashboard: {
   agentStats: {
     agentBehavior: 'Agent Behavior',
     agentStats: 'Agent Behavior Stats',
-    toolCallChain: 'Tool Call Chain',
     noToolCalls: 'No tool calls detected in this trace',
     loopWarning: 'Loop Detected: {tool} × {count}',
     loopWarningDesc: 'The agent called {tool} {count} consecutive times. This may indicate a retry loop.',
