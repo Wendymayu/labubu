@@ -58,6 +58,22 @@ export interface SpanDetail {
   is_tool_call: boolean        // tool_name != null
 }
 
+/**
+ * One LLM call in a trace, for the context-change bar chart.
+ * Derived from spans where total_tokens > 0, sorted by start_time_ms.
+ * input + cacheRead + cacheCreation + output == total_tokens.
+ */
+export interface ContextPoint {
+  index: number          // 1-based position after sorting by start_time_ms
+  spanId: string
+  spanName: string
+  model: string          // gen_ai_request_model ?? ''
+  input: number          // input_tokens ?? 0
+  cacheRead: number      // cache_read_tokens ?? 0
+  cacheCreation: number  // cache_creation_tokens ?? 0
+  output: number         // output_tokens ?? 0
+}
+
 export interface ScopeDetail {
   name: string
   version: string
