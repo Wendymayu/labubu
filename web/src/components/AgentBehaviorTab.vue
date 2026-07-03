@@ -43,14 +43,20 @@
         <h4 class="dim-title">🔧 {{ t('agentStats.dimTool') }}</h4>
         <div class="score-cards">
           <div class="score-card rate-green">
+            <div class="score-value">{{ distinctToolCount }}</div>
+            <div class="score-label">{{ t('agentStats.toolCount') }}</div>
+            <div class="score-subtitle">{{ totalToolCalls }} calls</div>
+          </div>
+
+          <div class="score-card rate-green">
             <div class="score-value">{{ totalToolCalls }}</div>
-            <div class="score-label">{{ t('agentStats.totalToolCalls') }}</div>
+            <div class="score-label">{{ t('agentStats.callCount') }}</div>
             <div class="score-subtitle">{{ successfulToolCalls }}/{{ totalToolCalls }} succeeded</div>
           </div>
 
           <div class="score-card rate-green">
             <div class="score-value">{{ formatNullableDuration(avgToolDurationMs) }}</div>
-            <div class="score-label">{{ t('agentStats.avgToolDuration') }}</div>
+            <div class="score-label">{{ t('agentStats.avgDuration') }}</div>
             <div class="score-subtitle">{{ totalToolCalls }} calls</div>
           </div>
         </div>
@@ -143,6 +149,9 @@ const hasToolCalls = computed(() => toolSpans.value.length > 0)
 const hasAnyData = computed(() => totalLLMCalls.value > 0 || hasToolCalls.value)
 
 const totalToolCalls = computed(() => toolSpans.value.length)
+
+// 去重工具数（按工具名聚合后的种类数）
+const distinctToolCount = computed(() => toolsUsed.value.length)
 
 const successfulToolCalls = computed(() =>
   toolSpans.value.filter(s => s.status === 'ok').length
