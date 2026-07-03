@@ -66,12 +66,12 @@ function bucketValue(p: ContextPoint, key: string): number {
 }
 
 function createChart() {
-  if (!canvasRef.value || props.points.length < 2) return
-
   if (chart) {
     chart.destroy()
     chart = null
   }
+
+  if (!canvasRef.value || props.points.length < 2) return
 
   const labels = props.points.map(p => String(p.index))
   const borderColor = getCSSVar('--chart-pie-border')
@@ -121,7 +121,7 @@ function createChart() {
               if (!p) return ''
               const key = SEGMENTS[ctx.datasetIndex].key
               const val = bucketValue(p, key).toLocaleString()
-              return ` ${ctx.dataset.label}: ${val}`
+              return ` ${t(`traceDetail.${SEGMENTS[ctx.datasetIndex].label}`)}: ${val}`
             },
             footer: (items: any[]) => {
               const idx = items[0]?.dataIndex ?? 0
