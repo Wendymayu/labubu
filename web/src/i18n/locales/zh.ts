@@ -96,6 +96,16 @@ export default {
     lastActive: '最后活跃',
     noSessions: '未找到会话数据。',
   },
+  traceDetail: {
+    context: '上下文',
+    contextTitle: 'LLM 调用上下文变化',
+    contextEmpty: '至少需要 2 次 LLM 调用才能展示上下文变化。',
+    ctxInput: '输入',
+    ctxCacheRead: '缓存读取',
+    ctxCacheCreation: '缓存写入',
+    ctxOutput: '输出',
+    ctxTotal: '合计',
+  },
   sessionDetail: {
     contextWindow: '上下文窗口',
     noContextData: '此会话无上下文窗口数据',
