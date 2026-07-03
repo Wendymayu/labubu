@@ -8,36 +8,60 @@
 
     <!-- State 2-4: Content (has tool calls) -->
     <div v-else class="behavior-content">
-      <!-- Score cards -->
+      <!-- Metric cards (8) -->
       <div class="score-cards">
-        <div class="score-card" :class="rateClass(toolSuccessRate)">
-          <div class="score-value">{{ formatRate(toolSuccessRate) }}</div>
-          <div class="score-label">{{ t('agentStats.toolSuccessRate') }}</div>
-          <div class="score-subtitle">{{ successfulToolCalls }}/{{ totalToolCalls }} calls succeeded</div>
+        <div class="score-card rate-green">
+          <div class="score-value">{{ totalToolCalls }}</div>
+          <div class="score-label">{{ t('agentStats.totalToolCalls') }}</div>
+          <div class="score-subtitle">{{ successfulToolCalls }}/{{ totalToolCalls }} succeeded</div>
         </div>
 
-        <div class="score-card" :class="loopClass(maxLoopDepth)">
-          <div class="score-value">{{ maxLoopDepth }}</div>
-          <div class="score-label">{{ t('agentStats.maxLoopDepth') }}</div>
+        <div class="score-card rate-green">
+          <div class="score-value">{{ formatNullableDuration(avgToolDurationMs) }}</div>
+          <div class="score-label">{{ t('agentStats.avgToolDuration') }}</div>
+          <div class="score-subtitle">{{ totalToolCalls }} calls</div>
+        </div>
+
+        <div class="score-card" :class="subagentCount > 0 ? 'rate-yellow' : 'rate-green'">
+          <div class="score-value">{{ subagentCount }}</div>
+          <div class="score-label">{{ t('agentStats.subagentCount') }}</div>
           <div class="score-subtitle">
-            <template v-if="maxLoopDepth > 1">{{ loopToolName }} called {{ maxLoopDepth }}&times; in a row</template>
-            <template v-else>no loops detected</template>
+            <template v-if="subagentCount > 0">{{ subagentCount }} nested agent(s)</template>
+            <template v-else>root only</template>
           </div>
         </div>
 
-        <div class="score-card" :class="totalRetries > 0 ? 'rate-red' : 'rate-green'">
-          <div class="score-value">{{ totalRetries }}</div>
-          <div class="score-label">{{ t('agentStats.totalRetries') }}</div>
+        <div class="score-card" :class="skillCount > 0 ? 'rate-green' : 'rate-green'">
+          <div class="score-value">{{ skillCount }}</div>
+          <div class="score-label">{{ t('agentStats.skillsUsed') }}</div>
           <div class="score-subtitle">
-            <template v-if="totalRetries > 0">{{ totalRetries }} retries across tools</template>
-            <template v-else>all calls succeeded first try</template>
+            <template v-if="skillCount > 0">{{ skillCount }} skill(s)</template>
+            <template v-else>none</template>
           </div>
         </div>
 
         <div class="score-card rate-green">
-          <div class="score-value">{{ formatTokens(totalTokens) }}</div>
-          <div class="score-label">{{ t('agentStats.tokensUsed') }}</div>
-          <div class="score-subtitle">{{ formatTokens(inputTokens) }} in + {{ formatTokens(outputTokens) }} out</div>
+          <div class="score-value">{{ totalLLMCalls }}</div>
+          <div class="score-label">{{ t('agentStats.llmCallCount') }}</div>
+          <div class="score-subtitle">{{ llmModelLabel || '—' }}</div>
+        </div>
+
+        <div class="score-card rate-green">
+          <div class="score-value">{{ formatNullableDuration(avgLLMDurationMs) }}</div>
+          <div class="score-label">{{ t('agentStats.avgLlmDuration') }}</div>
+          <div class="score-subtitle">{{ totalLLMCalls }} calls</div>
+        </div>
+
+        <div class="score-card rate-green">
+          <div class="score-value">{{ formatNullableTokens(avgLLMTokens) }}</div>
+          <div class="score-label">{{ t('agentStats.avgLlmTokens') }}</div>
+          <div class="score-subtitle">{{ formatTokens(llmInputTokens) }} in + {{ formatTokens(llmOutputTokens) }} out</div>
+        </div>
+
+        <div class="score-card rate-green">
+          <div class="score-value">{{ formatRatePerSec(tokenOutputRate) }}</div>
+          <div class="score-label">{{ t('agentStats.tokenOutputRate') }}</div>
+          <div class="score-subtitle">{{ formatTokens(llmOutputTokens) }} out / {{ formatNullableDuration(avgLLMDurationMs) }}</div>
         </div>
       </div>
 
@@ -110,9 +134,88 @@ const successfulToolCalls = computed(() =>
   toolSpans.value.filter(s => s.status === 'ok').length
 )
 
-const toolSuccessRate = computed(() =>
-  totalToolCalls.value > 0 ? successfulToolCalls.value / totalToolCalls.value : 1
+// --- LLM spans ---
+// LLM 调用：gen_ai_system 已设置且非 tool 调用（与 callChainItems 的 isLLM 判定一致）
+
+const llmSpans = computed(() =>
+  props.spans.filter(s => s.gen_ai_system !== undefined && !s.is_tool_call)
 )
+
+const totalLLMCalls = computed(() => llmSpans.value.length)
+
+const llmInputTokens = computed(() =>
+  llmSpans.value.reduce((sum, s) => sum + (s.input_tokens ?? 0), 0)
+)
+
+const llmOutputTokens = computed(() =>
+  llmSpans.value.reduce((sum, s) => sum + (s.output_tokens ?? 0), 0)
+)
+
+// --- 平均耗时 / token / 速率（除零时返回 null，模板显示 —） ---
+
+const avgToolDurationMs = computed(() =>
+  totalToolCalls.value > 0
+    ? toolSpans.value.reduce((sum, s) => sum + s.duration_ms, 0) / totalToolCalls.value
+    : null
+)
+
+const avgLLMDurationMs = computed(() =>
+  totalLLMCalls.value > 0
+    ? llmSpans.value.reduce((sum, s) => sum + s.duration_ms, 0) / totalLLMCalls.value
+    : null
+)
+
+const avgLLMTokens = computed(() =>
+  totalLLMCalls.value > 0
+    ? llmSpans.value.reduce((sum, s) => sum + (s.total_tokens ?? 0), 0) / totalLLMCalls.value
+    : null
+)
+
+const tokenOutputRate = computed(() => {
+  const totalDurMs = llmSpans.value.reduce((sum, s) => sum + s.duration_ms, 0)
+  return totalDurMs > 0 ? llmOutputTokens.value / (totalDurMs / 1000) : null
+})
+
+// --- subagent / skill 计数 ---
+
+const subagentCount = computed(() => {
+  const names = new Set<string>()
+  for (const s of props.spans) {
+    const n = s.attributes?.['gen_ai.agent.name']
+    if (n) names.add(n)
+  }
+  return Math.max(0, names.size - 1)
+})
+
+const skillCount = computed(() => {
+  const names = new Set<string>()
+  let invocations = 0
+  for (const s of toolSpans.value) {
+    const tn = (s.tool_name ?? '').toLowerCase()
+    const isSkillTool = tn === 'skill' || tn === 'use_skill'
+    const skillAttr = s.attributes?.['skill.name'] ?? s.attributes?.['gen_ai.skill.name']
+    if (!isSkillTool && !skillAttr) continue
+    invocations++
+    let name = skillAttr ?? ''
+    if (!name && isSkillTool) {
+      try {
+        const args = JSON.parse(s.attributes?.['gen_ai.tool.arguments'] ?? '{}')
+        name = args?.name ?? args?.skill ?? args?.skill_name ?? ''
+      } catch {
+        name = ''
+      }
+    }
+    if (name) names.add(name)
+  }
+  return names.size > 0 ? names.size : invocations
+})
+
+const llmModelLabel = computed(() => {
+  for (const s of llmSpans.value) {
+    if (s.gen_ai_request_model) return s.gen_ai_request_model
+  }
+  return ''
+})
 
 // --- Max loop depth computation ---
 // Spans are already time-sorted from API, so we scan sequentially
@@ -150,50 +253,6 @@ const loopToolName = computed(() => {
   }
   return resultName
 })
-
-// --- Total retries computation ---
-// For each tool group, count consecutive errors followed by a success as a retry pattern
-
-const totalRetries = computed(() => {
-  // Group spans by tool_name
-  const groups: Record<string, SpanDetailType[]> = {}
-  for (const s of toolSpans.value) {
-    const key = s.tool_name ?? ''
-    if (!groups[key]) groups[key] = []
-    groups[key].push(s)
-  }
-
-  let retries = 0
-  for (const spans of Object.values(groups)) {
-    let consecutiveErrors = 0
-    for (const s of spans) {
-      if (s.status === 'error') {
-        consecutiveErrors++
-      } else if (s.status === 'ok' && consecutiveErrors > 0) {
-        retries += consecutiveErrors
-        consecutiveErrors = 0
-      } else {
-        consecutiveErrors = 0
-      }
-    }
-  }
-  return retries
-})
-
-// --- Token computation ---
-// Sum from ALL spans (not just tool spans)
-
-const inputTokens = computed(() =>
-  props.spans.reduce((sum, s) => sum + (s.input_tokens ?? 0), 0)
-)
-
-const outputTokens = computed(() =>
-  props.spans.reduce((sum, s) => sum + (s.output_tokens ?? 0), 0)
-)
-
-const totalTokens = computed(() =>
-  props.spans.reduce((sum, s) => sum + (s.total_tokens ?? 0), 0)
-)
 
 // --- Call chain items ---
 // Ordered list of tool calls and LLM calls with metadata
@@ -331,6 +390,19 @@ function loopClass(depth: number): string {
   if (depth < 3) return 'rate-green'
   if (depth <= 4) return 'rate-yellow'
   return 'rate-red'
+}
+
+function formatRatePerSec(rate: number | null): string {
+  if (rate === null) return '—'
+  return `${rate.toFixed(1)} t/s`
+}
+
+function formatNullableDuration(ms: number | null): string {
+  return ms === null ? '—' : formatDuration(ms)
+}
+
+function formatNullableTokens(tokens: number | null): string {
+  return tokens === null ? '—' : formatTokens(tokens)
 }
 </script>
 
