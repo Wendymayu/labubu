@@ -1,97 +1,118 @@
 <template>
   <div class="agent-behavior-tab">
-    <!-- State 1: Empty — no tool calls detected -->
-    <div v-if="!hasToolCalls" class="empty-state">
+    <!-- State 1: Empty — no agent behavior data at all -->
+    <div v-if="!hasAnyData" class="empty-state">
       <div class="empty-icon">🔧</div>
-      <p>{{ t('agentStats.noToolCalls') }}</p>
+      <p>{{ t('agentStats.noAgentData') }}</p>
     </div>
 
-    <!-- State 2-4: Content (has tool calls) -->
+    <!-- State 2-4: Content (has LLM or tool activity) -->
     <div v-else class="behavior-content">
-      <!-- Metric cards (8) -->
-      <div class="score-cards">
-        <div class="score-card rate-green">
-          <div class="score-value">{{ totalToolCalls }}</div>
-          <div class="score-label">{{ t('agentStats.totalToolCalls') }}</div>
-          <div class="score-subtitle">{{ successfulToolCalls }}/{{ totalToolCalls }} succeeded</div>
-        </div>
+      <!-- LLM dimension -->
+      <section v-if="totalLLMCalls > 0" class="dim-section">
+        <h4 class="dim-title">🤖 {{ t('agentStats.dimLlm') }}</h4>
+        <div class="score-cards">
+          <div class="score-card rate-green">
+            <div class="score-value">{{ totalLLMCalls }}</div>
+            <div class="score-label">{{ t('agentStats.llmCallCount') }}</div>
+            <div class="score-subtitle">{{ llmModelLabel || '—' }}</div>
+          </div>
 
-        <div class="score-card rate-green">
-          <div class="score-value">{{ formatNullableDuration(avgToolDurationMs) }}</div>
-          <div class="score-label">{{ t('agentStats.avgToolDuration') }}</div>
-          <div class="score-subtitle">{{ totalToolCalls }} calls</div>
-        </div>
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(avgLLMDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.avgLlmDuration') }}</div>
+            <div class="score-subtitle">{{ totalLLMCalls }} calls</div>
+          </div>
 
-        <div class="score-card" :class="subagentCount > 0 ? 'rate-yellow' : 'rate-green'">
-          <div class="score-value">{{ subagentCount }}</div>
-          <div class="score-label">{{ t('agentStats.subagentCount') }}</div>
-          <div class="score-subtitle">
-            <template v-if="subagentCount > 0">{{ subagentCount }} nested agent(s)</template>
-            <template v-else>root only</template>
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableTokens(avgLLMTokens) }}</div>
+            <div class="score-label">{{ t('agentStats.avgLlmTokens') }}</div>
+            <div class="score-subtitle">{{ formatTokens(llmInputTokens) }} in + {{ formatTokens(llmOutputTokens) }} out</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatRatePerSec(tokenOutputRate) }}</div>
+            <div class="score-label">{{ t('agentStats.tokenOutputRate') }}</div>
+            <div class="score-subtitle">{{ formatTokens(llmOutputTokens) }} out / {{ formatNullableDuration(avgLLMDurationMs) }}</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tool dimension -->
+      <section v-if="hasToolCalls" class="dim-section">
+        <h4 class="dim-title">🔧 {{ t('agentStats.dimTool') }}</h4>
+        <div class="score-cards">
+          <div class="score-card rate-green">
+            <div class="score-value">{{ totalToolCalls }}</div>
+            <div class="score-label">{{ t('agentStats.totalToolCalls') }}</div>
+            <div class="score-subtitle">{{ successfulToolCalls }}/{{ totalToolCalls }} succeeded</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(avgToolDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.avgToolDuration') }}</div>
+            <div class="score-subtitle">{{ totalToolCalls }} calls</div>
           </div>
         </div>
 
-        <div class="score-card rate-green">
-          <div class="score-value">{{ skillCount }}</div>
-          <div class="score-label">{{ t('agentStats.skillsUsed') }}</div>
-          <div class="score-subtitle">
-            <template v-if="skillCount > 0">{{ skillCount }} skill(s)</template>
-            <template v-else>none</template>
+        <!-- Tools Used summary -->
+        <div v-if="toolsUsed.length > 0" class="tools-used-section">
+          <table class="tools-used-table">
+            <thead>
+              <tr>
+                <th>{{ t('agentStats.tool') }}</th>
+                <th class="num">{{ t('agentStats.callCount') }}</th>
+                <th class="num">{{ t('agentStats.successRateCol') }}</th>
+                <th class="num">{{ t('agentStats.avgDuration') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in toolsUsed" :key="i">
+                <td class="tool-name">{{ row.name }}</td>
+                <td class="num">{{ row.calls }}</td>
+                <td class="num" :class="rateClass(row.successRate)">{{ formatRate(row.successRate) }}</td>
+                <td class="num">{{ formatDuration(row.avgDuration) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Loop Warning -->
+        <div v-if="maxLoopDepth >= 3" class="loop-warning">
+          <div class="loop-warning-title">{{ t('agentStats.loopWarning', { tool: loopToolName, count: maxLoopDepth }) }}</div>
+          <div class="loop-warning-desc">{{ t('agentStats.loopWarningDesc', { tool: loopToolName, count: maxLoopDepth }) }}</div>
+        </div>
+      </section>
+
+      <!-- Skill & Subagent dimensions share a row -->
+      <div class="dim-pair">
+        <section class="dim-section">
+          <h4 class="dim-title">🧩 {{ t('agentStats.dimSkill') }}</h4>
+          <div class="score-cards">
+            <div class="score-card rate-green">
+              <div class="score-value">{{ skillCount }}</div>
+              <div class="score-label">{{ t('agentStats.skillsUsed') }}</div>
+              <div class="score-subtitle">
+                <template v-if="skillCount > 0">{{ skillCount }} skill(s)</template>
+                <template v-else>none</template>
+              </div>
+            </div>
           </div>
-        </div>
+        </section>
 
-        <div class="score-card rate-green">
-          <div class="score-value">{{ totalLLMCalls }}</div>
-          <div class="score-label">{{ t('agentStats.llmCallCount') }}</div>
-          <div class="score-subtitle">{{ llmModelLabel || '—' }}</div>
-        </div>
-
-        <div class="score-card rate-green">
-          <div class="score-value">{{ formatNullableDuration(avgLLMDurationMs) }}</div>
-          <div class="score-label">{{ t('agentStats.avgLlmDuration') }}</div>
-          <div class="score-subtitle">{{ totalLLMCalls }} calls</div>
-        </div>
-
-        <div class="score-card rate-green">
-          <div class="score-value">{{ formatNullableTokens(avgLLMTokens) }}</div>
-          <div class="score-label">{{ t('agentStats.avgLlmTokens') }}</div>
-          <div class="score-subtitle">{{ formatTokens(llmInputTokens) }} in + {{ formatTokens(llmOutputTokens) }} out</div>
-        </div>
-
-        <div class="score-card rate-green">
-          <div class="score-value">{{ formatRatePerSec(tokenOutputRate) }}</div>
-          <div class="score-label">{{ t('agentStats.tokenOutputRate') }}</div>
-          <div class="score-subtitle">{{ formatTokens(llmOutputTokens) }} out / {{ formatNullableDuration(avgLLMDurationMs) }}</div>
-        </div>
-      </div>
-
-      <!-- Tools Used summary -->
-      <div v-if="toolsUsed.length > 0" class="tools-used-section">
-        <h4>{{ t('agentStats.toolsUsedTitle') }}</h4>
-        <table class="tools-used-table">
-          <thead>
-            <tr>
-              <th>{{ t('agentStats.tool') }}</th>
-              <th class="num">{{ t('agentStats.callCount') }}</th>
-              <th class="num">{{ t('agentStats.successRateCol') }}</th>
-              <th class="num">{{ t('agentStats.avgDuration') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, i) in toolsUsed" :key="i">
-              <td class="tool-name">{{ row.name }}</td>
-              <td class="num">{{ row.calls }}</td>
-              <td class="num" :class="rateClass(row.successRate)">{{ formatRate(row.successRate) }}</td>
-              <td class="num">{{ formatDuration(row.avgDuration) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Loop Warning -->
-      <div v-if="maxLoopDepth >= 3" class="loop-warning">
-        <div class="loop-warning-title">{{ t('agentStats.loopWarning', { tool: loopToolName, count: maxLoopDepth }) }}</div>
-        <div class="loop-warning-desc">{{ t('agentStats.loopWarningDesc', { tool: loopToolName, count: maxLoopDepth }) }}</div>
+        <section class="dim-section">
+          <h4 class="dim-title">🧬 {{ t('agentStats.dimSubagent') }}</h4>
+          <div class="score-cards">
+            <div class="score-card" :class="subagentCount > 0 ? 'rate-yellow' : 'rate-green'">
+              <div class="score-value">{{ subagentCount }}</div>
+              <div class="score-label">{{ t('agentStats.subagentCount') }}</div>
+              <div class="score-subtitle">
+                <template v-if="subagentCount > 0">{{ subagentCount }} nested agent(s)</template>
+                <template v-else>root only</template>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   </div>
@@ -117,6 +138,9 @@ const toolSpans = computed(() =>
 )
 
 const hasToolCalls = computed(() => toolSpans.value.length > 0)
+
+// 整体空状态门槛：既无 LLM 调用也无工具调用时才显示空态
+const hasAnyData = computed(() => totalLLMCalls.value > 0 || hasToolCalls.value)
 
 const totalToolCalls = computed(() => toolSpans.value.length)
 
@@ -324,10 +348,30 @@ function formatNullableTokens(tokens: number | null): string {
   gap: 20px;
 }
 
+/* Dimension sections */
+.dim-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dim-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.dim-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
 /* Score cards */
 .score-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
 }
 
@@ -386,10 +430,8 @@ function formatNullableTokens(tokens: number | null): string {
 }
 
 /* Tools used summary table */
-.tools-used-section h4 {
-  font-size: 14px;
-  margin-bottom: 10px;
-  color: var(--text-primary);
+.tools-used-section {
+  overflow-x: auto;
 }
 
 .tools-used-table {
