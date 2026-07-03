@@ -70,7 +70,52 @@
         <div v-if="isGroupExpanded(group.name)" class="attr-group-body">
           <div v-for="item in group.items" :key="item.key" class="attr-row">
             <span class="attr-key" v-html="highlightText(item.key)"></span>
-            <span class="attr-value" :class="{ 'attr-empty-val': !item.value }" v-html="highlightText(item.value || '(empty)')"></span>
+            <div v-if="toolDefsByItem[item.key]" class="attr-value tool-def-list">
+              <div
+                v-for="(t, ti) in (toolDefsByItem[item.key] || [])"
+                :key="ti"
+                class="tool-def-item"
+              >
+                <div class="tool-def-header" @click="toggleToolDef(item.key, ti)">
+                  <span class="tool-def-caret">{{ isToolDefExpanded(item.key, ti) ? '▾' : '▸' }}</span>
+                  <b class="tool-def-name" v-html="highlightText(t.name)"></b>
+                  <span class="tl-copy-inline" @click.stop="copyText(t.raw)">📋</span>
+                </div>
+                <pre v-if="isToolDefExpanded(item.key, ti)" class="tl-code tool-def-code"><code v-html="highlightJSON(t.raw)"></code></pre>
+              </div>
+            </div>
+            <div v-else-if="messagesByItem[item.key]" class="attr-value msg-list">
+              <div
+                v-for="(m, mi) in (messagesByItem[item.key] || [])"
+                :key="mi"
+                class="msg-item"
+              >
+                <div class="msg-header">
+                  <span class="msg-role" :class="roleClass(m.role)">{{ m.role }}</span>
+                </div>
+                <div class="msg-body">
+                  <div
+                    v-for="(b, bi) in m.blocks"
+                    :key="bi"
+                    class="msg-block"
+                  >
+                    <pre v-if="b.type === 'text'" class="msg-text">{{ b.text }}</pre>
+                    <span v-else-if="b.type === 'image'" class="msg-image">🖼 {{ b.url }}</span>
+                    <div v-else-if="b.type === 'tool_call'" class="msg-toolcall">
+                      <div class="msg-toolcall-name">🔧 <b v-html="highlightText(b.toolName || '')"></b></div>
+                      <pre class="tl-code msg-toolcall-args"><code v-html="highlightJSON(b.toolArgs || '')"></code></pre>
+                    </div>
+                    <pre v-else class="tl-code"><code v-html="highlightJSON(b.raw || '')"></code></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <span
+              v-else
+              class="attr-value"
+              :class="{ 'attr-empty-val': !item.value }"
+              v-html="highlightText(item.value || '(empty)')"
+            ></span>
           </div>
         </div>
       </div>
@@ -256,6 +301,183 @@ function toggleCodeBlock(evt: any, k: string, idx: number) {
   }
   codeBlocks[evtKey].expanded = !codeBlocks[evtKey].expanded
 }
+
+// --- tool definitions (gen_ai.tool.definitions) list view ---
+
+interface ToolDefItem { name: string; raw: string }
+
+function isToolDefinitionsKey(key: string): boolean {
+  return /tool[._]definition/.test(key)
+}
+
+function parseToolDefinitions(value: string): ToolDefItem[] | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null
+  const items: ToolDefItem[] = []
+  for (const entry of parsed) {
+    // Support both direct ({name, ...}) and OpenAI-style ({type:'function', function:{name,...}}) shapes
+    const def = entry && typeof entry === 'object'
+      ? ((entry as any).function && typeof (entry as any).function === 'object' ? (entry as any).function : entry)
+      : null
+    const name = def ? String((def as any).name ?? '(unnamed)') : '(unnamed)'
+    items.push({ name, raw: JSON.stringify(entry, null, 2) })
+  }
+  return items
+}
+
+const toolDefExpanded = reactive<Record<string, boolean>>({})
+
+watch(() => props.span, () => {
+  Object.keys(toolDefExpanded).forEach(k => delete toolDefExpanded[k])
+})
+
+function toolDefStateKey(key: string, idx: number): string {
+  return `${key}#${idx}`
+}
+
+function isToolDefExpanded(key: string, idx: number): boolean {
+  return toolDefExpanded[toolDefStateKey(key, idx)] ?? false
+}
+
+function toggleToolDef(key: string, idx: number) {
+  const k = toolDefStateKey(key, idx)
+  toolDefExpanded[k] = !isToolDefExpanded(key, idx)
+}
+
+const toolDefsByItem = computed<Record<string, ToolDefItem[] | null>>(() => {
+  const map: Record<string, ToolDefItem[] | null> = {}
+  for (const g of groupedAttributes.value) {
+    for (const item of g.items) {
+      if (isToolDefinitionsKey(item.key)) {
+        map[item.key] = parseToolDefinitions(item.value)
+      }
+    }
+  }
+  return map
+})
+
+// --- chat messages (gen_ai.{input,output}.messages) list view ---
+
+interface MsgBlock {
+  type: 'text' | 'image' | 'tool_call' | 'raw'
+  text?: string
+  url?: string
+  toolName?: string
+  toolArgs?: string
+  raw?: string
+}
+
+interface ChatMessage {
+  role: string
+  blocks: MsgBlock[]
+}
+
+function isMessagesKey(key: string): boolean {
+  return /(?:input|output)[._]messages/.test(key)
+}
+
+function pushPart(part: unknown, blocks: MsgBlock[]) {
+  if (!part || typeof part !== 'object') return
+  const p = part as Record<string, unknown>
+  // Text can live under `text` (OpenAI-style) or `content` (JiuwenSwarm-style parts).
+  const txt = typeof p.text === 'string' ? p.text
+    : typeof p.content === 'string' ? p.content
+    : null
+  if (txt != null) {
+    if (txt) blocks.push({ type: 'text', text: txt })
+    return
+  }
+  if (p.type === 'image_url' || p.type === 'image' || 'image_url' in p || 'image' in p) {
+    const url = (p.image_url && typeof p.image_url === 'object')
+      ? String((p.image_url as Record<string, unknown>).url ?? '')
+      : String(p.url ?? '')
+    blocks.push({ type: 'image', url })
+    return
+  }
+  blocks.push({ type: 'raw', raw: JSON.stringify(part, null, 2) })
+}
+
+function parseMessages(value: string): ChatMessage[] | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null
+  const messages: ChatMessage[] = []
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue
+    const m = entry as Record<string, unknown>
+    const role = String(m.role ?? '?')
+    const blocks: MsgBlock[] = []
+
+    const content = m.content
+    if (typeof content === 'string') {
+      if (content) blocks.push({ type: 'text', text: content })
+    } else if (Array.isArray(content)) {
+      for (const part of content) pushPart(part, blocks)
+    } else if (content != null) {
+      blocks.push({ type: 'raw', raw: JSON.stringify(content, null, 2) })
+    }
+
+    // Some SDKs (e.g. JiuwenSwarm) carry the body under `parts` instead of `content`.
+    if (blocks.length === 0 && Array.isArray(m.parts)) {
+      for (const part of m.parts) pushPart(part, blocks)
+    }
+
+    // Assistant tool_calls: support both nested (OpenAI: {function:{name,arguments}})
+    // and flat ({name, arguments}) shapes.
+    if (Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) {
+        if (!tc || typeof tc !== 'object') continue
+        const tcObj = tc as Record<string, unknown>
+        const fn = tcObj.function as Record<string, unknown> | undefined
+        const name = String(fn?.name ?? tcObj.name ?? '(unnamed)')
+        const argsRaw = fn?.arguments ?? tcObj.arguments
+        const toolArgs = typeof argsRaw === 'string'
+          ? argsRaw
+          : (argsRaw == null ? '{}' : JSON.stringify(argsRaw, null, 2))
+        blocks.push({ type: 'tool_call', toolName: name, toolArgs })
+      }
+    }
+
+    // Fallback: if nothing was parsed into blocks, show the whole message as
+    // raw JSON so content is always visible (and the shape is inspectable).
+    if (blocks.length === 0) {
+      blocks.push({ type: 'raw', raw: JSON.stringify(entry, null, 2) })
+    }
+
+    messages.push({ role, blocks })
+  }
+  return messages.length ? messages : null
+}
+
+function roleClass(role: string): string {
+  const r = role.toLowerCase()
+  if (r === 'user') return 'msg-role-user'
+  if (r === 'assistant') return 'msg-role-assistant'
+  if (r === 'system') return 'msg-role-system'
+  if (r === 'tool') return 'msg-role-tool'
+  return 'msg-role-other'
+}
+
+const messagesByItem = computed<Record<string, ChatMessage[] | null>>(() => {
+  const map: Record<string, ChatMessage[] | null> = {}
+  for (const g of groupedAttributes.value) {
+    for (const item of g.items) {
+      if (isMessagesKey(item.key)) {
+        map[item.key] = parseMessages(item.value)
+      }
+    }
+  }
+  return map
+})
 
 // --- tool I/O detection ---
 
@@ -514,6 +736,120 @@ function statusClass(status: string): string {
   font-style: italic;
 }
 
+/* --- Tool definitions list --- */
+.tool-def-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tool-def-item {
+  background: var(--bg-surface-deep);
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.tool-def-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  user-select: none;
+}
+.tool-def-header:hover {
+  background: var(--bg-surface-hover-subtle);
+}
+.tool-def-caret {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.tool-def-name {
+  color: var(--text-primary);
+  flex: 1;
+  word-break: break-all;
+  font-weight: 600;
+}
+.tool-def-code {
+  margin: 0;
+  border-top: 1px solid var(--border-group);
+  border-radius: 0;
+  max-height: calc(100vh - 120px);
+}
+
+/* --- Chat messages list --- */
+.msg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.msg-item {
+  background: var(--bg-surface-deep);
+  border: 1px solid var(--border-group);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.msg-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--bg-secondary);
+}
+.msg-role {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  background: var(--bg-surface-deep);
+  color: var(--text-secondary);
+}
+.msg-role-user { color: var(--chart-client); }
+.msg-role-assistant { color: var(--chart-producer); }
+.msg-role-system { color: var(--status-warning); }
+.msg-role-tool { color: var(--chart-pie-tool); }
+.msg-body {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.msg-block {
+  font-size: 11px;
+}
+.msg-text {
+  background: var(--bg-primary);
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  line-height: 1.5;
+}
+.msg-image {
+  font-size: 10px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.msg-toolcall-name {
+  font-size: 10px;
+  color: var(--chart-client);
+  margin-bottom: 2px;
+}
+.msg-toolcall-args {
+  margin: 0;
+  border-radius: 3px;
+  max-height: calc(100vh - 120px);
+}
+
 /* --- Events Timeline --- */
 .events-timeline {
   position: relative;
@@ -607,7 +943,7 @@ function statusClass(status: string): string {
   padding: 6px 8px;
   font-size: 10px;
   overflow-x: auto;
-  max-height: 250px;
+  max-height: calc(100vh - 120px);
   overflow-y: auto;
   margin: 0;
   font-family: 'Courier New', monospace;

@@ -1115,7 +1115,7 @@ onUnmounted(() => {
   color: var(--text-primary);
   white-space: pre;
   overflow: auto;
-  max-height: calc(100vh - 360px);
+  max-height: calc(100vh - 120px);
 }
 .json-content::-webkit-scrollbar { width: 4px; height: 4px; }
 .json-content::-webkit-scrollbar-track { background: transparent; }
