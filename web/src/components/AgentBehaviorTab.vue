@@ -31,7 +31,7 @@
           </div>
         </div>
 
-        <div class="score-card" :class="skillCount > 0 ? 'rate-green' : 'rate-green'">
+        <div class="score-card rate-green">
           <div class="score-value">{{ skillCount }}</div>
           <div class="score-label">{{ t('agentStats.skillsUsed') }}</div>
           <div class="score-subtitle">
@@ -133,6 +133,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SpanDetail as SpanDetailType } from '../api/client'
 
+interface ParsedToolArgs { name?: string; skill?: string; skill_name?: string }
+
 const { t } = useI18n()
 
 const props = defineProps<{
@@ -222,7 +224,7 @@ const skillCount = computed(() => {
     let name = skillAttr ?? ''
     if (!name && isSkillTool) {
       try {
-        const args = JSON.parse(s.attributes?.['gen_ai.tool.arguments'] ?? '{}')
+        const args = JSON.parse(s.attributes?.['gen_ai.tool.arguments'] ?? '{}') as ParsedToolArgs
         name = args?.name ?? args?.skill ?? args?.skill_name ?? ''
       } catch {
         name = ''
@@ -427,12 +429,6 @@ function formatDuration(ms: number): string {
 function rateClass(rate: number): string {
   if (rate >= 0.9) return 'rate-green'
   if (rate >= 0.7) return 'rate-yellow'
-  return 'rate-red'
-}
-
-function loopClass(depth: number): string {
-  if (depth < 3) return 'rate-green'
-  if (depth <= 4) return 'rate-yellow'
   return 'rate-red'
 }
 
@@ -667,7 +663,7 @@ function formatNullableTokens(tokens: number | null): string {
   border-bottom: none;
 }
 
-.tools-used-table td.rate-green { color: #22c55e; }
-.tools-used-table td.rate-yellow { color: #eab308; }
-.tools-used-table td.rate-red { color: #ef4444; }
+.tools-used-table td.rate-green { color: #22c55e; border-left: none; }
+.tools-used-table td.rate-yellow { color: #eab308; border-left: none; }
+.tools-used-table td.rate-red { color: #ef4444; border-left: none; }
 </style>

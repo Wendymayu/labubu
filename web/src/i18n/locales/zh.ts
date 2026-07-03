@@ -229,10 +229,6 @@ costDashboard: {
   agentStats: {
     agentBehavior: 'Agent 行为',
     agentStats: 'Agent 行为统计',
-    toolSuccessRate: '工具成功率',
-    maxLoopDepth: '最大循环深度',
-    totalRetries: '总重试次数',
-    tokensUsed: 'Token 使用量',
     toolCallChain: '工具调用链',
     noToolCalls: '该 trace 未检测到工具调用',
     loopWarning: '检测到循环：{tool} 连续调用 {count} 次',

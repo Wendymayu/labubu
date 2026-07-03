@@ -229,10 +229,6 @@ costDashboard: {
   agentStats: {
     agentBehavior: 'Agent Behavior',
     agentStats: 'Agent Behavior Stats',
-    toolSuccessRate: 'Tool Success Rate',
-    maxLoopDepth: 'Max Loop Depth',
-    totalRetries: 'Total Retries',
-    tokensUsed: 'Tokens Used',
     toolCallChain: 'Tool Call Chain',
     noToolCalls: 'No tool calls detected in this trace',
     loopWarning: 'Loop Detected: {tool} × {count}',
