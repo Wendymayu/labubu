@@ -29,6 +29,7 @@
       <table class="trace-table" v-if="traces.length > 0">
         <thead>
           <tr>
+            <th>{{ t('traceList.time') }}</th>
             <th class="col-checkbox">
               <input type="checkbox" :checked="selectedIds.size === traces.length && traces.length > 0" @change="toggleSelectAll" />
             </th>
@@ -108,7 +109,6 @@
                 </div>
               </div>
             </th>
-            <th>{{ t('traceList.time') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -117,6 +117,7 @@
             :key="trace.trace_id_hex"
             :class="['trace-row', { 'row-selected': isSelected(trace.trace_id_hex) }]"
           >
+            <td class="cell-time" @click="goToTrace(trace.trace_id_hex)">{{ formatTime(trace.start_time_ms) }}</td>
             <td class="col-checkbox" @click.stop>
               <input type="checkbox" :checked="isSelected(trace.trace_id_hex)" @change="toggleSelect(trace.trace_id_hex)" />
             </td>
@@ -130,7 +131,6 @@
             </td>
             <td @click="goToTrace(trace.trace_id_hex)">{{ formatTokens(trace.total_tokens) }}</td>
             <td class="cell-cost" @click="goToTrace(trace.trace_id_hex)">{{ formatCost(trace.cost, trace.cost_currency) }}</td>
-            <td class="cell-time" @click="goToTrace(trace.trace_id_hex)">{{ formatTime(trace.start_time_ms) }}</td>
           </tr>
         </tbody>
       </table>

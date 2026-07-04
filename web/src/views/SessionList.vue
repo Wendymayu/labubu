@@ -15,6 +15,7 @@
       <table class="trace-table" v-if="sessions.length > 0">
         <thead>
           <tr>
+            <th>{{ t('sessionList.lastActive') }}</th>
             <th class="has-filter">
               <div class="th-head">
                 <span>{{ t('sessionList.sessionId') }}</span>
@@ -30,7 +31,6 @@
             <th>{{ t('sessionList.avgLatency') }}</th>
             <th>{{ t('sessionList.maxLatency') }}</th>
             <th>{{ t('sessionList.errorRate') }}</th>
-            <th>{{ t('sessionList.lastActive') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -40,6 +40,7 @@
             @click="goToSession(session.session_id)"
             class="trace-row"
           >
+            <td class="cell-time">{{ formatTime(session.last_active_ms) }}</td>
             <td class="cell-session-id">{{ session.session_id }}</td>
             <td>{{ session.trace_count }}</td>
             <td class="cell-tokens">{{ formatTokens(session.total_tokens) }}</td>
@@ -51,7 +52,6 @@
                 {{ (session.error_rate * 100).toFixed(0) }}%
               </span>
             </td>
-            <td class="cell-time">{{ formatTime(session.last_active_ms) }}</td>
           </tr>
         </tbody>
       </table>
