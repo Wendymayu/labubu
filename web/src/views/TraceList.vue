@@ -29,10 +29,10 @@
       <table class="trace-table" v-if="traces.length > 0">
         <thead>
           <tr>
-            <th>{{ t('traceList.time') }}</th>
             <th class="col-checkbox">
               <input type="checkbox" :checked="selectedIds.size === traces.length && traces.length > 0" @change="toggleSelectAll" />
             </th>
+            <th>{{ t('traceList.time') }}</th>
             <th>{{ t('traceList.name') }}</th>
             <th>{{ t('traceList.input') }}</th>
             <th class="has-filter">
@@ -117,10 +117,10 @@
             :key="trace.trace_id_hex"
             :class="['trace-row', { 'row-selected': isSelected(trace.trace_id_hex) }]"
           >
-            <td class="cell-time" @click="goToTrace(trace.trace_id_hex)">{{ formatTime(trace.start_time_ms) }}</td>
             <td class="col-checkbox" @click.stop>
               <input type="checkbox" :checked="isSelected(trace.trace_id_hex)" @change="toggleSelect(trace.trace_id_hex)" />
             </td>
+            <td class="cell-time" @click="goToTrace(trace.trace_id_hex)">{{ formatTime(trace.start_time_ms) }}</td>
             <td class="cell-name" @click="goToTrace(trace.trace_id_hex)">{{ trace.root_name }}</td>
             <td class="cell-input" @click="goToTrace(trace.trace_id_hex)" :title="trace.input_messages ?? ''">{{ formatInput(trace.input_messages) }}</td>
             <td @click="goToTrace(trace.trace_id_hex)">{{ trace.root_service }}</td>
