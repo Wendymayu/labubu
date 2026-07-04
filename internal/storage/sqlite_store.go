@@ -68,6 +68,9 @@ func NewChDBStore(dataDir string) (Store, error) {
 	db.Exec(`ALTER TABLE spans ADD COLUMN cost REAL`)
 	db.Exec(`ALTER TABLE spans ADD COLUMN cost_currency TEXT NOT NULL DEFAULT ''`)
 
+	// Migrate: add context_window column to existing model_pricing tables.
+	db.Exec(`ALTER TABLE model_pricing ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0`)
+
 	s := &sqliteStore{db: db, dir: dataDir}
 
 	// Seed default pricing from config (same as memStore/chDB)
