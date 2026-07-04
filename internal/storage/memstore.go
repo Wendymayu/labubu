@@ -511,8 +511,10 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 
 	// Use the root span's attributes as resource attrs if available.
 	resourceAttrs := make(map[string]string)
+	sessionID := ""
 	if trace, ok := m.traces[traceID]; ok {
 		resourceAttrs = trace.ResourceAttrs
+		sessionID = trace.SessionID
 	}
 
 	return &TraceDetail{
@@ -522,6 +524,7 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 		StartTimeMS:   detailSpans[rootIdx].StartTimeMS,
 		DurationMS:    detailSpans[rootIdx].DurationMS,
 		ResourceAttrs: resourceAttrs,
+		SessionID:     sessionID,
 		Spans:         detailSpans,
 	}, nil
 }

@@ -99,6 +99,7 @@ export default {
   traceDetail: {
     context: 'Context',
     contextTitle: 'Context',
+    goToSession: 'Session',
     contextEmpty: 'At least 2 LLM calls are needed to show context change.',
     contextSessionMain: 'Main',
     contextSessionCalls: '{n} calls',

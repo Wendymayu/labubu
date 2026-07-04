@@ -651,14 +651,14 @@ func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDet
 		`SELECT trace_id_hex, root_span_id_hex, span_count, start_time_ms, duration_ms,
 		        resource_attributes, resource_schema_url,
 		        scope_name, scope_version, scope_attributes,
-		        cost, cost_currency
+		        cost, cost_currency, session_id
 		 FROM traces WHERE trace_id_hex = ?`,
 		traceIDHex,
 	).Scan(
 		&detail.TraceIDHex, &detail.RootSpanID, &detail.SpanCount, &detail.StartTimeMS, &detail.DurationMS,
 		&resAttrsJSON, &resSchemaURL,
 		&scopeName, &scopeVersion, &scopeAttrsJSON,
-		&cost, &costCurrency,
+		&cost, &costCurrency, &detail.SessionID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query trace meta: %w", err)

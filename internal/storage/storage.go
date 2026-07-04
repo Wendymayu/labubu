@@ -230,6 +230,7 @@ type TraceDetail struct {
 	Cost              *float64          `json:"cost"`
 	CostCurrency      string            `json:"cost_currency"`
 	UnpricedSpans     int               `json:"unpriced_spans"`
+	SessionID         string            `json:"session_id"`
 	Spans             []SpanDetail      `json:"spans"`
 }
 

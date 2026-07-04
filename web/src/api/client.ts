@@ -108,6 +108,7 @@ export interface TraceDetailResponse {
     cost?: number
     cost_currency?: string
     unpriced_spans?: number
+    session_id?: string
     spans: SpanDetail[]
   }
 }

@@ -53,6 +53,14 @@
             <button :class="['btn-insight', { active: activeInsight === 'context' }]" @click="toggleInsight('context')">
               {{ t('traceDetail.context') }}
             </button>
+            <router-link
+              v-if="trace.session_id"
+              :to="`/sessions/${trace.session_id}`"
+              class="btn-insight btn-session-link"
+              :title="t('traceDetail.goToSession')"
+            >
+              {{ t('traceDetail.goToSession') }}
+            </router-link>
           </div>
         </div>
       </div>
@@ -796,6 +804,12 @@ onUnmounted(() => {
   background: var(--accent-blue);
   color: #fff;
   border-color: var(--accent-blue);
+}
+.btn-session-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  font-family: inherit;
 }
 
 /* === Insight overlay panel === */

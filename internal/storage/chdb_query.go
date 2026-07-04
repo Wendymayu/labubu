@@ -238,7 +238,8 @@ func buildGetTraceMetaSQL(traceID [16]byte) string {
 			scope_name,
 			scope_version,
 			scope_attributes,
-			cost, cost_currency
+			cost, cost_currency,
+			session_id
 		FROM traces
 		WHERE trace_id = unhex('%x')
 		LIMIT 1`,

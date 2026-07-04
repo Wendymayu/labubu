@@ -1055,6 +1055,7 @@ func parseTraceDetail(traceIDHex, spansResult, metaResult string) (*TraceDetail,
 	// Parse trace-level metadata from the traces table.
 	resourceAttrs := make(map[string]string)
 	resourceSchemaURL := ""
+	sessionID := ""
 	scope := ScopeDetail{}
 	if metaResult != "" {
 		var metaRaw map[string]interface{}
@@ -1072,6 +1073,11 @@ func parseTraceDetail(traceIDHex, spansResult, metaResult string) (*TraceDetail,
 			if v, ok := metaRaw["resource_schema_url"]; ok {
 				if s, ok := v.(string); ok {
 					resourceSchemaURL = s
+				}
+			}
+			if v, ok := metaRaw["session_id"]; ok {
+				if s, ok := v.(string); ok {
+					sessionID = s
 				}
 			}
 			if v, ok := metaRaw["scope_name"]; ok {
@@ -1109,6 +1115,7 @@ func parseTraceDetail(traceIDHex, spansResult, metaResult string) (*TraceDetail,
 		ResourceAttrs:     resourceAttrs,
 		ResourceSchemaURL: resourceSchemaURL,
 		Scope:             scope,
+		SessionID:         sessionID,
 		Spans:             spans,
 	}, nil
 }

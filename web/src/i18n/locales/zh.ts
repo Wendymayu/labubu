@@ -99,6 +99,7 @@ export default {
   traceDetail: {
     context: '上下文',
     contextTitle: '上下文',
+    goToSession: '会话',
     contextEmpty: '至少需要 2 次 LLM 调用才能展示上下文变化。',
     contextSessionMain: '主会话',
     contextSessionCalls: '{n} 次调用',
