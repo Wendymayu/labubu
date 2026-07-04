@@ -1720,6 +1720,91 @@ func (s *sqliteStore) GetSessionAgentStats(ctx context.Context, sessionID string
 	return computeAgentStats(traces, spans), nil
 }
 
+// GetSessionContextSpans returns the main agent's LLM spans for a session.
+func (s *sqliteStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]SessionContextSpan, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Map trace_id_hex -> root_span_id_hex for the session.
+	rootByTrace := make(map[string]string)
+	traceRows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, root_span_id_hex FROM traces WHERE session_id = ?`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session traces: %w", err)
+	}
+	for traceRows.Next() {
+		var tid, rid string
+		if err := traceRows.Scan(&tid, &rid); err != nil {
+			traceRows.Close()
+			return nil, fmt.Errorf("scan session trace: %w", err)
+		}
+		rootByTrace[tid] = rid
+	}
+	traceRows.Close()
+	if len(rootByTrace) == 0 {
+		return nil, nil
+	}
+
+	// Spans for those traces — only the columns the parent-chain walk + chart need.
+	spanRows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, span_id_hex, parent_span_id_hex, name, start_time_ms,
+		        input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
+		 FROM spans
+		 WHERE trace_id_hex IN (SELECT trace_id_hex FROM traces WHERE session_id = ?)
+		 ORDER BY start_time_ms`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session spans: %w", err)
+	}
+	defer spanRows.Close()
+
+	var inputs []sessionSpanInput
+	for spanRows.Next() {
+		var in sessionSpanInput
+		var inputTokens, outputTokens, totalTokens, cacheCreationTokens, cacheReadTokens sql.NullInt32
+		var genAIModel sql.NullString
+		if err := spanRows.Scan(
+			&in.TraceIDHex, &in.SpanIDHex, &in.ParentSpanIDHex, &in.Name, &in.StartTimeMS,
+			&inputTokens, &outputTokens, &totalTokens, &cacheCreationTokens, &cacheReadTokens, &genAIModel,
+		); err != nil {
+			return nil, fmt.Errorf("scan session span: %w", err)
+		}
+		if inputTokens.Valid {
+			v := uint32(inputTokens.Int32)
+			in.InputTokens = &v
+		}
+		if outputTokens.Valid {
+			v := uint32(outputTokens.Int32)
+			in.OutputTokens = &v
+		}
+		if totalTokens.Valid {
+			v := uint32(totalTokens.Int32)
+			in.TotalTokens = &v
+		}
+		if cacheCreationTokens.Valid {
+			v := uint32(cacheCreationTokens.Int32)
+			in.CacheCreationTokens = &v
+		}
+		if cacheReadTokens.Valid {
+			v := uint32(cacheReadTokens.Int32)
+			in.CacheReadTokens = &v
+		}
+		if genAIModel.Valid {
+			v := genAIModel.String
+			in.GenAIRequestModel = &v
+		}
+		inputs = append(inputs, in)
+	}
+	if err := spanRows.Err(); err != nil {
+		return nil, fmt.Errorf("iter session spans: %w", err)
+	}
+
+	return computeSessionContextSpans(rootByTrace, inputs), nil
+}
+
 func (s *sqliteStore) Close() error {
 	return s.db.Close()
 }

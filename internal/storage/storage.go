@@ -431,6 +431,11 @@ type Store interface {
 	// GetSessionAgentStats computes agent behavior statistics for a session.
 	GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error)
 
+	// GetSessionContextSpans returns the main agent's LLM spans for a session
+	// (subagent LLM spans excluded), ordered by start time. Returns nil, nil
+	// when the session has no traces.
+	GetSessionContextSpans(ctx context.Context, sessionID string) ([]SessionContextSpan, error)
+
 	// Close releases resources (e.g., chDB session).
 	Close() error
 }

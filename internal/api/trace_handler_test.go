@@ -115,6 +115,10 @@ func (m *handlerMockStore) GetSessionAgentStats(ctx context.Context, sessionID s
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (m *handlerMockStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]storage.SessionContextSpan, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (m *handlerMockStore) Close() error { return nil }
 
 func (m *handlerMockStore) GetDiagnosisResult(ctx context.Context, traceID [16]byte) (*storage.DiagnosisResult, error) {

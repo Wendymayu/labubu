@@ -96,6 +96,9 @@ func (m *memTestStore) UpsertDiagnosisResult(_ context.Context, _ *storage.Diagn
 func (m *memTestStore) GetSessionAgentStats(_ context.Context, _ string) (*storage.AgentStats, error) {
 	return nil, nil
 }
+func (m *memTestStore) GetSessionContextSpans(_ context.Context, _ string) ([]storage.SessionContextSpan, error) {
+	return nil, nil
+}
 func (m *memTestStore) Close() error {
 	return nil
 }

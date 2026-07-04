@@ -740,6 +740,89 @@ func (s *chDBStore) GetSessionAgentStats(ctx context.Context, sessionID string) 
 	return computeAgentStats(traces, spans), nil
 }
 
+// GetSessionContextSpans returns the main agent's LLM spans for a session.
+func (s *chDBStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]SessionContextSpan, error) {
+	sid := escapeSQL(sessionID)
+
+	// Map trace_id_hex -> root_span_id_hex for the session.
+	traceResult, err := s.querySQL(fmt.Sprintf(
+		`SELECT trace_id_hex, lower(hex(root_span_id)) AS root_span_id_hex
+		 FROM traces WHERE session_id = '%s' FORMAT JSONEachRow`, sid))
+	if err != nil {
+		return nil, fmt.Errorf("query session traces: %w", err)
+	}
+	rootByTrace := make(map[string]string)
+	for _, line := range splitLines(traceResult) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			TraceIDHex    string `json:"trace_id_hex"`
+			RootSpanIDHex string `json:"root_span_id_hex"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("parse session trace: %w (line: %s)", err, line)
+		}
+		rootByTrace[row.TraceIDHex] = row.RootSpanIDHex
+	}
+	if len(rootByTrace) == 0 {
+		return nil, nil
+	}
+
+	// Spans for those traces. IDs are binary; lower(hex()) yields the lowercase
+	// hex strings that match the traces.trace_id_hex column.
+	spanResult, err := s.querySQL(fmt.Sprintf(
+		`SELECT lower(hex(trace_id)) AS trace_id_hex,
+		        lower(hex(span_id)) AS span_id_hex,
+		        lower(hex(parent_span_id)) AS parent_span_id,
+		        name, start_time_ms,
+		        input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
+		 FROM spans
+		 WHERE trace_id IN (SELECT trace_id FROM traces WHERE session_id = '%s')
+		 ORDER BY start_time_ms FORMAT JSONEachRow`, sid))
+	if err != nil {
+		return nil, fmt.Errorf("query session spans: %w", err)
+	}
+
+	var inputs []sessionSpanInput
+	for _, line := range splitLines(spanResult) {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			TraceIDHex      string  `json:"trace_id_hex"`
+			SpanIDHex       string  `json:"span_id_hex"`
+			ParentSpanIDHex string  `json:"parent_span_id"`
+			Name            string  `json:"name"`
+			StartTimeMS     uint64  `json:"start_time_ms"`
+			InputTokens     *uint32 `json:"input_tokens"`
+			OutputTokens    *uint32 `json:"output_tokens"`
+			TotalTokens     *uint32 `json:"total_tokens"`
+			CacheCreation   *uint32 `json:"cache_creation_tokens"`
+			CacheRead       *uint32 `json:"cache_read_tokens"`
+			GenAIModel      *string `json:"gen_ai_request_model"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("parse session span: %w (line: %s)", err, line)
+		}
+		inputs = append(inputs, sessionSpanInput{
+			TraceIDHex:          row.TraceIDHex,
+			SpanIDHex:           row.SpanIDHex,
+			ParentSpanIDHex:     row.ParentSpanIDHex,
+			Name:                row.Name,
+			StartTimeMS:         row.StartTimeMS,
+			InputTokens:         row.InputTokens,
+			OutputTokens:        row.OutputTokens,
+			TotalTokens:         row.TotalTokens,
+			CacheReadTokens:     row.CacheRead,
+			CacheCreationTokens: row.CacheCreation,
+			GenAIRequestModel:   row.GenAIModel,
+		})
+	}
+
+	return computeSessionContextSpans(rootByTrace, inputs), nil
+}
+
 func (s *chDBStore) Close() error {
 	if s.conn != nil {
 		C.chdb_close(s.conn)

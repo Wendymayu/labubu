@@ -74,10 +74,14 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 				return
 			}
 			sessionID := strings.TrimPrefix(path, "/")
-			// Check for sub-path: agent-stats
+			// Check for sub-paths: agent-stats, context
 			parts := strings.SplitN(sessionID, "/", 2)
 			if len(parts) == 2 && parts[1] == "agent-stats" {
 				sessionHandler.GetAgentStats(w, r, parts[0])
+				return
+			}
+			if len(parts) == 2 && parts[1] == "context" {
+				sessionHandler.GetSessionContext(w, r, parts[0])
 				return
 			}
 			sessionHandler.GetSession(w, r, sessionID)

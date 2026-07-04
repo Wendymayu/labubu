@@ -540,6 +540,28 @@ export async function getSession(sessionId: string, page = 1, pageSize = 20): Pr
   })
 }
 
+/**
+ * A main-agent LLM span in a session (subagent spans excluded), with the token
+ * breakdown needed for the session context bar chart. Drives the same
+ * ContextBarChart component used on the trace detail page.
+ */
+export interface SessionContextSpan {
+  trace_id_hex: string
+  span_id: string
+  name: string
+  start_time_ms: number
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  cache_read_tokens?: number
+  cache_creation_tokens?: number
+  gen_ai_request_model?: string
+}
+
+export async function getSessionContext(sessionId: string): Promise<{ spans: SessionContextSpan[] }> {
+  return get<{ spans: SessionContextSpan[] }>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}/context`)
+}
+
 // --- Log types and API ---
 
 export interface LogRecord {

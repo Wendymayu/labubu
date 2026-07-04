@@ -111,6 +111,10 @@ func (m *mockStore) GetSessionAgentStats(ctx context.Context, sessionID string) 
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (m *mockStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]storage.SessionContextSpan, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (m *mockStore) Close() error { return nil }
 
 func TestPipelineIngestAndFlush(t *testing.T) {

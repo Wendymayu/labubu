@@ -1286,6 +1286,49 @@ func (m *memStore) GetSessionAgentStats(ctx context.Context, sessionID string) (
 	return computeAgentStats(sessionTraces, allSpans), nil
 }
 
+// GetSessionContextSpans returns the main agent's LLM spans for a session.
+func (m *memStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]SessionContextSpan, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Collect this session's traces and map trace_id_hex -> root_span_id_hex.
+	rootByTrace := make(map[string]string)
+	traceIDs := make(map[[16]byte]struct{})
+	for _, t := range m.traces {
+		if t.SessionID != sessionID {
+			continue
+		}
+		traceIDs[t.TraceID] = struct{}{}
+		rootByTrace[t.TraceIDHex] = SpanIDToHex(t.RootSpanID)
+	}
+	if len(traceIDs) == 0 {
+		return nil, nil
+	}
+
+	// Collect all spans for those traces.
+	var inputs []sessionSpanInput
+	for _, s := range m.spans {
+		if _, ok := traceIDs[s.TraceID]; !ok {
+			continue
+		}
+		inputs = append(inputs, sessionSpanInput{
+			TraceIDHex:          TraceIDToHex(s.TraceID),
+			SpanIDHex:           SpanIDToHex(s.SpanID),
+			ParentSpanIDHex:     SpanIDToHex(s.ParentSpanID),
+			Name:                s.Name,
+			StartTimeMS:         s.StartTimeMS,
+			InputTokens:         s.InputTokens,
+			OutputTokens:        s.OutputTokens,
+			TotalTokens:         s.TotalTokens,
+			CacheReadTokens:     s.CacheReadTokens,
+			CacheCreationTokens: s.CacheCreationTokens,
+			GenAIRequestModel:   s.GenAIRequestModel,
+		})
+	}
+
+	return computeSessionContextSpans(rootByTrace, inputs), nil
+}
+
 // --- JSON file persistence for LLM configs and diagnosis results ---
 
 // persistedMemData is the on-disk format.
