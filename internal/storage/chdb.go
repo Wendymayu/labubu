@@ -503,6 +503,12 @@ func (s *chDBStore) GetSession(ctx context.Context, sessionID string, page, page
 		return nil, fmt.Errorf("parse session traces: %w", err)
 	}
 
+	if len(traces) > 0 {
+		if err := s.loadRootSpanInputMessages(ctx, traces); err != nil {
+			return nil, fmt.Errorf("load input messages: %w", err)
+		}
+	}
+
 	return &SessionDetail{
 		Session:    sessions[0],
 		Traces:     traces,

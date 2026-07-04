@@ -911,6 +911,12 @@ func (s *sqliteStore) GetSession(ctx context.Context, sessionID string, page, pa
 		traces = []TraceListItem{}
 	}
 
+	if len(traces) > 0 {
+		if err := loadRootSpanInputMessages(ctx, s.db, traces); err != nil {
+			return nil, fmt.Errorf("load input messages: %w", err)
+		}
+	}
+
 	return &SessionDetail{
 		Session:    sl,
 		Traces:     traces,

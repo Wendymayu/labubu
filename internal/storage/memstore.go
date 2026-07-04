@@ -698,15 +698,17 @@ func (m *memStore) GetSession(ctx context.Context, sessionID string, page, pageS
 	traces := make([]TraceListItem, len(sessionTraces))
 	for i, t := range sessionTraces {
 		traces[i] = TraceListItem{
-			TraceIDHex:  TraceIDToHex(t.TraceID),
-			RootSpanID:  SpanIDToHex(t.RootSpanID),
-			RootName:    t.RootName,
-			RootService: t.ResourceAttrs["service.name"],
-			StartTimeMS: t.StartTimeMS,
-			DurationMS:  t.DurationMS,
-			SpanCount:   t.SpanCount,
-			Status:      StatusCodeToString(t.StatusCode),
-			TotalTokens: t.TotalTokens,
+			TraceIDHex:   TraceIDToHex(t.TraceID),
+			RootSpanID:   SpanIDToHex(t.RootSpanID),
+			RootName:     t.RootName,
+			RootService:  t.ResourceAttrs["service.name"],
+			StartTimeMS:  t.StartTimeMS,
+			DurationMS:   t.DurationMS,
+			SpanCount:    t.SpanCount,
+			Status:       StatusCodeToString(t.StatusCode),
+			TotalTokens:  t.TotalTokens,
+			Cost:         t.Cost,
+			CostCurrency: t.CostCurrency,
 		}
 		if t.TotalTokens != nil {
 			totalTokens += *t.TotalTokens
@@ -757,6 +759,28 @@ func (m *memStore) GetSession(ctx context.Context, sessionID string, page, pageS
 	pageTraces := traces[offset:end]
 	if pageTraces == nil {
 		pageTraces = []TraceListItem{}
+	}
+
+	// Attach gen_ai.input.messages from each trace's root span.
+	if len(pageTraces) > 0 {
+		idxByTid := make(map[string]int, len(pageTraces))
+		for i := range pageTraces {
+			idxByTid[pageTraces[i].TraceIDHex] = i
+		}
+		for i := range m.spans {
+			sp := &m.spans[i]
+			if !isRootSpan(sp.ParentSpanID) {
+				continue
+			}
+			idx, ok := idxByTid[TraceIDToHex(sp.TraceID)]
+			if !ok {
+				continue
+			}
+			if v, ok := sp.Attributes["gen_ai.input.messages"]; ok && v != "" {
+				vv := v
+				pageTraces[idx].InputMessages = &vv
+			}
+		}
 	}
 
 	return &SessionDetail{

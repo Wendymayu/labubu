@@ -89,22 +89,45 @@
       <h3 class="turns-heading">Turns</h3>
 
       <div v-if="turnsLoading" class="turns-loading">{{ t('common.loading') }}</div>
-      <div class="turns-list" v-else>
-        <div
-          v-for="(trace, idx) in detail.traces"
-          :key="trace.trace_id_hex"
-          class="turn-row"
-          @click="goToTrace(trace.trace_id_hex)"
-        >
-          <span class="turn-number">#{{ (page - 1) * pageSize + idx + 1 }}</span>
-          <span class="turn-name">{{ trace.root_name }}</span>
-          <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
-          <span class="turn-duration">{{ formatDuration(trace.duration_ms) }}</span>
-          <span class="turn-tokens">{{ formatTokens(trace.total_tokens) }}</span>
-          <span class="turn-service">{{ trace.root_service }}</span>
-          <span class="turn-time">{{ formatTime(trace.start_time_ms) }}</span>
-        </div>
-      </div>
+      <template v-else>
+        <table class="trace-table" v-if="detail.traces.length > 0">
+          <thead>
+            <tr>
+              <th>{{ t('traceList.name') }}</th>
+              <th>{{ t('traceList.input') }}</th>
+              <th>{{ t('traceList.service') }}</th>
+              <th>{{ t('traceList.duration') }}</th>
+              <th>{{ t('traceList.spans') }}</th>
+              <th>{{ t('traceList.status') }}</th>
+              <th>{{ t('traceList.tokens') }}</th>
+              <th>{{ t('traceList.cost') }}</th>
+              <th>{{ t('traceList.time') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="trace in detail.traces"
+              :key="trace.trace_id_hex"
+              class="trace-row"
+              @click="goToTrace(trace.trace_id_hex)"
+            >
+              <td class="cell-name">{{ trace.root_name }}</td>
+              <td class="cell-input" :title="trace.input_messages ?? ''">{{ formatInput(trace.input_messages) }}</td>
+              <td>{{ trace.root_service }}</td>
+              <td>{{ formatDuration(trace.duration_ms) }}</td>
+              <td>{{ trace.span_count }}</td>
+              <td>
+                <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
+              </td>
+              <td>{{ formatTokens(trace.total_tokens) }}</td>
+              <td class="cell-cost">{{ formatCost(trace.cost, trace.cost_currency) }}</td>
+              <td class="cell-time">{{ formatTime(trace.start_time_ms) }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div v-else class="empty">{{ t('traceList.noTraces') }}</div>
+      </template>
 
       <div class="pagination" v-if="detail.pagination.total > 0">
         <button
@@ -286,6 +309,14 @@ function formatTokens(tokens?: number): string {
   if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
   return String(tokens)
+}
+
+// formatInput renders the root span's gen_ai.input.messages attribute. The
+// value is a JSON string (an array of messages); the cell truncates it and
+// the full value is available via the title tooltip. Returns '-' when the
+// probe has not populated the attribute yet.
+function formatInput(v?: string): string {
+  return v ? v : '-'
 }
 
 function formatTime(ms: number): string {
@@ -604,28 +635,20 @@ onUnmounted(() => {
 
 .turns-heading { font-size: 16px; margin-bottom: 12px; color: var(--text-primary); }
 
-.turns-list { display: flex; flex-direction: column; gap: 2px; }
-.turn-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  cursor: pointer;
-  font-size: 14px;
-}
-.turn-row:hover { background: var(--bg-surface); }
-.turn-number { color: var(--text-secondary); font-size: 12px; font-weight: 600; min-width: 32px; }
-.turn-name { flex: 1; font-weight: 600; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-table { width: 100%; border-collapse: collapse; }
+.trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; border-bottom: 1px solid var(--border-default); }
+.trace-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--border-subtle); }
+.trace-row { cursor: pointer; }
+.trace-row:hover { background: var(--bg-surface); }
+.cell-name { font-weight: 600; color: var(--accent-blue); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-input { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 13px; }
+.cell-time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
 .status-ok { background: var(--status-ok-bg); color: var(--status-ok-text); }
 .status-error { background: var(--status-error-bg); color: var(--status-error-text); }
-.turn-duration { color: var(--text-secondary); min-width: 70px; text-align: right; }
-.turn-tokens { color: var(--token-highlight); font-weight: 600; min-width: 60px; text-align: right; }
-.turn-service { color: var(--text-secondary); font-size: 13px; min-width: 100px; }
-.turn-time { color: var(--text-secondary); font-size: 13px; min-width: 80px; text-align: right; }
 
 .turns-loading { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 14px; }
+.empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
 
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
 .page-info { font-size: 14px; color: var(--text-secondary); }
