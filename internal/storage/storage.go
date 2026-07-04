@@ -391,6 +391,11 @@ type Store interface {
 	// timestamp. 0 = no age limit. Returns the number of deleted logs.
 	PurgeLogs(ctx context.Context, maxAge time.Duration) (deletedLogs int, err error)
 
+	// DeleteTraces removes the traces with the given IDs and all associated
+	// records (spans, logs, diagnosis results). Unknown IDs are ignored.
+	// Returns the number of deleted traces and logs.
+	DeleteTraces(ctx context.Context, traceIDs [][16]byte) (deletedTraces int, deletedLogs int, err error)
+
 	// InsertLogs writes a batch of log records.
 	InsertLogs(ctx context.Context, logs []LogRecord) error
 

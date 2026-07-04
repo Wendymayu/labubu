@@ -890,6 +890,57 @@ func (m *memStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, er
 	return deleted, nil
 }
 
+func (m *memStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	_ = ctx
+	if len(traceIDs) == 0 {
+		return 0, 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Build a set of IDs to delete (avoid O(n*m) lookups).
+	toDelete := make(map[[16]byte]bool, len(traceIDs))
+	for _, id := range traceIDs {
+		toDelete[id] = true
+	}
+
+	deletedTraces := 0
+	for id := range m.traces {
+		if toDelete[id] {
+			delete(m.traces, id)
+			deletedTraces++
+		}
+	}
+
+	deletedLogs := 0
+	newLogs := make([]LogRecord, 0, len(m.logs))
+	for _, l := range m.logs {
+		if toDelete[l.TraceID] {
+			deletedLogs++
+		} else {
+			newLogs = append(newLogs, l)
+		}
+	}
+	m.logs = newLogs
+
+	newSpans := make([]Span, 0, len(m.spans))
+	for _, s := range m.spans {
+		if !toDelete[s.TraceID] {
+			newSpans = append(newSpans, s)
+		}
+	}
+	m.spans = newSpans
+
+	for id := range toDelete {
+		delete(m.diagnosisResults, id)
+	}
+
+	if err := m.saveToDiskLocked(); err != nil {
+		return deletedTraces, deletedLogs, err
+	}
+	return deletedTraces, deletedLogs, nil
+}
+
 func (m *memStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
 	_ = ctx
 	m.mu.RLock()

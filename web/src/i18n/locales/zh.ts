@@ -82,6 +82,10 @@ export default {
     importFailed: '导入失败',
     importBtn: '导入',
     importResult: '已导入 {imported} 条 trace，跳过 {skipped} 条',
+    deleteSelected: '删除 ({count})',
+    deleteConfirm: '确认删除 {count} 条 trace 及其关联日志？此操作不可撤销。',
+    deleteFailed: '删除失败：{error}',
+    deleteSuccess: '已删除 {count} 条 trace',
   },
   sessionList: {
     searchPlaceholder: '搜索会话...',

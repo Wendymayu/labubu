@@ -921,6 +921,54 @@ func (s *chDBStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, e
 	return 0, nil // MergeTree mutations are async; exact count unavailable
 }
 
+// DeleteTraces removes the traces with the given IDs and all associated
+// spans, logs, and diagnosis results. Unknown IDs are ignored.
+func (s *chDBStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	_ = ctx
+	if len(traceIDs) == 0 {
+		return 0, 0, nil
+	}
+
+	// Build "trace_id IN (unhex('..'), unhex('..'))" clause.
+	parts := make([]string, len(traceIDs))
+	for i, id := range traceIDs {
+		parts[i] = fmt.Sprintf("unhex('%x')", id)
+	}
+	inClause := "trace_id IN (" + strings.Join(parts, ", ") + ")"
+
+	// Count before (traces + logs) so we can estimate deletions — MergeTree
+	// mutations are async and don't report affected rows.
+	traceBefore := s.countWhere("traces", inClause)
+	logBefore := s.countWhere("logs", inClause)
+
+	tables := []string{"diagnosis_results", "logs", "spans", "traces"}
+	for _, t := range tables {
+		if err := s.execSQL(fmt.Sprintf("ALTER TABLE %s DELETE WHERE %s", t, inClause)); err != nil {
+			return 0, 0, fmt.Errorf("delete from %s: %w", t, err)
+		}
+	}
+
+	deletedTraces := traceBefore - s.countWhere("traces", inClause)
+	if deletedTraces < 0 {
+		deletedTraces = 0
+	}
+	deletedLogs := logBefore - s.countWhere("logs", inClause)
+	if deletedLogs < 0 {
+		deletedLogs = 0
+	}
+	return deletedTraces, deletedLogs, nil
+}
+
+// countWhere returns the number of rows in table matching the WHERE clause.
+// Returns 0 on error (table may not exist yet on first run).
+func (s *chDBStore) countWhere(table, where string) int {
+	res, err := s.querySQL(fmt.Sprintf("SELECT count(*) AS count FROM %s WHERE %s FORMAT JSONEachRow", table, where))
+	if err != nil {
+		return 0
+	}
+	return parseCount(res)
+}
+
 // JSON parsing helpers
 
 func parseLogListItems(result string) ([]LogListItem, error) {

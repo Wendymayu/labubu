@@ -14,6 +14,9 @@
       <button v-if="selectedIds.size > 0" @click="downloadSelected" :disabled="exportLoading" class="btn">
         {{ exportLoading ? t('common.loading') : t('traceList.downloadSelected', { count: selectedIds.size }) }}
       </button>
+      <button v-if="selectedIds.size > 0" @click="deleteSelected" :disabled="deleteLoading" class="btn btn-danger">
+        {{ deleteLoading ? t('common.loading') : t('traceList.deleteSelected', { count: selectedIds.size }) }}
+      </button>
       <button @click="triggerImport" :disabled="importLoading" class="btn">
         {{ importLoading ? t('common.loading') : t('traceList.importBtn') }}
       </button>
@@ -176,7 +179,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listTraces, getServices, exportTraces, importTraces, type TraceListItem, type Pagination, type ImportResult, type TimeRangeSelection } from '../api/client'
+import { listTraces, getServices, exportTraces, importTraces, deleteTraces, type TraceListItem, type Pagination, type ImportResult, type TimeRangeSelection } from '../api/client'
 import { formatCost } from '../utils/format'
 import { usePageSize } from '../composables/usePageSize'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
@@ -194,6 +197,7 @@ const error = ref('')
 // Batch selection state
 const selectedIds = ref<Set<string>>(new Set())
 const exportLoading = ref(false)
+const deleteLoading = ref(false)
 const importLoading = ref(false)
 const importResult = ref<ImportResult | null>(null)
 const importError = ref('')
@@ -258,6 +262,24 @@ async function downloadSelected() {
     alert(`${t('traceList.exportFailed')}: ${e.message}`)
   } finally {
     exportLoading.value = false
+  }
+}
+
+async function deleteSelected() {
+  const ids = Array.from(selectedIds.value)
+  if (ids.length === 0) return
+  if (!confirm(t('traceList.deleteConfirm', { count: ids.length }))) return
+
+  deleteLoading.value = true
+  try {
+    const result = await deleteTraces(ids)
+    selectedIds.value = new Set()
+    await fetchTraces()
+    alert(t('traceList.deleteSuccess', { count: result.deleted_traces }))
+  } catch (e: any) {
+    alert(t('traceList.deleteFailed', { error: e.message }))
+  } finally {
+    deleteLoading.value = false
   }
 }
 
@@ -531,6 +553,8 @@ onUnmounted(() => {
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn-primary { background: var(--accent-primary); border-color: var(--accent-primary); }
 .btn-primary:hover { background: var(--accent-primary-hover); }
+.btn-danger { color: var(--status-error-accent); border-color: var(--status-error-accent); }
+.btn-danger:hover { background: var(--status-error-bg); }
 .loading, .error, .empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
 .empty-hint { margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
 .error { color: var(--status-error-accent); }

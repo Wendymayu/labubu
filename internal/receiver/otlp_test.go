@@ -45,6 +45,9 @@ func (m *memTestStore) Purge(_ context.Context, _ time.Duration, _ int) (int, in
 func (m *memTestStore) PurgeLogs(_ context.Context, _ time.Duration) (int, error) {
 	return 0, nil
 }
+func (m *memTestStore) DeleteTraces(_ context.Context, _ [][16]byte) (int, int, error) {
+	return 0, 0, nil
+}
 func (m *memTestStore) InsertLogs(_ context.Context, _ []storage.LogRecord) error {
 	return nil
 }

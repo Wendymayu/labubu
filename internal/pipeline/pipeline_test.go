@@ -55,6 +55,10 @@ func (m *mockStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, e
 	return 0, nil
 }
 
+func (m *mockStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	return 0, 0, nil
+}
+
 func (m *mockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
 
 func (m *mockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.LogListResult, error) {

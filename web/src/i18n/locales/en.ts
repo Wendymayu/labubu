@@ -82,6 +82,10 @@ export default {
     importFailed: 'Import failed',
     importBtn: 'Import',
     importResult: 'Imported {imported} traces, skipped {skipped}',
+    deleteSelected: 'Delete ({count})',
+    deleteConfirm: 'Delete {count} trace(s) and their associated logs? This cannot be undone.',
+    deleteFailed: 'Delete failed: {error}',
+    deleteSuccess: 'Deleted {count} trace(s)',
   },
   sessionList: {
     searchPlaceholder: 'Search sessions...',

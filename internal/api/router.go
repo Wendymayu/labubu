@@ -16,6 +16,7 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 	// API routes.
 	mux.HandleFunc("/api/v1/traces/export", traceHandler.ExportTraces)
 	mux.HandleFunc("/api/v1/traces/import", traceHandler.ImportTraces)
+	mux.HandleFunc("/api/v1/traces/delete", traceHandler.DeleteTraces)
 	mux.HandleFunc("/api/v1/traces/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/traces")
 		if path == "" || path == "/" {

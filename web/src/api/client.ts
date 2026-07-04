@@ -208,6 +208,24 @@ export async function importTraces(jsonData: string): Promise<ImportResult> {
   return res.json()
 }
 
+export interface DeleteTracesResult {
+  deleted_traces: number
+  deleted_logs: number
+}
+
+export async function deleteTraces(traceIds: string[]): Promise<DeleteTracesResult> {
+  const res = await fetch(`${BASE_URL}/traces/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trace_ids: traceIds }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Delete failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 // --- Dashboard types and API ---
 
 export interface PanelConfig {

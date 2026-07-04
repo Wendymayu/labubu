@@ -1648,6 +1648,65 @@ func (s *sqliteStore) Purge(ctx context.Context, maxAge time.Duration, maxCount 
 	return deletedTraces, deletedSpans, nil
 }
 
+// --- DeleteTraces ---
+
+func (s *sqliteStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	if len(traceIDs) == 0 {
+		return 0, 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	placeholders := make([]string, len(traceIDs))
+	args := make([]any, len(traceIDs))
+	for i, id := range traceIDs {
+		placeholders[i] = "?"
+		args[i] = TraceIDToHex(id)
+	}
+	inList := strings.Join(placeholders, ",")
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	logsRes, err := tx.ExecContext(ctx,
+		`DELETE FROM diagnosis_results WHERE trace_id_hex IN (`+inList+`)`, args...,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete diagnosis_results: %w", err)
+	}
+	_ = logsRes
+
+	logsRes, err = tx.ExecContext(ctx,
+		`DELETE FROM logs WHERE trace_id_hex IN (`+inList+`)`, args...,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete logs: %w", err)
+	}
+	deletedLogs, _ := logsRes.RowsAffected()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM spans WHERE trace_id_hex IN (`+inList+`)`, args...,
+	); err != nil {
+		return 0, 0, fmt.Errorf("delete spans: %w", err)
+	}
+
+	tracesRes, err := tx.ExecContext(ctx,
+		`DELETE FROM traces WHERE trace_id_hex IN (`+inList+`)`, args...,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete traces: %w", err)
+	}
+	deletedTraces, _ := tracesRes.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("commit: %w", err)
+	}
+	return int(deletedTraces), int(deletedLogs), nil
+}
+
 // --- PurgeLogs ---
 
 func (s *sqliteStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
