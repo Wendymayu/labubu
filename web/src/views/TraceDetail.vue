@@ -188,8 +188,6 @@
               <TokenPieChart
                 v-if="selectedSpanTokenSlices.length > 0"
                 :items="selectedSpanTokenSlices"
-                :input-tokens="selectedSpanInputTokens"
-                :output-tokens="selectedSpanOutputTokens"
               />
               <SpanDetail :span="selectedSpan" :search="contentSearch" />
             </template>
@@ -298,18 +296,6 @@ const selectedSpanTokenSlices = computed<PieSlice[]>(() => {
   }
 
   return slices
-})
-
-const selectedSpanInputTokens = computed(() => {
-  const span = selectedSpan.value
-  if (!span) return 0
-  return span.input_tokens ?? 0
-})
-
-const selectedSpanOutputTokens = computed(() => {
-  const span = selectedSpan.value
-  if (!span) return 0
-  return span.output_tokens ?? 0
 })
 
 /**
