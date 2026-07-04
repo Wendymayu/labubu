@@ -37,10 +37,6 @@
             <span class="summary-label">Max Latency</span>
             <span class="summary-value">{{ formatDuration(detail.session.max_duration_ms) }}</span>
           </div>
-          <div class="summary-item">
-            <span class="summary-label">Duration</span>
-            <span class="summary-value">{{ formatDuration(detail.session.last_active_ms - detail.session.first_active_ms) }}</span>
-          </div>
         </div>
       </div>
 
