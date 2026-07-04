@@ -6,11 +6,14 @@ pricing:
       input_price: 15.0
       output_price: 75.0
       currency: USD
+      context_window: 200000
     - name: claude-sonnet-4-6
       input_price: 3.0
       output_price: 15.0
       currency: USD
+      context_window: 200000
     - name: claude-haiku-4-5
       input_price: 0.80
       output_price: 4.0
       currency: USD
+      context_window: 200000

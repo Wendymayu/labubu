@@ -70,10 +70,11 @@ type yamlConfig struct {
 	} `yaml:"metric"`
 	Pricing struct {
 		Models []struct {
-			Name        string  `yaml:"name"`
-			InputPrice  float64 `yaml:"input_price"`
-			OutputPrice float64 `yaml:"output_price"`
-			Currency    string  `yaml:"currency"`
+			Name          string  `yaml:"name"`
+			InputPrice    float64 `yaml:"input_price"`
+			OutputPrice   float64 `yaml:"output_price"`
+			Currency      string  `yaml:"currency"`
+			ContextWindow int     `yaml:"context_window"`
 		} `yaml:"models"`
 	} `yaml:"pricing"`
 }
@@ -155,6 +156,7 @@ func LoadConfig(path string) Config {
 		cfg.Pricing.Models = append(cfg.Pricing.Models, ModelPricing{
 			ModelName: m.Name, InputPrice: m.InputPrice,
 			OutputPrice: m.OutputPrice, Currency: m.Currency,
+			ContextWindow: m.ContextWindow,
 		})
 	}
 

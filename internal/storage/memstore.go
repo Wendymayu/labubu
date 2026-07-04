@@ -511,8 +511,10 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 
 	// Use the root span's attributes as resource attrs if available.
 	resourceAttrs := make(map[string]string)
+	sessionID := ""
 	if trace, ok := m.traces[traceID]; ok {
 		resourceAttrs = trace.ResourceAttrs
+		sessionID = trace.SessionID
 	}
 
 	return &TraceDetail{
@@ -522,6 +524,7 @@ func (m *memStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDetail
 		StartTimeMS:   detailSpans[rootIdx].StartTimeMS,
 		DurationMS:    detailSpans[rootIdx].DurationMS,
 		ResourceAttrs: resourceAttrs,
+		SessionID:     sessionID,
 		Spans:         detailSpans,
 	}, nil
 }
@@ -695,15 +698,17 @@ func (m *memStore) GetSession(ctx context.Context, sessionID string, page, pageS
 	traces := make([]TraceListItem, len(sessionTraces))
 	for i, t := range sessionTraces {
 		traces[i] = TraceListItem{
-			TraceIDHex:  TraceIDToHex(t.TraceID),
-			RootSpanID:  SpanIDToHex(t.RootSpanID),
-			RootName:    t.RootName,
-			RootService: t.ResourceAttrs["service.name"],
-			StartTimeMS: t.StartTimeMS,
-			DurationMS:  t.DurationMS,
-			SpanCount:   t.SpanCount,
-			Status:      StatusCodeToString(t.StatusCode),
-			TotalTokens: t.TotalTokens,
+			TraceIDHex:   TraceIDToHex(t.TraceID),
+			RootSpanID:   SpanIDToHex(t.RootSpanID),
+			RootName:     t.RootName,
+			RootService:  t.ResourceAttrs["service.name"],
+			StartTimeMS:  t.StartTimeMS,
+			DurationMS:   t.DurationMS,
+			SpanCount:    t.SpanCount,
+			Status:       StatusCodeToString(t.StatusCode),
+			TotalTokens:  t.TotalTokens,
+			Cost:         t.Cost,
+			CostCurrency: t.CostCurrency,
 		}
 		if t.TotalTokens != nil {
 			totalTokens += *t.TotalTokens
@@ -754,6 +759,28 @@ func (m *memStore) GetSession(ctx context.Context, sessionID string, page, pageS
 	pageTraces := traces[offset:end]
 	if pageTraces == nil {
 		pageTraces = []TraceListItem{}
+	}
+
+	// Attach gen_ai.input.messages from each trace's root span.
+	if len(pageTraces) > 0 {
+		idxByTid := make(map[string]int, len(pageTraces))
+		for i := range pageTraces {
+			idxByTid[pageTraces[i].TraceIDHex] = i
+		}
+		for i := range m.spans {
+			sp := &m.spans[i]
+			if !isRootSpan(sp.ParentSpanID) {
+				continue
+			}
+			idx, ok := idxByTid[TraceIDToHex(sp.TraceID)]
+			if !ok {
+				continue
+			}
+			if v, ok := sp.Attributes["gen_ai.input.messages"]; ok && v != "" {
+				vv := v
+				pageTraces[idx].InputMessages = &vv
+			}
+		}
 	}
 
 	return &SessionDetail{
@@ -861,6 +888,57 @@ func (m *memStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, er
 	}
 	m.logs = newLogs
 	return deleted, nil
+}
+
+func (m *memStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	_ = ctx
+	if len(traceIDs) == 0 {
+		return 0, 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Build a set of IDs to delete (avoid O(n*m) lookups).
+	toDelete := make(map[[16]byte]bool, len(traceIDs))
+	for _, id := range traceIDs {
+		toDelete[id] = true
+	}
+
+	deletedTraces := 0
+	for id := range m.traces {
+		if toDelete[id] {
+			delete(m.traces, id)
+			deletedTraces++
+		}
+	}
+
+	deletedLogs := 0
+	newLogs := make([]LogRecord, 0, len(m.logs))
+	for _, l := range m.logs {
+		if toDelete[l.TraceID] {
+			deletedLogs++
+		} else {
+			newLogs = append(newLogs, l)
+		}
+	}
+	m.logs = newLogs
+
+	newSpans := make([]Span, 0, len(m.spans))
+	for _, s := range m.spans {
+		if !toDelete[s.TraceID] {
+			newSpans = append(newSpans, s)
+		}
+	}
+	m.spans = newSpans
+
+	for id := range toDelete {
+		delete(m.diagnosisResults, id)
+	}
+
+	if err := m.saveToDiskLocked(); err != nil {
+		return deletedTraces, deletedLogs, err
+	}
+	return deletedTraces, deletedLogs, nil
 }
 
 func (m *memStore) GetModelPricing(ctx context.Context) ([]ModelPricing, error) {
@@ -1284,6 +1362,49 @@ func (m *memStore) GetSessionAgentStats(ctx context.Context, sessionID string) (
 	}
 
 	return computeAgentStats(sessionTraces, allSpans), nil
+}
+
+// GetSessionContextSpans returns the main agent's LLM spans for a session.
+func (m *memStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]SessionContextSpan, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Collect this session's traces and map trace_id_hex -> root_span_id_hex.
+	rootByTrace := make(map[string]string)
+	traceIDs := make(map[[16]byte]struct{})
+	for _, t := range m.traces {
+		if t.SessionID != sessionID {
+			continue
+		}
+		traceIDs[t.TraceID] = struct{}{}
+		rootByTrace[t.TraceIDHex] = SpanIDToHex(t.RootSpanID)
+	}
+	if len(traceIDs) == 0 {
+		return nil, nil
+	}
+
+	// Collect all spans for those traces.
+	var inputs []sessionSpanInput
+	for _, s := range m.spans {
+		if _, ok := traceIDs[s.TraceID]; !ok {
+			continue
+		}
+		inputs = append(inputs, sessionSpanInput{
+			TraceIDHex:          TraceIDToHex(s.TraceID),
+			SpanIDHex:           SpanIDToHex(s.SpanID),
+			ParentSpanIDHex:     SpanIDToHex(s.ParentSpanID),
+			Name:                s.Name,
+			StartTimeMS:         s.StartTimeMS,
+			InputTokens:         s.InputTokens,
+			OutputTokens:        s.OutputTokens,
+			TotalTokens:         s.TotalTokens,
+			CacheReadTokens:     s.CacheReadTokens,
+			CacheCreationTokens: s.CacheCreationTokens,
+			GenAIRequestModel:   s.GenAIRequestModel,
+		})
+	}
+
+	return computeSessionContextSpans(rootByTrace, inputs), nil
 }
 
 // --- JSON file persistence for LLM configs and diagnosis results ---

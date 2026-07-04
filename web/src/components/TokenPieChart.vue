@@ -19,22 +19,6 @@
         <span class="legend-pct">{{ seg.pct }}%</span>
       </div>
     </div>
-
-    <!-- Summary stats -->
-    <div class="token-summary">
-      <div class="summary-item">
-        <div class="s-label">Input Tokens</div>
-        <div class="s-value purple">{{ inputTokens.toLocaleString() }}</div>
-      </div>
-      <div class="summary-item">
-        <div class="s-label">Output Tokens</div>
-        <div class="s-value green">{{ outputTokens.toLocaleString() }}</div>
-      </div>
-      <div class="summary-item">
-        <div class="s-label">Total Tokens</div>
-        <div class="s-value blue">{{ (inputTokens + outputTokens).toLocaleString() }}</div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -52,14 +36,9 @@ import { useTheme } from '../composables/useTheme'
 
 Chart.register(DoughnutController, ArcElement, Tooltip)
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   items: PieSlice[]
-  inputTokens: number
-  outputTokens: number
-}>(), {
-  inputTokens: 0,
-  outputTokens: 0,
-})
+}>()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let chart: Chart<'doughnut'> | null = null
@@ -120,9 +99,6 @@ const segments = computed<Segment[]>(() => {
 
   return out
 })
-
-const inputTokens = computed(() => props.inputTokens)
-const outputTokens = computed(() => props.outputTokens)
 
 // --- Chart.js rendering ---
 function createChart() {
@@ -257,31 +233,4 @@ onUnmounted(() => {
   width: 40px;
   text-align: right;
 }
-
-.token-summary {
-  display: flex;
-  gap: 10px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-default);
-}
-.summary-item {
-  flex: 1;
-  text-align: center;
-}
-.s-label {
-  font-size: 10px;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.s-value {
-  font-size: 16px;
-  font-weight: 700;
-  margin-top: 2px;
-  font-variant-numeric: tabular-nums;
-}
-.s-value.purple { color: var(--token-highlight); }
-.s-value.green { color: var(--token-green); }
-.s-value.blue { color: var(--token-input); }
 </style>

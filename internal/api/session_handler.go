@@ -95,3 +95,23 @@ func (h *SessionHandler) GetAgentStats(w http.ResponseWriter, r *http.Request, s
 	}
 	writeJSON(w, http.StatusOK, result)
 }
+
+// GetSessionContext handles GET /api/v1/sessions/{sessionId}/context.
+// Returns the main agent's LLM spans (subagent spans excluded) for the
+// session context bar chart.
+func (h *SessionHandler) GetSessionContext(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session_id is required"})
+		return
+	}
+	spans, err := h.store.GetSessionContextSpans(r.Context(), sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get session context: %v", err)})
+		return
+	}
+	if spans == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no_context_data"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"spans": spans})
+}

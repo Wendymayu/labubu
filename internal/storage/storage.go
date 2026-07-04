@@ -230,6 +230,7 @@ type TraceDetail struct {
 	Cost              *float64          `json:"cost"`
 	CostCurrency      string            `json:"cost_currency"`
 	UnpricedSpans     int               `json:"unpriced_spans"`
+	SessionID         string            `json:"session_id"`
 	Spans             []SpanDetail      `json:"spans"`
 }
 
@@ -289,10 +290,11 @@ type AgentStats struct {
 
 // ModelPricing holds pricing configuration for a single model.
 type ModelPricing struct {
-	ModelName   string  `json:"model_name"`
-	InputPrice  float64 `json:"input_price"`  // per 1M input tokens
-	OutputPrice float64 `json:"output_price"` // per 1M output tokens
-	Currency    string  `json:"currency"`     // "USD" or "CNY"
+	ModelName     string  `json:"model_name"`
+	InputPrice    float64 `json:"input_price"`    // per 1M input tokens
+	OutputPrice   float64 `json:"output_price"`   // per 1M output tokens
+	Currency      string  `json:"currency"`       // "USD" or "CNY"
+	ContextWindow int     `json:"context_window"` // max context window in tokens; 0 = unknown
 }
 
 // LLMConfig holds configuration for a single LLM model used for trace analysis.
@@ -389,6 +391,11 @@ type Store interface {
 	// timestamp. 0 = no age limit. Returns the number of deleted logs.
 	PurgeLogs(ctx context.Context, maxAge time.Duration) (deletedLogs int, err error)
 
+	// DeleteTraces removes the traces with the given IDs and all associated
+	// records (spans, logs, diagnosis results). Unknown IDs are ignored.
+	// Returns the number of deleted traces and logs.
+	DeleteTraces(ctx context.Context, traceIDs [][16]byte) (deletedTraces int, deletedLogs int, err error)
+
 	// InsertLogs writes a batch of log records.
 	InsertLogs(ctx context.Context, logs []LogRecord) error
 
@@ -429,6 +436,11 @@ type Store interface {
 
 	// GetSessionAgentStats computes agent behavior statistics for a session.
 	GetSessionAgentStats(ctx context.Context, sessionID string) (*AgentStats, error)
+
+	// GetSessionContextSpans returns the main agent's LLM spans for a session
+	// (subagent LLM spans excluded), ordered by start time. Returns nil, nil
+	// when the session has no traces.
+	GetSessionContextSpans(ctx context.Context, sessionID string) ([]SessionContextSpan, error)
 
 	// Close releases resources (e.g., chDB session).
 	Close() error

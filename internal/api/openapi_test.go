@@ -24,6 +24,7 @@ var expectedEndpoints = []struct {
 	{"get", "/api/v1/sessions"},
 	{"get", "/api/v1/sessions/{id}"},
 	{"get", "/api/v1/sessions/{id}/agent-stats"},
+	{"get", "/api/v1/sessions/{id}/context"},
 	{"get", "/api/v1/logs"},
 	{"get", "/api/v1/logs/{traceId}"},
 	{"get", "/api/v1/log-event-names"},

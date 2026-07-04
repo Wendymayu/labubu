@@ -195,3 +195,61 @@ type agentStatsMockStore struct {
 func (m *agentStatsMockStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*storage.AgentStats, error) {
 	return m.agentStats, m.agentStatsErr
 }
+
+func TestGetSessionContext(t *testing.T) {
+	tokens := uint32(1500)
+	model := "glm-5.2"
+	spans := []storage.SessionContextSpan{
+		{TraceIDHex: "t1", SpanIDHex: "a", Name: "chat", StartTimeMS: 100, InputTokens: &tokens, OutputTokens: &tokens, TotalTokens: &tokens, GenAIRequestModel: &model},
+	}
+	tests := []struct {
+		name       string
+		sessionID  string
+		spans      []storage.SessionContextSpan
+		err        error
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "success", sessionID: "sess-1", spans: spans, wantStatus: http.StatusOK},
+		{name: "empty session id", sessionID: "", wantStatus: http.StatusBadRequest},
+		{name: "no data", sessionID: "sess-2", spans: nil, wantStatus: http.StatusNotFound, wantBody: "no_context_data"},
+		{name: "store error", sessionID: "sess-3", err: fmt.Errorf("db error"), wantStatus: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &contextSpansMockStore{handlerMockStore: handlerMockStore{}, spans: tt.spans, err: tt.err}
+			handler := NewSessionHandler(store)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+tt.sessionID+"/context", nil)
+			rec := httptest.NewRecorder()
+			handler.GetSessionContext(rec, req, tt.sessionID)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status: got %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantBody != "" {
+				var resp map[string]string
+				json.Unmarshal(rec.Body.Bytes(), &resp)
+				if resp["error"] != tt.wantBody {
+					t.Errorf("error: got %v, want %v", resp["error"], tt.wantBody)
+				}
+			}
+			if tt.spans != nil {
+				var result struct{ Spans []storage.SessionContextSpan `json:"spans"` }
+				json.Unmarshal(rec.Body.Bytes(), &result)
+				if len(result.Spans) != len(tt.spans) {
+					t.Errorf("spans: got %d, want %d", len(result.Spans), len(tt.spans))
+				}
+			}
+		})
+	}
+}
+
+type contextSpansMockStore struct {
+	handlerMockStore
+	spans []storage.SessionContextSpan
+	err   error
+}
+
+func (m *contextSpansMockStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]storage.SessionContextSpan, error) {
+	return m.spans, m.err
+}

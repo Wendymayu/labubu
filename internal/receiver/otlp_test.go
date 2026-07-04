@@ -45,6 +45,9 @@ func (m *memTestStore) Purge(_ context.Context, _ time.Duration, _ int) (int, in
 func (m *memTestStore) PurgeLogs(_ context.Context, _ time.Duration) (int, error) {
 	return 0, nil
 }
+func (m *memTestStore) DeleteTraces(_ context.Context, _ [][16]byte) (int, int, error) {
+	return 0, 0, nil
+}
 func (m *memTestStore) InsertLogs(_ context.Context, _ []storage.LogRecord) error {
 	return nil
 }
@@ -94,6 +97,9 @@ func (m *memTestStore) UpsertDiagnosisResult(_ context.Context, _ *storage.Diagn
 	return nil
 }
 func (m *memTestStore) GetSessionAgentStats(_ context.Context, _ string) (*storage.AgentStats, error) {
+	return nil, nil
+}
+func (m *memTestStore) GetSessionContextSpans(_ context.Context, _ string) ([]storage.SessionContextSpan, error) {
 	return nil, nil
 }
 func (m *memTestStore) Close() error {

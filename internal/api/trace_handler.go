@@ -208,6 +208,59 @@ func (h *TraceHandler) ExportTraces(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonBytes)
 }
 
+// DeleteTraces handles POST /api/v1/traces/delete.
+// Removes the given traces and their associated spans, logs, and diagnosis
+// results. Unknown IDs are silently ignored.
+func (h *TraceHandler) DeleteTraces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "only POST allowed"})
+		return
+	}
+
+	var req struct {
+		TraceIDs []string `json:"trace_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid request body: %v", err)})
+		return
+	}
+
+	if len(req.TraceIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "trace_ids must not be empty"})
+		return
+	}
+	if len(req.TraceIDs) > 100 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "max 100 traces per delete"})
+		return
+	}
+
+	traceIDs := make([][16]byte, 0, len(req.TraceIDs))
+	for _, hexID := range req.TraceIDs {
+		if len(hexID) != 32 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid trace_id length: %s (must be 32 hex chars)", hexID)})
+			return
+		}
+		b, err := hex.DecodeString(hexID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid hex trace_id %s: %v", hexID, err)})
+			return
+		}
+		var id [16]byte
+		copy(id[:], b)
+		traceIDs = append(traceIDs, id)
+	}
+
+	deletedTraces, deletedLogs, err := h.store.DeleteTraces(r.Context(), traceIDs)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("delete traces: %v", err)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{
+		"deleted_traces": deletedTraces,
+		"deleted_logs":   deletedLogs,
+	})
+}
+
 // GetDiagnosis handles GET /api/v1/traces/{traceIdHex}/diagnosis.
 func (h *TraceHandler) GetDiagnosis(w http.ResponseWriter, r *http.Request, traceIDHex string) {
 	if len(traceIDHex) != 32 {

@@ -16,6 +16,7 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 	// API routes.
 	mux.HandleFunc("/api/v1/traces/export", traceHandler.ExportTraces)
 	mux.HandleFunc("/api/v1/traces/import", traceHandler.ImportTraces)
+	mux.HandleFunc("/api/v1/traces/delete", traceHandler.DeleteTraces)
 	mux.HandleFunc("/api/v1/traces/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/traces")
 		if path == "" || path == "/" {
@@ -74,10 +75,14 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 				return
 			}
 			sessionID := strings.TrimPrefix(path, "/")
-			// Check for sub-path: agent-stats
+			// Check for sub-paths: agent-stats, context
 			parts := strings.SplitN(sessionID, "/", 2)
 			if len(parts) == 2 && parts[1] == "agent-stats" {
 				sessionHandler.GetAgentStats(w, r, parts[0])
+				return
+			}
+			if len(parts) == 2 && parts[1] == "context" {
+				sessionHandler.GetSessionContext(w, r, parts[0])
 				return
 			}
 			sessionHandler.GetSession(w, r, sessionID)

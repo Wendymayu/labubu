@@ -78,11 +78,12 @@ CREATE INDEX IF NOT EXISTS idx_logs_severity ON logs(severity);
 CREATE INDEX IF NOT EXISTS idx_logs_event_name ON logs(event_name);
 
 CREATE TABLE IF NOT EXISTS model_pricing (
-    model_name   TEXT NOT NULL PRIMARY KEY,
-    input_price  REAL NOT NULL,
-    output_price REAL NOT NULL,
-    currency     TEXT NOT NULL DEFAULT 'USD',
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    model_name     TEXT NOT NULL PRIMARY KEY,
+    input_price    REAL NOT NULL,
+    output_price   REAL NOT NULL,
+    currency       TEXT NOT NULL DEFAULT 'USD',
+    context_window INTEGER NOT NULL DEFAULT 0,
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS llm_configs (

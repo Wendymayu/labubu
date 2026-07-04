@@ -141,6 +141,14 @@ const openAPISpecJSON = `{
         "responses": { "200": { "description": "Agent behavior stats" } }
       }
     },
+    "/api/v1/sessions/{id}/context": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Get main-agent LLM spans for a session context chart",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Main-agent LLM spans with token breakdown" } }
+      }
+    },
     "/api/v1/logs": {
       "get": {
         "tags": ["Logs"],

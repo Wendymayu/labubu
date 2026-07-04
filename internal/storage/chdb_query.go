@@ -238,7 +238,8 @@ func buildGetTraceMetaSQL(traceID [16]byte) string {
 			scope_name,
 			scope_version,
 			scope_attributes,
-			cost, cost_currency
+			cost, cost_currency,
+			session_id
 		FROM traces
 		WHERE trace_id = unhex('%x')
 		LIMIT 1`,
@@ -509,14 +510,14 @@ func mapToSQL(m map[string]string) string {
 
 // buildModelPricingSelectSQL builds a query to fetch all pricing entries.
 func buildModelPricingSelectSQL() string {
-	return `SELECT model_name, input_price, output_price, currency FROM model_pricing ORDER BY model_name`
+	return `SELECT model_name, input_price, output_price, currency, context_window FROM model_pricing ORDER BY model_name`
 }
 
 // buildModelPricingUpsertSQL builds an INSERT to add or replace a pricing entry.
 func buildModelPricingUpsertSQL(p ModelPricing) string {
 	return fmt.Sprintf(
-		`INSERT INTO model_pricing (model_name, input_price, output_price, currency) VALUES ('%s', %f, %f, '%s')`,
-		escapeSQL(p.ModelName), p.InputPrice, p.OutputPrice, escapeSQL(p.Currency),
+		`INSERT INTO model_pricing (model_name, input_price, output_price, currency, context_window) VALUES ('%s', %f, %f, '%s', %d)`,
+		escapeSQL(p.ModelName), p.InputPrice, p.OutputPrice, escapeSQL(p.Currency), p.ContextWindow,
 	)
 }
 

@@ -55,6 +55,10 @@ func (m *mockStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, e
 	return 0, nil
 }
 
+func (m *mockStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	return 0, 0, nil
+}
+
 func (m *mockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
 
 func (m *mockStore) ListLogs(ctx context.Context, q storage.LogQuery) (*storage.LogListResult, error) {
@@ -108,6 +112,10 @@ func (m *mockStore) UpsertDiagnosisResult(ctx context.Context, r *storage.Diagno
 }
 
 func (m *mockStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*storage.AgentStats, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]storage.SessionContextSpan, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 

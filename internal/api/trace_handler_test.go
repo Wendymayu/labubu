@@ -30,6 +30,10 @@ type handlerMockStore struct {
 	diagnosisResult   *storage.DiagnosisResult
 	diagnosisResultErr error
 	logCounts         map[string]int
+	deletedTraceIDs   [][16]byte
+	deleteTracesResult int
+	deleteLogsResult   int
+	deleteTracesErr    error
 }
 
 func (m *handlerMockStore) InsertSpans(ctx context.Context, r storage.ResourceInfo, s storage.ScopeInfo, spans []storage.Span) error {
@@ -63,6 +67,11 @@ func (m *handlerMockStore) Purge(ctx context.Context, maxAge time.Duration, maxC
 
 func (m *handlerMockStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
 	return 0, nil
+}
+
+func (m *handlerMockStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	m.deletedTraceIDs = traceIDs
+	return m.deleteTracesResult, m.deleteLogsResult, m.deleteTracesErr
 }
 
 func (m *handlerMockStore) InsertLogs(ctx context.Context, logs []storage.LogRecord) error { return nil }
@@ -112,6 +121,10 @@ func (m *handlerMockStore) GetCostSummary(ctx context.Context, q storage.CostQue
 }
 
 func (m *handlerMockStore) GetSessionAgentStats(ctx context.Context, sessionID string) (*storage.AgentStats, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *handlerMockStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]storage.SessionContextSpan, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -364,6 +377,74 @@ func TestExportTracesProtojson(t *testing.T) {
 		t.Errorf("export should return a single TracesData envelope, not an array; got: %s", respBody[:20])
 	}
 }
+
+func TestDeleteTraces(t *testing.T) {
+	store := &handlerMockStore{
+		deleteTracesResult: 2,
+		deleteLogsResult:   5,
+	}
+	handler := NewTraceHandler(store)
+
+	body := `{"trace_ids":["a1b2c3d4e5f600000000000000000000","00000000000000000000000000000001"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/traces/delete", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.DeleteTraces(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		DeletedTraces int `json:"deleted_traces"`
+		DeletedLogs   int `json:"deleted_logs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.DeletedTraces != 2 || resp.DeletedLogs != 5 {
+		t.Errorf("got traces=%d logs=%d, want 2/5", resp.DeletedTraces, resp.DeletedLogs)
+	}
+	if len(store.deletedTraceIDs) != 2 {
+		t.Errorf("store received %d ids, want 2", len(store.deletedTraceIDs))
+	}
+}
+
+func TestDeleteTracesValidation(t *testing.T) {
+	// Build a body with 101 trace ids to exceed the 100-id cap.
+	var tooMany []string
+	for i := 0; i < 101; i++ {
+		tooMany = append(tooMany, fmt.Sprintf("%032d", i))
+	}
+	tooManyBody, _ := json.Marshal(map[string][]string{"trace_ids": tooMany})
+
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"method not allowed", "", http.StatusMethodNotAllowed},
+		{"empty ids", `{"trace_ids":[]}`, http.StatusBadRequest},
+		{"too many ids", string(tooManyBody), http.StatusBadRequest},
+		{"bad hex", `{"trace_ids":["zz"]}`, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			handler := NewTraceHandler(&handlerMockStore{})
+			method := http.MethodPost
+			if c.name == "method not allowed" {
+				method = http.MethodGet
+			}
+			req := httptest.NewRequest(method, "/api/v1/traces/delete", strings.NewReader(c.body))
+			rec := httptest.NewRecorder()
+			handler.DeleteTraces(rec, req)
+			if rec.Code != c.want {
+				t.Errorf("got %d, want %d: %s", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 
 func TestImportExportRoundTrip(t *testing.T) {
 	inputTokens := uint32(100)

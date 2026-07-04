@@ -68,6 +68,9 @@ func NewChDBStore(dataDir string) (Store, error) {
 	db.Exec(`ALTER TABLE spans ADD COLUMN cost REAL`)
 	db.Exec(`ALTER TABLE spans ADD COLUMN cost_currency TEXT NOT NULL DEFAULT ''`)
 
+	// Migrate: add context_window column to existing model_pricing tables.
+	db.Exec(`ALTER TABLE model_pricing ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0`)
+
 	s := &sqliteStore{db: db, dir: dataDir}
 
 	// Seed default pricing from config (same as memStore/chDB)
@@ -651,14 +654,14 @@ func (s *sqliteStore) GetTrace(ctx context.Context, traceID [16]byte) (*TraceDet
 		`SELECT trace_id_hex, root_span_id_hex, span_count, start_time_ms, duration_ms,
 		        resource_attributes, resource_schema_url,
 		        scope_name, scope_version, scope_attributes,
-		        cost, cost_currency
+		        cost, cost_currency, session_id
 		 FROM traces WHERE trace_id_hex = ?`,
 		traceIDHex,
 	).Scan(
 		&detail.TraceIDHex, &detail.RootSpanID, &detail.SpanCount, &detail.StartTimeMS, &detail.DurationMS,
 		&resAttrsJSON, &resSchemaURL,
 		&scopeName, &scopeVersion, &scopeAttrsJSON,
-		&cost, &costCurrency,
+		&cost, &costCurrency, &detail.SessionID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query trace meta: %w", err)
@@ -911,6 +914,12 @@ func (s *sqliteStore) GetSession(ctx context.Context, sessionID string, page, pa
 		traces = []TraceListItem{}
 	}
 
+	if len(traces) > 0 {
+		if err := loadRootSpanInputMessages(ctx, s.db, traces); err != nil {
+			return nil, fmt.Errorf("load input messages: %w", err)
+		}
+	}
+
 	return &SessionDetail{
 		Session:    sl,
 		Traces:     traces,
@@ -1097,7 +1106,7 @@ func (s *sqliteStore) GetModelPricing(ctx context.Context) ([]ModelPricing, erro
 	defer s.mu.Unlock()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT model_name, input_price, output_price, currency FROM model_pricing ORDER BY model_name`,
+		`SELECT model_name, input_price, output_price, currency, context_window FROM model_pricing ORDER BY model_name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query pricing: %w", err)
@@ -1107,7 +1116,7 @@ func (s *sqliteStore) GetModelPricing(ctx context.Context) ([]ModelPricing, erro
 	var pricing []ModelPricing
 	for rows.Next() {
 		var p ModelPricing
-		if err := rows.Scan(&p.ModelName, &p.InputPrice, &p.OutputPrice, &p.Currency); err != nil {
+		if err := rows.Scan(&p.ModelName, &p.InputPrice, &p.OutputPrice, &p.Currency, &p.ContextWindow); err != nil {
 			return nil, fmt.Errorf("scan pricing: %w", err)
 		}
 		pricing = append(pricing, p)
@@ -1120,9 +1129,9 @@ func (s *sqliteStore) UpsertModelPricing(ctx context.Context, p ModelPricing) er
 	defer s.mu.Unlock()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO model_pricing (model_name, input_price, output_price, currency)
-		 VALUES (?, ?, ?, ?)`,
-		p.ModelName, p.InputPrice, p.OutputPrice, p.Currency,
+		`INSERT OR REPLACE INTO model_pricing (model_name, input_price, output_price, currency, context_window)
+		 VALUES (?, ?, ?, ?, ?)`,
+		p.ModelName, p.InputPrice, p.OutputPrice, p.Currency, p.ContextWindow,
 	)
 	return err
 }
@@ -1639,6 +1648,65 @@ func (s *sqliteStore) Purge(ctx context.Context, maxAge time.Duration, maxCount 
 	return deletedTraces, deletedSpans, nil
 }
 
+// --- DeleteTraces ---
+
+func (s *sqliteStore) DeleteTraces(ctx context.Context, traceIDs [][16]byte) (int, int, error) {
+	if len(traceIDs) == 0 {
+		return 0, 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	placeholders := make([]string, len(traceIDs))
+	args := make([]any, len(traceIDs))
+	for i, id := range traceIDs {
+		placeholders[i] = "?"
+		args[i] = TraceIDToHex(id)
+	}
+	inList := strings.Join(placeholders, ",")
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	logsRes, err := tx.ExecContext(ctx,
+		`DELETE FROM diagnosis_results WHERE trace_id_hex IN (`+inList+`)`, args...,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete diagnosis_results: %w", err)
+	}
+	_ = logsRes
+
+	logsRes, err = tx.ExecContext(ctx,
+		`DELETE FROM logs WHERE trace_id_hex IN (`+inList+`)`, args...,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete logs: %w", err)
+	}
+	deletedLogs, _ := logsRes.RowsAffected()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM spans WHERE trace_id_hex IN (`+inList+`)`, args...,
+	); err != nil {
+		return 0, 0, fmt.Errorf("delete spans: %w", err)
+	}
+
+	tracesRes, err := tx.ExecContext(ctx,
+		`DELETE FROM traces WHERE trace_id_hex IN (`+inList+`)`, args...,
+	)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete traces: %w", err)
+	}
+	deletedTraces, _ := tracesRes.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("commit: %w", err)
+	}
+	return int(deletedTraces), int(deletedLogs), nil
+}
+
 // --- PurgeLogs ---
 
 func (s *sqliteStore) PurgeLogs(ctx context.Context, maxAge time.Duration) (int, error) {
@@ -1718,6 +1786,91 @@ func (s *sqliteStore) GetSessionAgentStats(ctx context.Context, sessionID string
 	}
 
 	return computeAgentStats(traces, spans), nil
+}
+
+// GetSessionContextSpans returns the main agent's LLM spans for a session.
+func (s *sqliteStore) GetSessionContextSpans(ctx context.Context, sessionID string) ([]SessionContextSpan, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Map trace_id_hex -> root_span_id_hex for the session.
+	rootByTrace := make(map[string]string)
+	traceRows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, root_span_id_hex FROM traces WHERE session_id = ?`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session traces: %w", err)
+	}
+	for traceRows.Next() {
+		var tid, rid string
+		if err := traceRows.Scan(&tid, &rid); err != nil {
+			traceRows.Close()
+			return nil, fmt.Errorf("scan session trace: %w", err)
+		}
+		rootByTrace[tid] = rid
+	}
+	traceRows.Close()
+	if len(rootByTrace) == 0 {
+		return nil, nil
+	}
+
+	// Spans for those traces — only the columns the parent-chain walk + chart need.
+	spanRows, err := s.db.QueryContext(ctx,
+		`SELECT trace_id_hex, span_id_hex, parent_span_id_hex, name, start_time_ms,
+		        input_tokens, output_tokens, total_tokens, cache_creation_tokens, cache_read_tokens, gen_ai_request_model
+		 FROM spans
+		 WHERE trace_id_hex IN (SELECT trace_id_hex FROM traces WHERE session_id = ?)
+		 ORDER BY start_time_ms`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query session spans: %w", err)
+	}
+	defer spanRows.Close()
+
+	var inputs []sessionSpanInput
+	for spanRows.Next() {
+		var in sessionSpanInput
+		var inputTokens, outputTokens, totalTokens, cacheCreationTokens, cacheReadTokens sql.NullInt32
+		var genAIModel sql.NullString
+		if err := spanRows.Scan(
+			&in.TraceIDHex, &in.SpanIDHex, &in.ParentSpanIDHex, &in.Name, &in.StartTimeMS,
+			&inputTokens, &outputTokens, &totalTokens, &cacheCreationTokens, &cacheReadTokens, &genAIModel,
+		); err != nil {
+			return nil, fmt.Errorf("scan session span: %w", err)
+		}
+		if inputTokens.Valid {
+			v := uint32(inputTokens.Int32)
+			in.InputTokens = &v
+		}
+		if outputTokens.Valid {
+			v := uint32(outputTokens.Int32)
+			in.OutputTokens = &v
+		}
+		if totalTokens.Valid {
+			v := uint32(totalTokens.Int32)
+			in.TotalTokens = &v
+		}
+		if cacheCreationTokens.Valid {
+			v := uint32(cacheCreationTokens.Int32)
+			in.CacheCreationTokens = &v
+		}
+		if cacheReadTokens.Valid {
+			v := uint32(cacheReadTokens.Int32)
+			in.CacheReadTokens = &v
+		}
+		if genAIModel.Valid {
+			v := genAIModel.String
+			in.GenAIRequestModel = &v
+		}
+		inputs = append(inputs, in)
+	}
+	if err := spanRows.Err(); err != nil {
+		return nil, fmt.Errorf("iter session spans: %w", err)
+	}
+
+	return computeSessionContextSpans(rootByTrace, inputs), nil
 }
 
 func (s *sqliteStore) Close() error {

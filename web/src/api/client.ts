@@ -58,6 +58,38 @@ export interface SpanDetail {
   is_tool_call: boolean        // tool_name != null
 }
 
+/**
+ * One LLM call in a trace, for the context-change bar chart.
+ * Derived from spans where total_tokens > 0, sorted by start_time_ms.
+ * input + cacheRead + cacheCreation + output == total_tokens.
+ */
+export interface ContextPoint {
+  index: number          // 1-based position after sorting by start_time_ms
+  spanId: string
+  spanName: string
+  model: string          // gen_ai_request_model ?? ''
+  input: number          // input_tokens ?? 0
+  cacheRead: number      // cache_read_tokens ?? 0
+  cacheCreation: number  // cache_creation_tokens ?? 0
+  output: number         // output_tokens ?? 0
+  contextWindow?: number   // model's max context window in tokens; 0/undefined = unknown
+  usagePct?: number | null // total / contextWindow, 0..1; null when no window
+}
+
+/**
+ * One agent session's context trajectory — LLM calls sharing the same owning
+ * `.invoke` span (root agent or a subagent invocation). Subagent sessions have
+ * independent context that resets on dispatch, so they must be charted
+ * separately rather than merged with the main session.
+ */
+export interface ContextSession {
+  id: string            // owning invoke span id (or '__root__' fallback)
+  agentName: string     // gen_ai.agent.name of the owning invoke span
+  isMain: boolean       // true for the root agent's session
+  startMs: number       // owner span start_time_ms, for ordering
+  points: ContextPoint[]
+}
+
 export interface ScopeDetail {
   name: string
   version: string
@@ -76,6 +108,7 @@ export interface TraceDetailResponse {
     cost?: number
     cost_currency?: string
     unpriced_spans?: number
+    session_id?: string
     spans: SpanDetail[]
   }
 }
@@ -171,6 +204,24 @@ export async function importTraces(jsonData: string): Promise<ImportResult> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
     throw new Error(err.error || `Import failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export interface DeleteTracesResult {
+  deleted_traces: number
+  deleted_logs: number
+}
+
+export async function deleteTraces(traceIds: string[]): Promise<DeleteTracesResult> {
+  const res = await fetch(`${BASE_URL}/traces/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trace_ids: traceIds }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `Delete failed: ${res.status}`)
   }
   return res.json()
 }
@@ -303,6 +354,7 @@ export interface ModelPricing {
   input_price: number
   output_price: number
   currency: string
+  context_window: number
 }
 
 export interface ModelPricingListResponse {
@@ -505,6 +557,28 @@ export async function getSession(sessionId: string, page = 1, pageSize = 20): Pr
     page,
     page_size: pageSize,
   })
+}
+
+/**
+ * A main-agent LLM span in a session (subagent spans excluded), with the token
+ * breakdown needed for the session context bar chart. Drives the same
+ * ContextBarChart component used on the trace detail page.
+ */
+export interface SessionContextSpan {
+  trace_id_hex: string
+  span_id: string
+  name: string
+  start_time_ms: number
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  cache_read_tokens?: number
+  cache_creation_tokens?: number
+  gen_ai_request_model?: string
+}
+
+export async function getSessionContext(sessionId: string): Promise<{ spans: SessionContextSpan[] }> {
+  return get<{ spans: SessionContextSpan[] }>(`${BASE_URL}/sessions/${encodeURIComponent(sessionId)}/context`)
 }
 
 // --- Log types and API ---

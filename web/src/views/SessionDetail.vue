@@ -9,7 +9,7 @@
 
     <template v-else-if="detail">
       <div class="session-summary">
-        <h2>Session: {{ detail.session.session_id }}</h2>
+        <h2>{{ detail.session.session_id }}</h2>
         <div class="summary-grid">
           <div class="summary-item">
             <span class="summary-label">Turns</span>
@@ -36,10 +36,6 @@
           <div class="summary-item">
             <span class="summary-label">Max Latency</span>
             <span class="summary-value">{{ formatDuration(detail.session.max_duration_ms) }}</span>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Duration</span>
-            <span class="summary-value">{{ formatDuration(detail.session.last_active_ms - detail.session.first_active_ms) }}</span>
           </div>
         </div>
       </div>
@@ -69,34 +65,65 @@
         <!-- Loading / Error / Empty states -->
         <div v-if="ctxLoading" class="ctx-state">{{ t('common.loading') }}</div>
         <div v-else-if="ctxError" class="ctx-state ctx-error">{{ ctxError }}</div>
-        <div v-else-if="ctxSeries.length === 0" class="ctx-state">{{ t('sessionDetail.noContextData') }}</div>
+        <div v-else-if="ctxSeries.length === 0 && contextSessions.length === 0" class="ctx-state">{{ t('sessionDetail.noContextData') }}</div>
 
         <!-- Chart canvas -->
         <div v-show="ctxSeries.length > 0 && !ctxLoading && !ctxError" class="ctx-chart-body">
           <canvas ref="ctxCanvasRef"></canvas>
           <div ref="ctxTooltipRef" class="ctx-tooltip"></div>
         </div>
+
+        <!-- Per-LLM-call bar chart (main agent only) -->
+        <ContextBarChart
+          v-if="contextSessions.length > 0"
+          :sessions="contextSessions"
+          class="ctx-bar-chart"
+          @select="onContextSelect"
+        />
       </div>
 
-      <h3 class="turns-heading">Turns ({{ detail.pagination.total }})</h3>
+      <h3 class="turns-heading">Turns</h3>
 
       <div v-if="turnsLoading" class="turns-loading">{{ t('common.loading') }}</div>
-      <div class="turns-list" v-else>
-        <div
-          v-for="(trace, idx) in detail.traces"
-          :key="trace.trace_id_hex"
-          class="turn-row"
-          @click="goToTrace(trace.trace_id_hex)"
-        >
-          <span class="turn-number">#{{ (page - 1) * pageSize + idx + 1 }}</span>
-          <span class="turn-name">{{ trace.root_name }}</span>
-          <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
-          <span class="turn-duration">{{ formatDuration(trace.duration_ms) }}</span>
-          <span class="turn-tokens">{{ formatTokens(trace.total_tokens) }}</span>
-          <span class="turn-service">{{ trace.root_service }}</span>
-          <span class="turn-time">{{ formatTime(trace.start_time_ms) }}</span>
-        </div>
-      </div>
+      <template v-else>
+        <table class="trace-table" v-if="detail.traces.length > 0">
+          <thead>
+            <tr>
+              <th>{{ t('traceList.name') }}</th>
+              <th>{{ t('traceList.input') }}</th>
+              <th>{{ t('traceList.service') }}</th>
+              <th>{{ t('traceList.duration') }}</th>
+              <th>{{ t('traceList.spans') }}</th>
+              <th>{{ t('traceList.status') }}</th>
+              <th>{{ t('traceList.tokens') }}</th>
+              <th>{{ t('traceList.cost') }}</th>
+              <th>{{ t('traceList.time') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="trace in detail.traces"
+              :key="trace.trace_id_hex"
+              class="trace-row"
+              @click="goToTrace(trace.trace_id_hex)"
+            >
+              <td class="cell-name">{{ trace.root_name }}</td>
+              <td class="cell-input" :title="trace.input_messages ?? ''">{{ formatInput(trace.input_messages) }}</td>
+              <td>{{ trace.root_service }}</td>
+              <td>{{ formatDuration(trace.duration_ms) }}</td>
+              <td>{{ trace.span_count }}</td>
+              <td>
+                <span :class="['status-badge', statusClass(trace.status)]">{{ trace.status }}</span>
+              </td>
+              <td>{{ formatTokens(trace.total_tokens) }}</td>
+              <td class="cell-cost">{{ formatCost(trace.cost, trace.cost_currency) }}</td>
+              <td class="cell-time">{{ formatTime(trace.start_time_ms) }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div v-else class="empty">{{ t('traceList.noTraces') }}</div>
+      </template>
 
       <div class="pagination" v-if="detail.pagination.total > 0">
         <button
@@ -136,8 +163,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '../composables/useTheme'
 import { usePageSize } from '../composables/usePageSize'
-import { getSession, getAgentStats, type SessionDetail, type AgentStats, type QueryResult } from '../api/client'
+import { getSession, getAgentStats, getModelPricing, getSessionContext, type SessionDetail, type AgentStats, type QueryResult, type ContextSession, type SessionContextSpan } from '../api/client'
 import AgentStatsSection from '../components/AgentStatsSection.vue'
+import ContextBarChart from '../components/ContextBarChart.vue'
 import { formatCost } from '../utils/format'
 import {
   Chart, LineController, CategoryScale, LinearScale,
@@ -195,6 +223,10 @@ const ctxLoading = ref(false)
 const ctxError = ref('')
 
 const ctxSeries = ref<CtxSeries[]>([])
+
+// Per-LLM-call bar chart (main agent only): model -> context window size.
+const contextWindowMap = ref<Record<string, number>>({})
+const sessionContextSpans = ref<SessionContextSpan[]>([])
 
 // Chart.js refs
 const ctxCanvasRef = ref<HTMLCanvasElement | null>(null)
@@ -273,6 +305,14 @@ function formatTokens(tokens?: number): string {
   if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
   return String(tokens)
+}
+
+// formatInput renders the root span's gen_ai.input.messages attribute. The
+// value is a JSON string (an array of messages); the cell truncates it and
+// the full value is available via the title tooltip. Returns '-' when the
+// probe has not populated the attribute yet.
+function formatInput(v?: string): string {
+  return v ? v : '-'
 }
 
 function formatTime(ms: number): string {
@@ -498,9 +538,68 @@ function errorRateClass(rate: number): string {
   return 'error-ok'
 }
 
+// Build a single ContextSession (main agent) for ContextBarChart from the
+// session's main-agent LLM spans, sorted by start time. contextWindow comes
+// from the pricing map; usagePct = total / window (null when window unknown).
+const contextSessions = computed<ContextSession[]>(() => {
+  const spans = sessionContextSpans.value
+  if (spans.length === 0) return []
+  const sorted = spans.slice().sort((a, b) => a.start_time_ms - b.start_time_ms)
+  const points = sorted.map((s, i) => {
+    const input = s.input_tokens ?? 0
+    const cacheRead = s.cache_read_tokens ?? 0
+    const cacheCreation = s.cache_creation_tokens ?? 0
+    const output = s.output_tokens ?? 0
+    const total = input + cacheRead + cacheCreation + output
+    const model = s.gen_ai_request_model ?? ''
+    const window = model ? (contextWindowMap.value[model] ?? 0) : 0
+    return {
+      index: i + 1,
+      spanId: s.span_id,
+      spanName: s.name,
+      model,
+      input,
+      cacheRead,
+      cacheCreation,
+      output,
+      contextWindow: window > 0 ? window : undefined,
+      usagePct: window > 0 ? total / window : null,
+    }
+  })
+  return [{ id: 'main', agentName: detail.value?.session.session_id ?? '', isMain: true, startMs: sorted[0].start_time_ms, points }]
+})
+
+// Clicking a bar navigates to the trace containing that LLM span.
+function onContextSelect(spanId: string) {
+  const span = sessionContextSpans.value.find(s => s.span_id === spanId)
+  if (span?.trace_id_hex) goToTrace(span.trace_id_hex)
+}
+
+// Fetch model pricing (for context windows) and the session's main-agent LLM
+// spans. Failures are non-fatal — the bar chart simply hides or shows no usage %.
+async function fetchSessionContext() {
+  try {
+    const pricing = await getModelPricing()
+    const map: Record<string, number> = {}
+    for (const m of pricing.models) {
+      if (m.context_window > 0) map[m.model_name] = m.context_window
+    }
+    contextWindowMap.value = map
+  } catch {
+    contextWindowMap.value = {}
+  }
+  try {
+    const res = await getSessionContext(sessionId)
+    sessionContextSpans.value = res.spans ?? []
+  } catch {
+    sessionContextSpans.value = []
+  }
+}
+
 onMounted(() => {
   fetchSession()
   fetchAgentStats()
+  fetchSessionContext()
   setupCtxTooltipListeners()
 })
 
@@ -532,28 +631,20 @@ onUnmounted(() => {
 
 .turns-heading { font-size: 16px; margin-bottom: 12px; color: var(--text-primary); }
 
-.turns-list { display: flex; flex-direction: column; gap: 2px; }
-.turn-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  cursor: pointer;
-  font-size: 14px;
-}
-.turn-row:hover { background: var(--bg-surface); }
-.turn-number { color: var(--text-secondary); font-size: 12px; font-weight: 600; min-width: 32px; }
-.turn-name { flex: 1; font-weight: 600; color: var(--accent-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-table { width: 100%; border-collapse: collapse; }
+.trace-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; border-bottom: 1px solid var(--border-default); }
+.trace-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--border-subtle); }
+.trace-row { cursor: pointer; }
+.trace-row:hover { background: var(--bg-surface); }
+.cell-name { font-weight: 600; color: var(--accent-blue); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-input { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 13px; }
+.cell-time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
 .status-ok { background: var(--status-ok-bg); color: var(--status-ok-text); }
 .status-error { background: var(--status-error-bg); color: var(--status-error-text); }
-.turn-duration { color: var(--text-secondary); min-width: 70px; text-align: right; }
-.turn-tokens { color: var(--token-highlight); font-weight: 600; min-width: 60px; text-align: right; }
-.turn-service { color: var(--text-secondary); font-size: 13px; min-width: 100px; }
-.turn-time { color: var(--text-secondary); font-size: 13px; min-width: 80px; text-align: right; }
 
 .turns-loading { text-align: center; padding: 24px; color: var(--text-secondary); font-size: 14px; }
+.empty { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
 
 .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 20px; }
 .page-info { font-size: 14px; color: var(--text-secondary); }
@@ -616,6 +707,9 @@ onUnmounted(() => {
 .ctx-chart-body canvas {
   width: 100% !important;
   height: 100% !important;
+}
+.ctx-bar-chart {
+  margin-top: 20px;
 }
 
 .ctx-tooltip {

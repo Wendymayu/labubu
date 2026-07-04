@@ -50,6 +50,17 @@
             <button :class="['btn-insight', { active: activeInsight === 'agent' }]" @click="toggleInsight('agent')">
               {{ t('agentStats.agentBehavior') }}
             </button>
+            <button :class="['btn-insight', { active: activeInsight === 'context' }]" @click="toggleInsight('context')">
+              {{ t('traceDetail.context') }}
+            </button>
+            <router-link
+              v-if="trace.session_id"
+              :to="`/sessions/${trace.session_id}`"
+              class="btn-insight btn-session-link"
+              :title="t('traceDetail.goToSession')"
+            >
+              {{ t('traceDetail.goToSession') }}
+            </router-link>
           </div>
         </div>
       </div>
@@ -60,7 +71,8 @@
           <span class="insight-overlay-title">{{
             activeInsight === 'logs' ? t('logList.logCount', { count: totalLogCount })
             : activeInsight === 'diagnosis' ? t('diagnosis.tab')
-            : t('agentStats.agentBehavior')
+            : activeInsight === 'agent' ? t('agentStats.agentBehavior')
+            : t('traceDetail.contextTitle')
           }}</span>
           <div class="insight-overlay-actions">
             <button
@@ -85,6 +97,11 @@
           <AgentBehaviorTab
             v-if="activeInsight === 'agent'"
             :spans="trace.spans"
+          />
+          <ContextBarChart
+            v-if="activeInsight === 'context'"
+            :sessions="contextSessions"
+            @select="openDrawerBySpanId"
           />
           <div v-if="activeInsight === 'logs'" class="log-overlay">
             <div v-if="logSpanFilter" class="log-filter-tag">
@@ -171,8 +188,6 @@
               <TokenPieChart
                 v-if="selectedSpanTokenSlices.length > 0"
                 :items="selectedSpanTokenSlices"
-                :input-tokens="selectedSpanInputTokens"
-                :output-tokens="selectedSpanOutputTokens"
               />
               <SpanDetail :span="selectedSpan" :search="contentSearch" />
             </template>
@@ -205,9 +220,10 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult } from '../api/client'
+import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, getModelPricing, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult, type ContextPoint, type ContextSession } from '../api/client'
 import DiagnosisTab from '../components/DiagnosisTab.vue'
 import AgentBehaviorTab from '../components/AgentBehaviorTab.vue'
+import ContextBarChart from '../components/ContextBarChart.vue'
 import WaterfallChart from '../components/WaterfallChart.vue'
 import SpanDetail from '../components/SpanDetail.vue'
 import TokenPieChart from '../components/TokenPieChart.vue'
@@ -229,9 +245,12 @@ const logPage = ref(1)
 const logPageSize = 50
 const logTotal = ref(0)
 const logCounts = ref<Record<string, number>>({})
-const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | null>(null)
+const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | 'context' | null>(null)
 
-function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent') {
+// model_name -> context_window (token 数)。用于上下文弹窗里每次 LLM 调用的使用率计算。
+const contextWindowMap = ref<Record<string, number>>({})
+
+function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent' | 'context') {
   if (activeInsight.value === insight) {
     activeInsight.value = null
   } else {
@@ -279,16 +298,87 @@ const selectedSpanTokenSlices = computed<PieSlice[]>(() => {
   return slices
 })
 
-const selectedSpanInputTokens = computed(() => {
-  const span = selectedSpan.value
-  if (!span) return 0
-  return span.input_tokens ?? 0
-})
+/**
+ * LLM calls grouped by owning agent invocation — drives the context bar chart.
+ *
+ * Each `.invoke` span (root agent.invoke or a nested subagent.invoke) owns an
+ * independent conversation context: a subagent's context resets on dispatch,
+ * so merging its LLM calls with the main session's trajectory is misleading.
+ * We walk each LLM span's parent chain to its nearest `.invoke` ancestor and
+ * group by that owner, producing one ContextSession per invocation.
+ */
+const contextSessions = computed<ContextSession[]>(() => {
+  const t = trace.value
+  const spans = t?.spans
+  if (!spans) return []
+  const byId = new Map(spans.map(s => [s.span_id, s]))
+  const rootId = t!.root_span_id
+  const rootAg = byId.get(rootId)?.attributes?.['gen_ai.agent.name'] ?? ''
 
-const selectedSpanOutputTokens = computed(() => {
-  const span = selectedSpan.value
-  if (!span) return 0
-  return span.output_tokens ?? 0
+  const ownerOf = (s: SpanDetailType): SpanDetailType | undefined => {
+    let cur: SpanDetailType | undefined = s
+    let guard = 0
+    while (cur && guard++ < 500) {
+      if ((cur.name ?? '').includes('.invoke')) return cur
+      cur = cur.parent_span_id ? byId.get(cur.parent_span_id) : undefined
+    }
+    return undefined
+  }
+
+  const buildPoint = (s: SpanDetailType, i: number): ContextPoint => {
+    const model = s.gen_ai_request_model ?? ''
+    const input = s.input_tokens ?? 0
+    const cacheRead = s.cache_read_tokens ?? 0
+    const cacheCreation = s.cache_creation_tokens ?? 0
+    const output = s.output_tokens ?? 0
+    const total = input + cacheRead + cacheCreation + output
+    const window = model ? (contextWindowMap.value[model] ?? 0) : 0
+    const usagePct = window > 0 ? total / window : null
+    return {
+      index: i + 1,
+      spanId: s.span_id,
+      spanName: s.name,
+      model,
+      input,
+      cacheRead,
+      cacheCreation,
+      output,
+      contextWindow: window > 0 ? window : undefined,
+      usagePct,
+    }
+  }
+
+  const groups = new Map<string, SpanDetailType[]>()
+  for (const s of spans) {
+    if ((s.total_tokens ?? 0) <= 0) continue
+    const owner = ownerOf(s)
+    const key = owner ? owner.span_id : '__root__'
+    let arr = groups.get(key)
+    if (!arr) { arr = []; groups.set(key, arr) }
+    arr.push(s)
+  }
+
+  const sessions: ContextSession[] = []
+  for (const [key, arr] of groups) {
+    arr.sort((a, b) => a.start_time_ms - b.start_time_ms)
+    const owner = key === '__root__' ? undefined : byId.get(key)
+    const agentName = owner?.attributes?.['gen_ai.agent.name'] ?? ''
+    const isMain = owner ? (owner.span_id === rootId || (!!rootAg && agentName === rootAg)) : false
+    sessions.push({
+      id: key,
+      agentName,
+      isMain,
+      startMs: owner?.start_time_ms ?? arr[0]?.start_time_ms ?? 0,
+      points: arr.map(buildPoint),
+    })
+  }
+
+  // Main session first, then the rest by start time.
+  sessions.sort((a, b) => {
+    if (a.isMain !== b.isMain) return a.isMain ? -1 : 1
+    return a.startMs - b.startMs
+  })
+  return sessions
 })
 
 const totalLogCount = computed(() => {
@@ -348,6 +438,17 @@ async function fetchTrace() {
     trace.value = result.trace
     fetchLogCounts()
     fetchLogPage()
+    // 拉取模型定价以获取 context_window（失败不阻塞 trace 展示）
+    try {
+      const pricing = await getModelPricing()
+      const map: Record<string, number> = {}
+      for (const m of pricing.models) {
+        if (m.context_window > 0) map[m.model_name] = m.context_window
+      }
+      contextWindowMap.value = map
+    } catch {
+      contextWindowMap.value = {}
+    }
   } catch (e: any) {
     error.value = e.message || 'Failed to load trace'
   } finally {
@@ -422,6 +523,11 @@ function onDiagnosisNavigateSpan(spanIndex: number) {
 function openDrawer(span: SpanDetailType) {
   selectedSpan.value = span
   drawerOpen.value = true
+}
+
+function openDrawerBySpanId(spanId: string) {
+  const span = trace.value?.spans.find(s => s.span_id === spanId)
+  if (span) openDrawer(span)
 }
 
 function closeDrawer() {
@@ -684,6 +790,12 @@ onUnmounted(() => {
   background: var(--accent-blue);
   color: #fff;
   border-color: var(--accent-blue);
+}
+.btn-session-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  font-family: inherit;
 }
 
 /* === Insight overlay panel === */
@@ -1080,7 +1192,7 @@ onUnmounted(() => {
   color: var(--text-primary);
   white-space: pre;
   overflow: auto;
-  max-height: calc(100vh - 360px);
+  max-height: calc(100vh - 120px);
 }
 .json-content::-webkit-scrollbar { width: 4px; height: 4px; }
 .json-content::-webkit-scrollbar-track { background: transparent; }
