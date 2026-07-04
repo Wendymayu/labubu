@@ -240,7 +240,7 @@ costDashboard: {
   },
   agentStats: {
     agentBehavior: 'Behavior',
-    agentStats: 'Agent Behavior Stats',
+    agentStats: 'Agent Behavior',
     noAgentData: 'No agent behavior data detected in this trace',
     dimLlm: 'LLM',
     dimTool: 'Tool',

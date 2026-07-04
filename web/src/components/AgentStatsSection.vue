@@ -2,7 +2,6 @@
   <div class="agent-stats-section" v-if="stats">
     <h3 class="section-title">
       🤖 {{ t('agentStats.agentStats') }}
-      <span class="section-subtitle">— Is this agent reliable?</span>
     </h3>
 
     <!-- Overview cards -->
@@ -115,12 +114,6 @@ function formatRate(rate: number): string {
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
-}
-
-.section-subtitle {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-weight: 400;
 }
 
 /* Overview cards */
