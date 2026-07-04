@@ -90,36 +90,66 @@
         </div>
       </section>
 
-      <!-- Skill & Subagent dimensions share a row -->
-      <div class="dim-pair">
-        <section class="dim-section">
-          <h4 class="dim-title">🧩 {{ t('agentStats.dimSkill') }}</h4>
-          <div class="score-cards">
-            <div class="score-card rate-green">
-              <div class="score-value">{{ skillCount }}</div>
-              <div class="score-label">{{ t('agentStats.skillsUsed') }}</div>
-              <div class="score-subtitle">
-                <template v-if="skillCount > 0">{{ skillCount }} skill(s)</template>
-                <template v-else>none</template>
-              </div>
-            </div>
+      <!-- Skill dimension -->
+      <section v-if="skillCount > 0" class="dim-section">
+        <h4 class="dim-title">🧩 {{ t('agentStats.dimSkill') }}</h4>
+        <div class="score-cards">
+          <div class="score-card rate-green">
+            <div class="score-value">{{ skillCount }}</div>
+            <div class="score-label">{{ t('agentStats.skillsUsed') }}</div>
+            <div class="score-subtitle">{{ skillTotalCalls }} calls</div>
           </div>
-        </section>
 
-        <section class="dim-section">
-          <h4 class="dim-title">🧬 {{ t('agentStats.dimSubagent') }}</h4>
-          <div class="score-cards">
-            <div class="score-card" :class="subagentCount > 0 ? 'rate-yellow' : 'rate-green'">
-              <div class="score-value">{{ subagentCount }}</div>
-              <div class="score-label">{{ t('agentStats.subagentCount') }}</div>
-              <div class="score-subtitle">
-                <template v-if="subagentCount > 0">{{ subagentCount }} nested agent(s)</template>
-                <template v-else>root only</template>
-              </div>
+          <div class="score-card rate-green">
+            <div class="score-value">{{ skillTotalCalls }}</div>
+            <div class="score-label">{{ t('agentStats.callCount') }}</div>
+            <div class="score-subtitle">{{ skillSuccessfulCalls }}/{{ skillTotalCalls }} succeeded</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(skillAvgDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.avgDuration') }}</div>
+            <div class="score-subtitle">{{ skillTotalCalls }} calls</div>
+          </div>
+        </div>
+
+        <!-- Skills Used summary -->
+        <div v-if="skillsUsed.length > 0" class="tools-used-section">
+          <table class="tools-used-table">
+            <thead>
+              <tr>
+                <th>{{ t('agentStats.dimSkill') }}</th>
+                <th class="num">{{ t('agentStats.callCount') }}</th>
+                <th class="num">{{ t('agentStats.successRateCol') }}</th>
+                <th class="num">{{ t('agentStats.avgDuration') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in skillsUsed" :key="i">
+                <td class="tool-name">{{ row.name }}</td>
+                <td class="num">{{ row.calls }}</td>
+                <td class="num" :class="rateClass(row.successRate)">{{ formatRate(row.successRate) }}</td>
+                <td class="num">{{ formatDuration(row.avgDuration) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Subagent dimension -->
+      <section class="dim-section">
+        <h4 class="dim-title">🧬 {{ t('agentStats.dimSubagent') }}</h4>
+        <div class="score-cards">
+          <div class="score-card" :class="subagentCount > 0 ? 'rate-yellow' : 'rate-green'">
+            <div class="score-value">{{ subagentCount }}</div>
+            <div class="score-label">{{ t('agentStats.subagentCount') }}</div>
+            <div class="score-subtitle">
+              <template v-if="subagentCount > 0">{{ subagentCount }} nested agent(s)</template>
+              <template v-else>root only</template>
             </div>
           </div>
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -154,14 +184,16 @@ const totalToolCalls = computed(() => toolSpans.value.length)
 const distinctToolCount = computed(() => toolsUsed.value.length)
 
 const successfulToolCalls = computed(() =>
-  toolSpans.value.filter(s => s.status === 'ok').length
+  toolSpans.value.filter(s => isStatusOk(s)).length
 )
 
 // --- LLM spans ---
 // LLM 调用：gen_ai_system 已设置且非 tool 调用
+// 注意 gen_ai_system 可能为 null（根 agent span 带有 gen_ai.* 属性但没有 gen_ai.system），
+// 需用真值判断排除 null/undefined/空串，否则会把根 span 误算成一次模型调用。
 
 const llmSpans = computed(() =>
-  props.spans.filter(s => s.gen_ai_system !== undefined && !s.is_tool_call)
+  props.spans.filter(s => !!s.gen_ai_system && !s.is_tool_call)
 )
 
 const totalLLMCalls = computed(() => llmSpans.value.length)
@@ -210,15 +242,18 @@ const subagentCount = computed(() => {
   return Math.max(0, names.size - 1)
 })
 
-const skillCount = computed(() => {
-  const names = new Set<string>()
-  let invocations = 0
+// --- skills used (按技能名聚合，调用次数降序) ---
+// Skill 调用：tool_name 为 skill/use_skill，或带 skill.name / gen_ai.skill.name 属性
+
+interface SkillRow { name: string; calls: number; ok: number; totalDur: number }
+
+const skillsUsed = computed(() => {
+  const map: Record<string, SkillRow> = {}
   for (const s of toolSpans.value) {
     const tn = (s.tool_name ?? '').toLowerCase()
     const isSkillTool = tn === 'skill' || tn === 'use_skill'
     const skillAttr = s.attributes?.['skill.name'] ?? s.attributes?.['gen_ai.skill.name']
     if (!isSkillTool && !skillAttr) continue
-    invocations++
     let name = skillAttr ?? ''
     if (!name && isSkillTool) {
       try {
@@ -228,10 +263,38 @@ const skillCount = computed(() => {
         name = ''
       }
     }
-    if (name) names.add(name)
+    if (!name) name = '(unnamed)'
+    if (!map[name]) map[name] = { name, calls: 0, ok: 0, totalDur: 0 }
+    map[name].calls++
+    if (isStatusOk(s)) map[name].ok++
+    map[name].totalDur += s.duration_ms
   }
-  return names.size > 0 ? names.size : invocations
+  return Object.values(map)
+    .map(r => ({
+      name: r.name,
+      calls: r.calls,
+      ok: r.ok,
+      successRate: r.calls > 0 ? r.ok / r.calls : 0,
+      avgDuration: r.calls > 0 ? r.totalDur / r.calls : 0,
+    }))
+    .sort((a, b) => b.calls - a.calls)
 })
+
+const skillCount = computed(() => skillsUsed.value.length)
+
+const skillTotalCalls = computed(() =>
+  skillsUsed.value.reduce((sum, r) => sum + r.calls, 0)
+)
+
+const skillSuccessfulCalls = computed(() =>
+  skillsUsed.value.reduce((sum, r) => sum + r.ok, 0)
+)
+
+const skillAvgDurationMs = computed(() =>
+  skillTotalCalls.value > 0
+    ? skillsUsed.value.reduce((sum, r) => sum + r.avgDuration * r.calls, 0) / skillTotalCalls.value
+    : null
+)
 
 // --- 已用工具汇总（按工具名聚合，调用次数降序） ---
 
@@ -241,7 +304,7 @@ const toolsUsed = computed(() => {
     const name = s.tool_name ?? s.name
     if (!map[name]) map[name] = { name, calls: 0, ok: 0, totalDur: 0 }
     map[name].calls++
-    if (s.status === 'ok') map[name].ok++
+    if (isStatusOk(s)) map[name].ok++
     map[name].totalDur += s.duration_ms
   }
   return Object.values(map)
@@ -299,6 +362,12 @@ const loopToolName = computed(() => {
 })
 
 // --- Formatting helpers ---
+
+// OTLP 状态码为大写 "OK"/"ERROR"/"UNSET"；数据里 status 可能是任意大小写，
+// 统一用大小写无关判断，避免把 "OK" 误判为失败。
+function isStatusOk(s: SpanDetailType): boolean {
+  return String(s.status ?? '').toLowerCase() === 'ok'
+}
 
 function formatRate(rate: number): string {
   return `${Math.round(rate * 100)}%`

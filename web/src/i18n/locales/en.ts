@@ -98,7 +98,7 @@ export default {
   },
   traceDetail: {
     context: 'Context',
-    contextTitle: 'Context Change Across LLM Calls',
+    contextTitle: 'Context',
     contextEmpty: 'At least 2 LLM calls are needed to show context change.',
     ctxInput: 'Input',
     ctxCacheRead: 'Cache Read',

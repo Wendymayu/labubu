@@ -98,7 +98,7 @@ export default {
   },
   traceDetail: {
     context: '上下文',
-    contextTitle: 'LLM 调用上下文变化',
+    contextTitle: '上下文',
     contextEmpty: '至少需要 2 次 LLM 调用才能展示上下文变化。',
     ctxInput: '输入',
     ctxCacheRead: '缓存读取',
