@@ -29,17 +29,17 @@
         <span class="ts-label">Input</span>
         <span class="ts-val">{{ formatTokens(span.input_tokens) }}</span>
       </div>
-      <div v-if="span.cache_creation_tokens || span.cache_read_tokens" class="ts-item ts-item-cache">
-        <span class="ts-label">Cache Create</span>
-        <span class="ts-val ts-cache">{{ formatTokens(span.cache_creation_tokens) }}</span>
-      </div>
-      <div v-if="span.cache_creation_tokens || span.cache_read_tokens" class="ts-item ts-item-cache">
-        <span class="ts-label">Cache Read</span>
-        <span class="ts-val ts-cache">{{ formatTokens(span.cache_read_tokens) }}</span>
-      </div>
       <div class="ts-item">
         <span class="ts-label">Output</span>
         <span class="ts-val">{{ formatTokens(span.output_tokens) }}</span>
+      </div>
+      <div v-if="cacheCreateValue != null" class="ts-item ts-item-cache">
+        <span class="ts-label">Cache Create</span>
+        <span class="ts-val ts-cache">{{ formatTokens(cacheCreateValue) }}</span>
+      </div>
+      <div v-if="cacheReadValue != null" class="ts-item ts-item-cache">
+        <span class="ts-label">Cache Read</span>
+        <span class="ts-val ts-cache">{{ formatTokens(cacheReadValue) }}</span>
       </div>
       <div class="ts-item">
         <span class="ts-label">Total</span>
@@ -176,6 +176,43 @@ function highlightText(text: string): string {
   const q = props.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const re = new RegExp(`(${q})`, 'gi')
   return escaped.replace(re, '<mark class="content-highlight">$1</mark>')
+}
+
+// --- cache token display ---
+// Typed columns come from Anthropic-style keys (gen_ai.usage.cache_read_input_tokens,
+// underscore). gen_ai.chat (OpenAI-style, e.g. JiuwenSwarm/GLM) reports cache under
+// dot-variant keys (gen_ai.usage.cache_read.input_tokens) that aren't extracted into
+// typed columns, so fall back to raw attributes there. Note: for OpenAI-style spans
+// input_tokens already includes cache_read, so this is for display only — total/pricing
+// are untouched.
+const cacheReadValue = computed<number | undefined>(() => {
+  const s = props.span
+  if (!s) return undefined
+  if (s.cache_read_tokens != null) return s.cache_read_tokens
+  const a = s.attributes || {}
+  const raw = a['gen_ai.usage.cache_read.input_tokens']
+    ?? a['gen_ai.usage.cache_read_input_tokens']
+    ?? a['cache_read_tokens']
+    ?? a['cache_read_input_tokens']
+  return parseTokenRaw(raw)
+})
+
+const cacheCreateValue = computed<number | undefined>(() => {
+  const s = props.span
+  if (!s) return undefined
+  if (s.cache_creation_tokens != null) return s.cache_creation_tokens
+  const a = s.attributes || {}
+  const raw = a['gen_ai.usage.cache_creation.input_tokens']
+    ?? a['gen_ai.usage.cache_creation_input_tokens']
+    ?? a['cache_creation_tokens']
+    ?? a['cache_creation_input_tokens']
+  return parseTokenRaw(raw)
+})
+
+function parseTokenRaw(raw: string | undefined | null): number | undefined {
+  if (raw == null || raw === '') return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
 }
 
 // --- grouping rules ---
