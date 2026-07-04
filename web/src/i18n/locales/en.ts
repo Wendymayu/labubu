@@ -100,6 +100,8 @@ export default {
     context: 'Context',
     contextTitle: 'Context',
     contextEmpty: 'At least 2 LLM calls are needed to show context change.',
+    contextSessionMain: 'Main',
+    contextSessionCalls: '{n} calls',
     ctxInput: 'Input',
     ctxCacheRead: 'Cache Read',
     ctxCacheCreation: 'Cache Creation',

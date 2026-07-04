@@ -2,6 +2,25 @@
   <div class="context-chart">
     <h3 class="chart-title">{{ t('traceDetail.contextTitle') }}</h3>
 
+    <!-- Session selector: each agent invocation is an independent context trajectory -->
+    <div v-if="sessions.length > 1" class="session-selector" role="tablist">
+      <button
+        v-for="s in sessionOptions"
+        :key="s.id"
+        class="session-chip"
+        :class="{ active: s.id === selectedId }"
+        role="tab"
+        :aria-selected="s.id === selectedId"
+        @click="selectedId = s.id"
+      >
+        <span class="session-chip-name">{{ s.label }}</span>
+        <span class="session-chip-count">{{ t('traceDetail.contextSessionCalls', { n: s.count }) }}</span>
+      </button>
+    </div>
+    <div v-else-if="sessions.length === 1" class="session-single">
+      {{ sessionOptions[0].label }} · {{ t('traceDetail.contextSessionCalls', { n: sessionOptions[0].count }) }}
+    </div>
+
     <div v-if="points.length < 2" class="empty-state">
       {{ t('traceDetail.contextEmpty') }}
     </div>
@@ -26,12 +45,12 @@ import { useI18n } from 'vue-i18n'
 import {
   Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip,
 } from 'chart.js'
-import type { ContextPoint } from '../api/client'
+import type { ContextPoint, ContextSession } from '../api/client'
 import { useTheme } from '../composables/useTheme'
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
 
-const props = defineProps<{ points: ContextPoint[] }>()
+const props = defineProps<{ sessions: ContextSession[] }>()
 const emit = defineEmits<{ (e: 'select', spanId: string): void }>()
 
 const { t } = useI18n()
@@ -39,6 +58,37 @@ const { theme } = useTheme()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let chart: Chart<'bar'> | null = null
+
+// --- Session selection ---
+// Default to the main session; otherwise the first. Reset when the set of
+// session ids changes (e.g. navigating to another trace).
+const selectedId = ref<string>('')
+const knownIds = computed(() => props.sessions.map(s => s.id).join('|'))
+watch(knownIds, () => {
+  const main = props.sessions.find(s => s.isMain)
+  selectedId.value = (main ?? props.sessions[0])?.id ?? ''
+}, { immediate: true })
+
+// Display labels: main session is "Main · <agent>", subagents are "<agent> #<n>"
+// where n is the 1-based index among non-main sessions (disambiguates repeats).
+const sessionOptions = computed(() => {
+  let subIdx = 0
+  return props.sessions.map(s => {
+    let label: string
+    if (s.isMain) {
+      label = s.agentName ? `${t('traceDetail.contextSessionMain')} · ${s.agentName}` : t('traceDetail.contextSessionMain')
+    } else {
+      subIdx++
+      label = s.agentName ? `${s.agentName} #${subIdx}` : `#${subIdx}`
+    }
+    return { id: s.id, label, count: s.points.length }
+  })
+})
+
+const currentSession = computed(() =>
+  props.sessions.find(s => s.id === selectedId.value) ?? props.sessions[0]
+)
+const points = computed(() => currentSession.value?.points ?? [])
 
 // --- Theme-aware colors (reuse existing --chart-pie-* vars) ---
 function getCSSVar(name: string): string {
@@ -71,9 +121,9 @@ function createChart() {
     chart = null
   }
 
-  if (!canvasRef.value || props.points.length < 2) return
+  if (!canvasRef.value || points.value.length < 2) return
 
-  const labels = props.points.map(p => String(p.index))
+  const labels = points.value.map(p => String(p.index))
   const borderColor = getCSSVar('--chart-pie-border')
   const tooltipBg = getCSSVar('--bg-secondary')
   const tooltipTitleColor = getCSSVar('--text-primary')
@@ -82,7 +132,7 @@ function createChart() {
 
   const datasets = SEGMENTS.map(s => ({
     label: t(`traceDetail.${s.label}`),
-    data: props.points.map(p => bucketValue(p, s.key)),
+    data: points.value.map(p => bucketValue(p, s.key)),
     backgroundColor: getCSSVar(s.varName),
     borderColor,
     borderWidth: 1,
@@ -90,7 +140,7 @@ function createChart() {
   }))
 
   // Capture for click handler closure.
-  const pointsSnapshot = props.points
+  const pointsSnapshot = points.value
 
   // 内联插件：每根柱顶绘制上下文使用率百分比（仅当该模型配置了 context_window）
   const usageLabelPlugin = {
@@ -179,7 +229,7 @@ function createChart() {
   })
 }
 
-watch(() => props.points, () => { requestAnimationFrame(createChart) }, { deep: true })
+watch(points, () => { requestAnimationFrame(createChart) }, { deep: true })
 watch(theme, () => { requestAnimationFrame(createChart) })
 
 onMounted(() => { requestAnimationFrame(createChart) })
@@ -200,6 +250,41 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 12px;
+}
+.session-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.session-chip:hover {
+  border-color: var(--accent-blue, #3b82f6);
+  color: var(--text-primary);
+}
+.session-chip.active {
+  background: var(--accent-blue, #3b82f6);
+  border-color: var(--accent-blue, #3b82f6);
+  color: #fff;
+}
+.session-chip-name { font-weight: 600; }
+.session-chip-count { opacity: 0.8; }
+.session-single {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
 }
 .chart-container {
   position: relative;

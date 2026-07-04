@@ -76,6 +76,20 @@ export interface ContextPoint {
   usagePct?: number | null // total / contextWindow, 0..1; null when no window
 }
 
+/**
+ * One agent session's context trajectory — LLM calls sharing the same owning
+ * `.invoke` span (root agent or a subagent invocation). Subagent sessions have
+ * independent context that resets on dispatch, so they must be charted
+ * separately rather than merged with the main session.
+ */
+export interface ContextSession {
+  id: string            // owning invoke span id (or '__root__' fallback)
+  agentName: string     // gen_ai.agent.name of the owning invoke span
+  isMain: boolean       // true for the root agent's session
+  startMs: number       // owner span start_time_ms, for ordering
+  points: ContextPoint[]
+}
+
 export interface ScopeDetail {
   name: string
   version: string

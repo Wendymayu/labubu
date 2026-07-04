@@ -100,6 +100,8 @@ export default {
     context: '上下文',
     contextTitle: '上下文',
     contextEmpty: '至少需要 2 次 LLM 调用才能展示上下文变化。',
+    contextSessionMain: '主会话',
+    contextSessionCalls: '{n} 次调用',
     ctxInput: '输入',
     ctxCacheRead: '缓存读取',
     ctxCacheCreation: '缓存写入',
