@@ -274,6 +274,7 @@ costDashboard: {
     successRateCol: 'Success Rate',
     avgDuration: 'Avg Duration',
     maxDuration: 'Max Duration',
+    minDuration: 'Min Duration',
   },
   pricingManager: {
     addModel: '+ Add Model',

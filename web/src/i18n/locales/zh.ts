@@ -274,6 +274,7 @@ costDashboard: {
     successRateCol: '成功率',
     avgDuration: '平均耗时',
     maxDuration: '最大耗时',
+    minDuration: '最小耗时',
   },
   pricingManager: {
     addModel: '+ 添加模型',

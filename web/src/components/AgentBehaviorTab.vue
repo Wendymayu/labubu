@@ -196,6 +196,52 @@
               <template v-else>root only</template>
             </div>
           </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ subagentInvocationCount }}</div>
+            <div class="score-label">{{ t('agentStats.callCount') }}</div>
+            <div class="score-subtitle">{{ successfulSubagentCalls }}/{{ subagentInvocationCount }} succeeded</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(avgSubagentDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.avgDuration') }}</div>
+            <div class="score-subtitle">{{ subagentInvocationCount }} invocations</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(maxSubagentDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.maxDuration') }}</div>
+            <div class="score-subtitle">{{ subagentInvocationCount }} invocations</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(minSubagentDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.minDuration') }}</div>
+            <div class="score-subtitle">{{ subagentInvocationCount }} invocations</div>
+          </div>
+        </div>
+
+        <!-- Subagents Used summary -->
+        <div v-if="subagentsUsed.length > 0" class="tools-used-section">
+          <table class="tools-used-table">
+            <thead>
+              <tr>
+                <th>{{ t('agentStats.dimSubagent') }}</th>
+                <th class="num">{{ t('agentStats.callCount') }}</th>
+                <th class="num">{{ t('agentStats.successRateCol') }}</th>
+                <th class="num">{{ t('agentStats.avgDuration') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in subagentsUsed" :key="i">
+                <td class="tool-name">{{ row.name }}</td>
+                <td class="num">{{ row.calls }}</td>
+                <td class="num" :class="rateClass(row.successRate)">{{ formatRate(row.successRate) }}</td>
+                <td class="num">{{ formatDuration(row.avgDuration) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
     </div>
@@ -339,13 +385,67 @@ const maxLLMTokens = computed(() => {
 
 // --- subagent / skill 计数 ---
 
+// --- 子智能体 ---
+// 子智能体调用 = span 名包含 subagent.invoke 的 span（主 agent 通过 subagent 机制派发的调用）。
+// 一个子智能体名可被多次调用；个数按去重 agent 名计，调用次数按 span 数计，
+// 耗时取每次调用 span 的 duration_ms。
+
+const subagentInvokeSpans = computed(() =>
+  props.spans.filter(s => (s.name ?? '').includes('subagent.invoke'))
+)
+
 const subagentCount = computed(() => {
   const names = new Set<string>()
-  for (const s of props.spans) {
+  for (const s of subagentInvokeSpans.value) {
     const n = s.attributes?.['gen_ai.agent.name']
     if (n) names.add(n)
   }
-  return Math.max(0, names.size - 1)
+  return names.size
+})
+
+const subagentInvocationCount = computed(() => subagentInvokeSpans.value.length)
+
+const successfulSubagentCalls = computed(() =>
+  subagentInvokeSpans.value.filter(s => isStatusOk(s)).length
+)
+
+const subagentDurations = computed(() => subagentInvokeSpans.value.map(s => s.duration_ms))
+
+const avgSubagentDurationMs = computed(() =>
+  subagentInvocationCount.value > 0
+    ? subagentDurations.value.reduce((sum, v) => sum + v, 0) / subagentInvocationCount.value
+    : null
+)
+
+const maxSubagentDurationMs = computed(() =>
+  subagentInvocationCount.value > 0 ? Math.max(...subagentDurations.value) : null
+)
+
+const minSubagentDurationMs = computed(() =>
+  subagentInvocationCount.value > 0 ? Math.min(...subagentDurations.value) : null
+)
+
+// --- 子智能体汇总（按 agent 名聚合，调用次数降序） ---
+
+interface SubagentRow { name: string; calls: number; ok: number; totalDur: number }
+
+const subagentsUsed = computed(() => {
+  const map: Record<string, SubagentRow> = {}
+  for (const s of subagentInvokeSpans.value) {
+    const name = s.attributes?.['gen_ai.agent.name'] ?? '(unnamed)'
+    if (!map[name]) map[name] = { name, calls: 0, ok: 0, totalDur: 0 }
+    map[name].calls++
+    if (isStatusOk(s)) map[name].ok++
+    map[name].totalDur += s.duration_ms
+  }
+  return Object.values(map)
+    .map(r => ({
+      name: r.name,
+      calls: r.calls,
+      successRate: r.calls > 0 ? r.ok / r.calls : 0,
+      avgDuration: r.calls > 0 ? r.totalDur / r.calls : 0,
+    }))
+    .sort((a, b) => b.calls - a.calls)
 })
 
 // --- skills used (按技能名聚合，调用次数降序) ---
