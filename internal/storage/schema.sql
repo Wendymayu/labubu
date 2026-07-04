@@ -68,11 +68,12 @@ ENGINE = MergeTree
 ORDER BY (trace_id, timestamp);
 
 CREATE TABLE IF NOT EXISTS model_pricing (
-    model_name   String,
-    input_price  Float64,
-    output_price Float64,
-    currency     String,
-    updated_at   DateTime DEFAULT now()
+    model_name     String,
+    input_price    Float64,
+    output_price   Float64,
+    currency       String,
+    context_window Int64 DEFAULT 0,
+    updated_at     DateTime DEFAULT now()
 )
 ENGINE = MergeTree
 ORDER BY model_name;

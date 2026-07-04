@@ -1097,7 +1097,7 @@ func (s *sqliteStore) GetModelPricing(ctx context.Context) ([]ModelPricing, erro
 	defer s.mu.Unlock()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT model_name, input_price, output_price, currency FROM model_pricing ORDER BY model_name`,
+		`SELECT model_name, input_price, output_price, currency, context_window FROM model_pricing ORDER BY model_name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query pricing: %w", err)
@@ -1107,7 +1107,7 @@ func (s *sqliteStore) GetModelPricing(ctx context.Context) ([]ModelPricing, erro
 	var pricing []ModelPricing
 	for rows.Next() {
 		var p ModelPricing
-		if err := rows.Scan(&p.ModelName, &p.InputPrice, &p.OutputPrice, &p.Currency); err != nil {
+		if err := rows.Scan(&p.ModelName, &p.InputPrice, &p.OutputPrice, &p.Currency, &p.ContextWindow); err != nil {
 			return nil, fmt.Errorf("scan pricing: %w", err)
 		}
 		pricing = append(pricing, p)
@@ -1120,9 +1120,9 @@ func (s *sqliteStore) UpsertModelPricing(ctx context.Context, p ModelPricing) er
 	defer s.mu.Unlock()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR REPLACE INTO model_pricing (model_name, input_price, output_price, currency)
-		 VALUES (?, ?, ?, ?)`,
-		p.ModelName, p.InputPrice, p.OutputPrice, p.Currency,
+		`INSERT OR REPLACE INTO model_pricing (model_name, input_price, output_price, currency, context_window)
+		 VALUES (?, ?, ?, ?, ?)`,
+		p.ModelName, p.InputPrice, p.OutputPrice, p.Currency, p.ContextWindow,
 	)
 	return err
 }

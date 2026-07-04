@@ -25,6 +25,9 @@
             <option value="CNY">CNY (¥)</option>
           </select>
         </label>
+        <label>{{ t('pricingManager.contextWindowHint') }}:
+          <input v-model.number="form.context_window" type="number" step="1" min="0" placeholder="200000" />
+        </label>
         <div class="form-actions">
           <button class="btn btn-primary" @click="saveModel">{{ t('pricingManager.save') }}</button>
           <button class="btn" @click="showForm = false">{{ t('pricingManager.cancel') }}</button>
@@ -39,6 +42,7 @@
           <th>{{ t('pricingManager.inputPrice') }}</th>
           <th>{{ t('pricingManager.outputPrice') }}</th>
           <th>{{ t('pricingManager.currency') }}</th>
+          <th>{{ t('pricingManager.contextWindow') }}</th>
           <th>{{ t('pricingManager.actions') }}</th>
         </tr>
       </thead>
@@ -48,6 +52,7 @@
           <td>${{ m.input_price }}/1M</td>
           <td>${{ m.output_price }}/1M</td>
           <td>{{ m.currency }}</td>
+          <td>{{ m.context_window ? m.context_window.toLocaleString() : '—' }}</td>
           <td>
             <button class="btn btn-sm" @click="editModel(m)">{{ t('pricingManager.edit') }}</button>
             <button class="btn btn-sm btn-danger" @click="deleteModel(m.model_name)">{{ t('pricingManager.delete') }}</button>
@@ -71,7 +76,7 @@ const showForm = ref(false)
 const editingModel = ref<ModelPricing | null>(null)
 const recalcing = ref(false)
 
-const form = ref<ModelPricing>({ model_name: '', input_price: 0, output_price: 0, currency: 'USD' })
+const form = ref<ModelPricing>({ model_name: '', input_price: 0, output_price: 0, currency: 'USD', context_window: 0 })
 
 async function fetchModels() {
   const result = await getModelPricing()
@@ -80,7 +85,7 @@ async function fetchModels() {
 
 function openAdd() {
   editingModel.value = null
-  form.value = { model_name: '', input_price: 0, output_price: 0, currency: 'USD' }
+  form.value = { model_name: '', input_price: 0, output_price: 0, currency: 'USD', context_window: 0 }
   showForm.value = true
 }
 

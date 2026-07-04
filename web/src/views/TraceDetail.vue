@@ -214,7 +214,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult, type ContextPoint } from '../api/client'
+import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, getModelPricing, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult, type ContextPoint } from '../api/client'
 import DiagnosisTab from '../components/DiagnosisTab.vue'
 import AgentBehaviorTab from '../components/AgentBehaviorTab.vue'
 import ContextBarChart from '../components/ContextBarChart.vue'
@@ -240,6 +240,9 @@ const logPageSize = 50
 const logTotal = ref(0)
 const logCounts = ref<Record<string, number>>({})
 const activeInsight = ref<'logs' | 'diagnosis' | 'agent' | 'context' | null>(null)
+
+// model_name -> context_window (token 数)。用于上下文弹窗里每次 LLM 调用的使用率计算。
+const contextWindowMap = ref<Record<string, number>>({})
 
 function toggleInsight(insight: 'logs' | 'diagnosis' | 'agent' | 'context') {
   if (activeInsight.value === insight) {
@@ -309,16 +312,28 @@ const contextPoints = computed<ContextPoint[]>(() => {
     .filter(s => (s.total_tokens ?? 0) > 0)
     .slice()
     .sort((a, b) => a.start_time_ms - b.start_time_ms)
-    .map((s, i) => ({
-      index: i + 1,
-      spanId: s.span_id,
-      spanName: s.name,
-      model: s.gen_ai_request_model ?? '',
-      input: s.input_tokens ?? 0,
-      cacheRead: s.cache_read_tokens ?? 0,
-      cacheCreation: s.cache_creation_tokens ?? 0,
-      output: s.output_tokens ?? 0,
-    }))
+    .map((s, i) => {
+      const model = s.gen_ai_request_model ?? ''
+      const input = s.input_tokens ?? 0
+      const cacheRead = s.cache_read_tokens ?? 0
+      const cacheCreation = s.cache_creation_tokens ?? 0
+      const output = s.output_tokens ?? 0
+      const total = input + cacheRead + cacheCreation + output
+      const window = model ? (contextWindowMap.value[model] ?? 0) : 0
+      const usagePct = window > 0 ? total / window : null
+      return {
+        index: i + 1,
+        spanId: s.span_id,
+        spanName: s.name,
+        model,
+        input,
+        cacheRead,
+        cacheCreation,
+        output,
+        contextWindow: window > 0 ? window : undefined,
+        usagePct,
+      }
+    })
 })
 
 const totalLogCount = computed(() => {
@@ -378,6 +393,17 @@ async function fetchTrace() {
     trace.value = result.trace
     fetchLogCounts()
     fetchLogPage()
+    // 拉取模型定价以获取 context_window（失败不阻塞 trace 展示）
+    try {
+      const pricing = await getModelPricing()
+      const map: Record<string, number> = {}
+      for (const m of pricing.models) {
+        if (m.context_window > 0) map[m.model_name] = m.context_window
+      }
+      contextWindowMap.value = map
+    } catch {
+      contextWindowMap.value = {}
+    }
   } catch (e: any) {
     error.value = e.message || 'Failed to load trace'
   } finally {

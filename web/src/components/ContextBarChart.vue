@@ -92,6 +92,32 @@ function createChart() {
   // Capture for click handler closure.
   const pointsSnapshot = props.points
 
+  // 内联插件：每根柱顶绘制上下文使用率百分比（仅当该模型配置了 context_window）
+  const usageLabelPlugin = {
+    id: 'usageLabel',
+    afterDatasetsDraw(chart: any) {
+      const meta = chart.getDatasetMeta(0)
+      if (!meta || !meta.data) return
+      const yScale = chart.scales.y
+      const ctx2 = chart.ctx
+      ctx2.save()
+      ctx2.fillStyle = getCSSVar('--text-primary')
+      ctx2.font = '600 11px sans-serif'
+      ctx2.textAlign = 'center'
+      ctx2.textBaseline = 'bottom'
+      for (let i = 0; i < pointsSnapshot.length; i++) {
+        const p = pointsSnapshot[i]
+        if (p.usagePct == null) continue
+        const bar = meta.data[i]
+        if (!bar) continue
+        const total = p.input + p.cacheRead + p.cacheCreation + p.output
+        const y = yScale.getPixelForValue(total)
+        ctx2.fillText(`${Math.round(p.usagePct * 100)}%`, bar.x, y - 4)
+      }
+      ctx2.restore()
+    },
+  }
+
   chart = new Chart(canvasRef.value, {
     type: 'bar',
     data: { labels, datasets },
@@ -128,6 +154,9 @@ function createChart() {
               const p = pointsSnapshot[idx]
               if (!p) return ''
               const total = (p.input + p.cacheRead + p.cacheCreation + p.output).toLocaleString()
+              if (p.usagePct != null && p.contextWindow) {
+                return `${t('traceDetail.ctxTotal')}: ${total}  ·  ${Math.round(p.usagePct * 100)}% / ${p.contextWindow.toLocaleString()}`
+              }
               return `${t('traceDetail.ctxTotal')}: ${total}`
             },
           },
@@ -146,6 +175,7 @@ function createChart() {
       },
       animation: { duration: 400 },
     },
+    plugins: [usageLabelPlugin],
   })
 }
 

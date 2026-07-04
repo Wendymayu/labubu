@@ -289,10 +289,11 @@ type AgentStats struct {
 
 // ModelPricing holds pricing configuration for a single model.
 type ModelPricing struct {
-	ModelName   string  `json:"model_name"`
-	InputPrice  float64 `json:"input_price"`  // per 1M input tokens
-	OutputPrice float64 `json:"output_price"` // per 1M output tokens
-	Currency    string  `json:"currency"`     // "USD" or "CNY"
+	ModelName     string  `json:"model_name"`
+	InputPrice    float64 `json:"input_price"`    // per 1M input tokens
+	OutputPrice   float64 `json:"output_price"`   // per 1M output tokens
+	Currency      string  `json:"currency"`       // "USD" or "CNY"
+	ContextWindow int     `json:"context_window"` // max context window in tokens; 0 = unknown
 }
 
 // LLMConfig holds configuration for a single LLM model used for trace analysis.

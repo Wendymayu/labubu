@@ -25,9 +25,45 @@
           </div>
 
           <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(maxLLMDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.maxLlmDuration') }}</div>
+            <div class="score-subtitle">{{ totalLLMCalls }} calls</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(minLLMDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.minLlmDuration') }}</div>
+            <div class="score-subtitle">{{ totalLLMCalls }} calls</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(avgFirstTokenMs) }}</div>
+            <div class="score-label">{{ t('agentStats.avgFirstToken') }}</div>
+            <div class="score-subtitle">{{ llmFirstTokens.length }}/{{ totalLLMCalls }} samples</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(maxFirstTokenMs) }}</div>
+            <div class="score-label">{{ t('agentStats.maxFirstToken') }}</div>
+            <div class="score-subtitle">{{ llmFirstTokens.length }}/{{ totalLLMCalls }} samples</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(minFirstTokenMs) }}</div>
+            <div class="score-label">{{ t('agentStats.minFirstToken') }}</div>
+            <div class="score-subtitle">{{ llmFirstTokens.length }}/{{ totalLLMCalls }} samples</div>
+          </div>
+
+          <div class="score-card rate-green">
             <div class="score-value">{{ formatNullableTokens(avgLLMTokens) }}</div>
             <div class="score-label">{{ t('agentStats.avgLlmTokens') }}</div>
             <div class="score-subtitle">{{ formatTokens(llmInputTokens) }} in + {{ formatTokens(llmOutputTokens) }} out</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableTokens(maxLLMTokens) }}</div>
+            <div class="score-label">{{ t('agentStats.maxLlmTokens') }}</div>
+            <div class="score-subtitle">per call max</div>
           </div>
 
           <div class="score-card rate-green">
@@ -58,6 +94,12 @@
             <div class="score-value">{{ formatNullableDuration(avgToolDurationMs) }}</div>
             <div class="score-label">{{ t('agentStats.avgDuration') }}</div>
             <div class="score-subtitle">{{ totalToolCalls }} calls</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(maxToolDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.maxDuration') }}</div>
+            <div class="score-subtitle">{{ maxDurationToolName || '—' }}</div>
           </div>
         </div>
 
@@ -110,6 +152,12 @@
             <div class="score-value">{{ formatNullableDuration(skillAvgDurationMs) }}</div>
             <div class="score-label">{{ t('agentStats.avgDuration') }}</div>
             <div class="score-subtitle">{{ skillTotalCalls }} calls</div>
+          </div>
+
+          <div class="score-card rate-green">
+            <div class="score-value">{{ formatNullableDuration(maxSkillDurationMs) }}</div>
+            <div class="score-label">{{ t('agentStats.maxDuration') }}</div>
+            <div class="score-subtitle">{{ maxDurationSkillName || '—' }}</div>
           </div>
         </div>
 
@@ -214,6 +262,21 @@ const avgToolDurationMs = computed(() =>
     : null
 )
 
+const maxToolDurationMs = computed(() =>
+  totalToolCalls.value > 0
+    ? Math.max(...toolSpans.value.map(s => s.duration_ms))
+    : null
+)
+
+const maxDurationToolName = computed(() => {
+  if (totalToolCalls.value === 0) return ''
+  let best = toolSpans.value[0]
+  for (const s of toolSpans.value) {
+    if (s.duration_ms > best.duration_ms) best = s
+  }
+  return best.tool_name ?? best.name ?? ''
+})
+
 const avgLLMDurationMs = computed(() =>
   totalLLMCalls.value > 0
     ? llmSpans.value.reduce((sum, s) => sum + s.duration_ms, 0) / totalLLMCalls.value
@@ -231,6 +294,49 @@ const tokenOutputRate = computed(() => {
   return totalDurMs > 0 ? llmOutputTokens.value / (totalDurMs / 1000) : null
 })
 
+// --- LLM 耗时极值 / 首 token 耗时 ---
+// 首 token 时间取自 gen_ai.streaming.first_token_ms 属性（浮点字符串，毫秒）。
+
+function firstTokenMs(s: SpanDetailType): number | null {
+  const v = s.attributes?.['gen_ai.streaming.first_token_ms']
+  if (!v) return null
+  const n = parseFloat(v)
+  return Number.isFinite(n) ? n : null
+}
+
+const llmDurations = computed(() => llmSpans.value.map(s => s.duration_ms))
+
+const maxLLMDurationMs = computed(() =>
+  llmDurations.value.length ? Math.max(...llmDurations.value) : null
+)
+
+const minLLMDurationMs = computed(() =>
+  llmDurations.value.length ? Math.min(...llmDurations.value) : null
+)
+
+const llmFirstTokens = computed(() =>
+  llmSpans.value.map(firstTokenMs).filter((v): v is number => v != null)
+)
+
+const avgFirstTokenMs = computed(() =>
+  llmFirstTokens.value.length
+    ? llmFirstTokens.value.reduce((sum, v) => sum + v, 0) / llmFirstTokens.value.length
+    : null
+)
+
+const maxFirstTokenMs = computed(() =>
+  llmFirstTokens.value.length ? Math.max(...llmFirstTokens.value) : null
+)
+
+const minFirstTokenMs = computed(() =>
+  llmFirstTokens.value.length ? Math.min(...llmFirstTokens.value) : null
+)
+
+const maxLLMTokens = computed(() => {
+  const toks = llmSpans.value.map(s => s.total_tokens ?? 0)
+  return toks.length ? Math.max(...toks) : null
+})
+
 // --- subagent / skill 计数 ---
 
 const subagentCount = computed(() => {
@@ -245,25 +351,36 @@ const subagentCount = computed(() => {
 // --- skills used (按技能名聚合，调用次数降序) ---
 // Skill 调用：tool_name 为 skill/use_skill，或带 skill.name / gen_ai.skill.name 属性
 
+function isSkillSpan(s: SpanDetailType): boolean {
+  const tn = (s.tool_name ?? '').toLowerCase()
+  if (tn === 'skill' || tn === 'use_skill') return true
+  return !!(s.attributes?.['skill.name'] ?? s.attributes?.['gen_ai.skill.name'])
+}
+
+function skillNameOf(s: SpanDetailType): string {
+  const skillAttr = s.attributes?.['skill.name'] ?? s.attributes?.['gen_ai.skill.name']
+  if (skillAttr) return skillAttr
+  const tn = (s.tool_name ?? '').toLowerCase()
+  if (tn === 'skill' || tn === 'use_skill') {
+    try {
+      const args = JSON.parse(s.attributes?.['gen_ai.tool.arguments'] ?? '{}') as ParsedToolArgs
+      const n = args?.name ?? args?.skill ?? args?.skill_name
+      if (n) return n
+    } catch {
+      /* ignore */
+    }
+  }
+  return '(unnamed)'
+}
+
 interface SkillRow { name: string; calls: number; ok: number; totalDur: number }
+
+const skillSpans = computed(() => toolSpans.value.filter(isSkillSpan))
 
 const skillsUsed = computed(() => {
   const map: Record<string, SkillRow> = {}
-  for (const s of toolSpans.value) {
-    const tn = (s.tool_name ?? '').toLowerCase()
-    const isSkillTool = tn === 'skill' || tn === 'use_skill'
-    const skillAttr = s.attributes?.['skill.name'] ?? s.attributes?.['gen_ai.skill.name']
-    if (!isSkillTool && !skillAttr) continue
-    let name = skillAttr ?? ''
-    if (!name && isSkillTool) {
-      try {
-        const args = JSON.parse(s.attributes?.['gen_ai.tool.arguments'] ?? '{}') as ParsedToolArgs
-        name = args?.name ?? args?.skill ?? args?.skill_name ?? ''
-      } catch {
-        name = ''
-      }
-    }
-    if (!name) name = '(unnamed)'
+  for (const s of skillSpans.value) {
+    const name = skillNameOf(s)
     if (!map[name]) map[name] = { name, calls: 0, ok: 0, totalDur: 0 }
     map[name].calls++
     if (isStatusOk(s)) map[name].ok++
@@ -278,6 +395,19 @@ const skillsUsed = computed(() => {
       avgDuration: r.calls > 0 ? r.totalDur / r.calls : 0,
     }))
     .sort((a, b) => b.calls - a.calls)
+})
+
+const maxSkillDurationMs = computed(() =>
+  skillSpans.value.length ? Math.max(...skillSpans.value.map(s => s.duration_ms)) : null
+)
+
+const maxDurationSkillName = computed(() => {
+  if (!skillSpans.value.length) return ''
+  let best = skillSpans.value[0]
+  for (const s of skillSpans.value) {
+    if (s.duration_ms > best.duration_ms) best = s
+  }
+  return skillNameOf(best)
 })
 
 const skillCount = computed(() => skillsUsed.value.length)

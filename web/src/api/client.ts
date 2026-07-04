@@ -72,6 +72,8 @@ export interface ContextPoint {
   cacheRead: number      // cache_read_tokens ?? 0
   cacheCreation: number  // cache_creation_tokens ?? 0
   output: number         // output_tokens ?? 0
+  contextWindow?: number   // model's max context window in tokens; 0/undefined = unknown
+  usagePct?: number | null // total / contextWindow, 0..1; null when no window
 }
 
 export interface ScopeDetail {
@@ -319,6 +321,7 @@ export interface ModelPricing {
   input_price: number
   output_price: number
   currency: string
+  context_window: number
 }
 
 export interface ModelPricingListResponse {
