@@ -120,7 +120,87 @@ func (h *TraceHandler) GetTrace(w http.ResponseWriter, r *http.Request, traceIDH
 		w.Write(jsonBytes)
 		return
 	}
+	// Default JSON: strip large attribute values (e.g. gen_ai.input.messages,
+	// gen_ai.context.*) to keep the payload small. The SpanDetail drawer
+	// lazy-loads the full attributes per span via GetSpan when opened.
+	stripHeavyAttributes(detail)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"trace": detail})
+}
+
+// heavyAttrByteThreshold is the value size above which an attribute is stripped
+// from the bulk trace detail response. 2 KiB keeps all token counts, model
+// names, and small metadata while dropping multi-KiB message/prompt blobs.
+const heavyAttrByteThreshold = 2048
+
+// stripHeavyAttributes removes attribute values larger than the threshold from
+// each span. It allocates a new map only when a span actually has a heavy
+// attribute, so spans without large attributes are untouched. The full values
+// are still available via the per-span endpoint (GetSpan).
+func stripHeavyAttributes(td *storage.TraceDetail) {
+	for i := range td.Spans {
+		attrs := td.Spans[i].Attributes
+		if attrs == nil {
+			continue
+		}
+		hasHeavy := false
+		for _, v := range attrs {
+			if len(v) > heavyAttrByteThreshold {
+				hasHeavy = true
+				break
+			}
+		}
+		if !hasHeavy {
+			continue
+		}
+		trimmed := make(map[string]string, len(attrs))
+		for k, v := range attrs {
+			if len(v) <= heavyAttrByteThreshold {
+				trimmed[k] = v
+			}
+		}
+		td.Spans[i].Attributes = trimmed
+	}
+}
+
+// GetSpan handles GET /api/v1/traces/{traceIdHex}/spans/{spanIdHex}.
+// It returns a single span with its FULL attributes (no stripping), used by the
+// UI to lazy-load heavy attributes (gen_ai.input.messages, etc.) when a span is
+// opened in the detail drawer.
+func (h *TraceHandler) GetSpan(w http.ResponseWriter, r *http.Request, traceIDHex, spanIDHex string) {
+	if len(traceIDHex) != 32 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "trace_id must be a 32-character hex string"})
+		return
+	}
+	if len(spanIDHex) != 16 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "span_id must be a 16-character hex string"})
+		return
+	}
+
+	traceIDBytes, err := hex.DecodeString(traceIDHex)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid hex trace_id: %v", err)})
+		return
+	}
+	var traceID [16]byte
+	copy(traceID[:], traceIDBytes)
+
+	detail, err := h.store.GetTrace(r.Context(), traceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get trace: %v", err)})
+		return
+	}
+	if detail == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "trace not found"})
+		return
+	}
+
+	for _, s := range detail.Spans {
+		if s.SpanID == spanIDHex {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"span": s})
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "span not found"})
 }
 
 // GetServices handles GET /api/v1/services.
