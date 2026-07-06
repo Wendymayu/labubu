@@ -220,7 +220,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getTrace, getSpan, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, getModelPricing, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult, type ContextPoint, type ContextSession } from '../api/client'
+import { getTrace, getLogsByTrace, getLogCounts, listLogs, getDiagnosisResult, diagnoseTrace, getModelPricing, type TraceDetailResponse, type SpanDetail as SpanDetailType, type LogRecord, type DiagnosisResult, type ContextPoint, type ContextSession } from '../api/client'
 import DiagnosisTab from '../components/DiagnosisTab.vue'
 import AgentBehaviorTab from '../components/AgentBehaviorTab.vue'
 import ContextBarChart from '../components/ContextBarChart.vue'
@@ -523,19 +523,6 @@ function onDiagnosisNavigateSpan(spanIndex: number) {
 function openDrawer(span: SpanDetailType) {
   selectedSpan.value = span
   drawerOpen.value = true
-  // The bulk trace response strips large attributes (gen_ai.input.messages,
-  // gen_ai.context.*) to keep the payload small. Lazy-load the full span so
-  // the drawer can render messages / tool definitions / full prompts.
-  if (!traceIdHex) return
-  const spanId = span.span_id
-  getSpan(traceIdHex, spanId)
-    .then(full => {
-      // Only apply if the user hasn't since switched to another span.
-      if (selectedSpan.value?.span_id === spanId) {
-        selectedSpan.value = full
-      }
-    })
-    .catch(() => { /* leave the stub; basic info still renders */ })
 }
 
 function openDrawerBySpanId(spanId: string) {

@@ -167,14 +167,6 @@ export async function getTrace(traceIdHex: string): Promise<TraceDetailResponse>
   return get<TraceDetailResponse>(`${BASE_URL}/traces/${traceIdHex}`)
 }
 
-// getSpan lazy-loads a single span's FULL attributes (including heavy
-// gen_ai.input.messages / gen_ai.context.* that the bulk getTrace response
-// strips). Used by the SpanDetail drawer when a span is opened.
-export async function getSpan(traceIdHex: string, spanIdHex: string): Promise<SpanDetail> {
-  const data = await get<{ span: SpanDetail }>(`${BASE_URL}/traces/${traceIdHex}/spans/${spanIdHex}`)
-  return data.span
-}
-
 export async function getServices(): Promise<string[]> {
   const data = await get<{ services: string[] }>(`${BASE_URL}/services`)
   return data.services

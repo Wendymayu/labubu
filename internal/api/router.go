@@ -27,13 +27,6 @@ func NewRouter(traceHandler *TraceHandler, metricsHandler *MetricsHandler, dashb
 		parts := strings.SplitN(path, "/", 2)
 		traceIDHex := parts[0]
 		if len(parts) == 2 {
-			if strings.HasPrefix(parts[1], "spans/") {
-				spanIDHex := strings.TrimPrefix(parts[1], "spans/")
-				if spanIDHex != "" {
-					traceHandler.GetSpan(w, r, traceIDHex, spanIDHex)
-					return
-				}
-			}
 			switch parts[1] {
 			case "diagnosis":
 				if r.Method == http.MethodGet {
