@@ -34,9 +34,11 @@ type handlerMockStore struct {
 	deleteTracesResult int
 	deleteLogsResult   int
 	deleteTracesErr    error
+	insertedSpans      []storage.Span
 }
 
 func (m *handlerMockStore) InsertSpans(ctx context.Context, r storage.ResourceInfo, s storage.ScopeInfo, spans []storage.Span) error {
+	m.insertedSpans = append(m.insertedSpans, spans...)
 	return nil
 }
 
@@ -445,6 +447,75 @@ func TestDeleteTracesValidation(t *testing.T) {
 	}
 }
 
+
+func TestImportSkipsExistingTraceEntirely(t *testing.T) {
+	// Regression: re-importing a trace that already exists used to skip ONLY the
+	// first span (the root, since spans are ordered by start_time_ms and the root
+	// starts first) while still inserting the remaining child spans. With
+	// INSERT OR REPLACE storage this corrupts the trace — the root vanishes and
+	// the trace ends up with no root span. The contract (per ImportTraces doc
+	// comment) is that existing traces are skipped ENTIRELY.
+	traceIDHex := "4bf92f3577b34da6a3ce929d0e0e4736"
+
+	// Export a trace with a root + 2 children.
+	exportStore := &handlerMockStore{
+		detail: &storage.TraceDetail{
+			TraceIDHex: traceIDHex,
+			ResourceAttrs: map[string]string{
+				"service.name": "frontend",
+			},
+			Scope: storage.ScopeDetail{Name: "test-lib", Version: "1.0", Attributes: map[string]string{}},
+			Spans: []storage.SpanDetail{
+				{SpanID: "0000000000000001", ParentSpanID: "", Name: "root", Kind: "SERVER", StartTimeMS: 1000, DurationMS: 500, Status: "OK"},
+				{SpanID: "0000000000000002", ParentSpanID: "0000000000000001", Name: "child-a", Kind: "CLIENT", StartTimeMS: 1100, DurationMS: 200, Status: "OK"},
+				{SpanID: "0000000000000003", ParentSpanID: "0000000000000001", Name: "child-b", Kind: "CLIENT", StartTimeMS: 1200, DurationMS: 150, Status: "OK"},
+			},
+		},
+	}
+	exportHandler := NewTraceHandler(exportStore)
+	exportBody := `{"trace_ids":["4bf92f3577b34da6a3ce929d0e0e4736"],"format":"otlp"}`
+	exportReq := httptest.NewRequest(http.MethodPost, "/api/v1/traces/export", strings.NewReader(exportBody))
+	exportReq.Header.Set("Content-Type", "application/json")
+	exportRec := httptest.NewRecorder()
+	exportHandler.ExportTraces(exportRec, exportReq)
+	if exportRec.Code != http.StatusOK {
+		t.Fatalf("export: expected 200, got %d: %s", exportRec.Code, exportRec.Body.String())
+	}
+	exportedJSON := exportRec.Body.String()
+
+	// Import into a store that reports the trace as ALREADY existing.
+	importStore := &handlerMockStore{
+		detail: &storage.TraceDetail{TraceIDHex: traceIDHex, SpanCount: 3}, // trace exists
+	}
+	importHandler := NewTraceHandler(importStore)
+
+	importReq := httptest.NewRequest(http.MethodPost, "/api/v1/traces/import", strings.NewReader(exportedJSON))
+	importReq.Header.Set("Content-Type", "application/json")
+	importRec := httptest.NewRecorder()
+	importHandler.ImportTraces(importRec, importReq)
+
+	if importRec.Code != http.StatusOK {
+		t.Fatalf("import: expected 200, got %d: %s", importRec.Code, importRec.Body.String())
+	}
+
+	var result struct {
+		Imported int `json:"imported"`
+		Skipped  int `json:"skipped"`
+	}
+	if err := json.Unmarshal(importRec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if result.Imported != 0 || result.Skipped != 1 {
+		t.Errorf("imported=%d skipped=%d, want 0/1 (existing trace skipped entirely)", result.Imported, result.Skipped)
+	}
+	if len(importStore.insertedSpans) != 0 {
+		spanIDs := make([]string, len(importStore.insertedSpans))
+		for i, s := range importStore.insertedSpans {
+			spanIDs[i] = storage.SpanIDToHex(s.SpanID)
+		}
+		t.Errorf("existing trace must not be re-inserted; got %d spans inserted: %v", len(importStore.insertedSpans), spanIDs)
+	}
+}
 
 func TestImportExportRoundTrip(t *testing.T) {
 	inputTokens := uint32(100)

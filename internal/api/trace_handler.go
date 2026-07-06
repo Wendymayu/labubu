@@ -510,10 +510,19 @@ func (h *TraceHandler) ImportTraces(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Determine which trace_ids in this batch are new
+			// Determine which trace_ids in this batch are new.
+			// A trace that already exists in the DB is skipped ENTIRELY — its
+			// spans are not re-inserted. Re-inserting only a subset (the import
+			// batch is ordered by start_time_ms, so the root span comes first and
+			// would be the one dropped) corrupts the stored trace: the root
+			// vanishes and the trace ends up with no root span.
 			newSpans := make([]storage.Span, 0, len(spans))
-			seenTraceIDs := make(map[[16]byte]bool)
+			seenTraceIDs := make(map[[16]byte]bool)  // trace already added in this batch
+			skipTraceIDs := make(map[[16]byte]bool) // trace exists in DB — skip all its spans
 			for _, span := range spans {
+				if skipTraceIDs[span.TraceID] {
+					continue
+				}
 				if seenTraceIDs[span.TraceID] {
 					newSpans = append(newSpans, span)
 					continue
@@ -522,6 +531,7 @@ func (h *TraceHandler) ImportTraces(w http.ResponseWriter, r *http.Request) {
 
 				existing, err := h.store.GetTrace(r.Context(), span.TraceID)
 				if err != nil || existing != nil {
+					skipTraceIDs[span.TraceID] = true
 					skipped++
 					continue
 				}
