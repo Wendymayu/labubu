@@ -203,7 +203,7 @@ func runServe(args []string) {
 	if alertSub != nil {
 		alertHandler = alertSub.Handler
 	}
-	router := api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler, alertHandler, costHandler)
+	router := api.GzipMiddleware(api.NewRouter(traceHandler, metricsHandler, dashboardHandler, sessionHandler, logHandler, pricingHandler, llmConfigHandler, alertHandler, costHandler))
 
 	httpSrv := &http.Server{
 		Addr:         apiAddr,
