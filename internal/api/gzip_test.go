@@ -110,24 +110,28 @@ func TestGzipMiddlewareSkips206(t *testing.T) {
 }
 
 func TestGzipMiddlewareCompressesJavascriptLikeStatic(t *testing.T) {
-	// Mimics http.ServeContent serving a .js asset: 200 + application/javascript.
-	body := bytes.Repeat([]byte("console.log(1);"), 200)
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.Write(body) // implicit 200, no WriteHeader call
-	})
+	// Mimics http.ServeContent serving a .js asset. Go's mime package maps
+	// .js to "text/javascript; charset=utf-8" (not application/javascript),
+	// so both forms must be recognized.
+	for _, ct := range []string{"text/javascript; charset=utf-8", "application/javascript"} {
+		body := bytes.Repeat([]byte("console.log(1);"), 200)
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", ct)
+			w.Write(body) // implicit 200, no WriteHeader call
+		})
 
-	req := httptest.NewRequest(http.MethodGet, "/assets/index.js", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
-	rec := httptest.NewRecorder()
-	GzipMiddleware(handler).ServeHTTP(rec, req)
+		req := httptest.NewRequest(http.MethodGet, "/assets/index.js", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rec := httptest.NewRecorder()
+		GzipMiddleware(handler).ServeHTTP(rec, req)
 
-	if ce := rec.Header().Get("Content-Encoding"); ce != "gzip" {
-		t.Fatalf("Content-Encoding = %q, want gzip for JS asset", ce)
-	}
-	gr, _ := gzip.NewReader(rec.Body)
-	decompressed, _ := io.ReadAll(gr)
-	if !bytes.Equal(decompressed, body) {
-		t.Fatalf("decompressed JS body does not match original")
+		if ce := rec.Header().Get("Content-Encoding"); ce != "gzip" {
+			t.Errorf("Content-Type %q: Content-Encoding = %q, want gzip", ct, ce)
+		}
+		gr, _ := gzip.NewReader(rec.Body)
+		decompressed, _ := io.ReadAll(gr)
+		if !bytes.Equal(decompressed, body) {
+			t.Errorf("Content-Type %q: decompressed body does not match original", ct)
+		}
 	}
 }

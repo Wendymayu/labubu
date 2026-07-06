@@ -101,6 +101,7 @@ var compressibleTypes = []string{
 	"application/json",
 	"application/manifest+json",
 	"application/javascript",
+	"text/javascript",
 	"application/wasm",
 	"text/html",
 	"text/css",
